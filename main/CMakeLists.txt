@@ -1,4 +1,4 @@
-idf_component_register(SRCS "main.cxx" "device.cxx" "session.cxx" "ui.cxx" "weight_font_72.c" "equipment_emoji_22.c"
+idf_component_register(SRCS "main.cxx" "device.cxx" "session.cxx" "ui.cxx" "weight_font_72.c" "equipment_icons.c"
     INCLUDE_DIRS "."
     REQUIRES driver esp_lcd esp_timer esp_lcd_st7796 esp_lcd_touch_ft6336
              esp_lvgl_port esp_io_expander_tca9554 lvgl)

@@ -1,4 +1,5 @@
 #include "ui.hxx"
+#include "equipment_icons.hxx"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -6,20 +7,17 @@
 #include <string>
 
 LV_FONT_DECLARE(weight_font_72);
-LV_FONT_DECLARE(equipment_emoji_22);
+LV_FONT_DECLARE(equipment_icons_22);
+LV_FONT_DECLARE(equipment_icons_32);
 
 namespace smart_scale::ui {
 namespace {
-constexpr const char* equipment_icons[] = {
-    "☕", "☀", "☁", "☂", "❄", "♥", "⚓", "⚡", "⚙", "☺",
-    "😀", "😁", "😂", "😃", "😄", "😉", "😊", "😋", "😎", "😺"
-};
 static_assert(std::size(equipment_icons) == 20);
 const lv_font_t* icon_font(const lv_font_t* font) {
     // Keep built-in fonts immutable and supply the same emoji subset everywhere.
     static lv_font_t f14 = lv_font_montserrat_14, f18 = lv_font_montserrat_18,
                      f22 = lv_font_montserrat_22, f28 = lv_font_montserrat_28;
-    for (auto* f : {&f14, &f18, &f22, &f28}) f->fallback = &equipment_emoji_22;
+    for (auto* f : {&f14, &f18, &f22, &f28}) f->fallback = &equipment_icons_22;
     if (font == &lv_font_montserrat_14) return &f14;
     if (font == &lv_font_montserrat_18) return &f18;
     if (font == &lv_font_montserrat_22) return &f22;
@@ -371,7 +369,7 @@ void View::draw_registration(lv_obj_t* box) {
             auto* item = button(box, equipment_icons[i], 16 + (i % 5) * 84, 58 + (i / 5) * 46,
                                 76, 44, Action::choose_icon, static_cast<int>(i));
             auto* caption = lv_obj_get_child(item, 0);
-            lv_obj_set_style_text_font(caption, &equipment_emoji_22, 0);
+            lv_obj_set_style_text_font(caption, &equipment_icons_32, 0);
             lv_obj_center(caption);
             lv_obj_set_style_border_color(item, color(i == registration_icon_ ? mint : border), 0);
             lv_obj_set_style_border_width(item, i == registration_icon_ ? 2 : 1, 0);

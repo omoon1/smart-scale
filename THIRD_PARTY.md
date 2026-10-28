@@ -8,4 +8,4 @@ Application organization is inspired by the requested [farm360-ai/esp32_plc/seri
 
 `main/weight_font_72.c` is a 72 px, 4-bpp subset of DejaVu Sans (digits, decimal point, minus, question mark, space and g), generated with `lv_font_conv`. Its Bitstream Vera license and public-domain DejaVu changes notice are in `main/LICENSE.weight-font`. The bitmap is stored in flash and drawn without runtime scaling.
 
-`main/equipment_emoji_22.c` contains 20 monochrome Unicode emoji/symbol glyphs from DejaVu Sans, generated at 22 px and 4 bpp with `lv_font_conv`. It uses the same license in `main/LICENSE.weight-font`. The glyph subset renders on both device and host without an OS emoji font.
+`main/equipment_icons.c` contains original monochrome artwork generated from the vector geometry in `scripts/equipment_icons.py`. It does not use a third-party emoji font. CairoSVG and Pillow are development-only generation tools; generated 22 px and 32 px glyphs are compiled directly into firmware.

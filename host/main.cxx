@@ -1,4 +1,5 @@
 #include "ui.hxx"
+#include "equipment_icons.hxx"
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -9,6 +10,8 @@
 #ifdef SMART_SCALE_SDL
 #include <SDL.h>
 #endif
+LV_FONT_DECLARE(equipment_icons_22);
+LV_FONT_DECLARE(equipment_icons_32);
 namespace {
 constexpr int width = 480, height = 320;
 std::array<std::uint32_t, width * height> framebuffer{};
@@ -191,14 +194,22 @@ int main(int argc, char** argv) {
     click(view, 370, 284); screenshot(view, "11-register-icon");
     require(!find_type(lv_scr_act(), &lv_keyboard_class) && !find_type(lv_scr_act(), &lv_textarea_class), "Icon picker has no keyboard or text input");
     auto* icon_screen = lv_scr_act();
-    for (int i = 0; i < 20; ++i) click(view, 68 + (i % 5) * 84, 88 + (i / 5) * 46);
+    for (int i = 0; i < 20; ++i) {
+        click(view, 68 + (i % 5) * 84, 88 + (i / 5) * 46);
+        // Both picker and name fonts must cover every bundled identifier.
+        uint32_t offset = 0;
+        const auto codepoint = _lv_txt_encoded_next(ui::equipment_icons[i], &offset);
+        lv_font_glyph_dsc_t glyph{};
+        require(lv_font_get_glyph_dsc(&equipment_icons_22, &glyph, codepoint, 0), "Name font contains icon");
+        require(lv_font_get_glyph_dsc(&equipment_icons_32, &glyph, codepoint, 0), "Picker font contains icon");
+    }
     require(lv_scr_act() == icon_screen, "All 20 icon choices update in place");
     click(view, 65, 282); // Back to weight.
     click(view, 370, 284); // Return to picker; preserve icon.
     screenshot(view, "12-register-icon-selected");
     click(view, 370, 282);
     require(controller.equipment_count() == 4, "Registration saves profile");
-    require(controller.equipment()[3].name == "Pour-over set 😺", "Selected type and icon survive Back and Save");
+    require(controller.equipment()[3].name == "Pour-over set 🦋", "Selected type and icon survive Back and Save");
     require(controller.equipment()[3].kind == Kind::pour_over_set, "Selected equipment type survives registration");
     screenshot(view, "13-registered");
     std::cout << "UI interaction checks passed\n";
