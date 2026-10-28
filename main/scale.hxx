@@ -22,6 +22,8 @@ class Scale {
 public:
     void ingest(std::int32_t raw, std::uint64_t now_ms);
     void invalidate();
+    std::optional<std::int32_t> last_raw() const { return last_raw_; }
+    std::uint64_t sample_ms() const { return last_ms_; }
     float flow() const { return flow_g_s_; }
     void check_timeout(std::uint64_t now_ms);
     bool restore(Calibration calibration);
@@ -51,6 +53,7 @@ private:
     float flow_g_s_{};
     unsigned count_{}, cursor_{};
     std::uint64_t last_ms_{};
+    std::optional<std::int32_t> last_raw_;
     bool connected_{}, overload_{}, save_failed_{};
     float tare_g_{};
     std::uint32_t display_epoch_{};

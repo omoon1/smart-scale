@@ -27,6 +27,7 @@ void Scale::ingest(std::int32_t raw, std::uint64_t now) {
     if (connected_ && now - last_ms_ > config::sensor_timeout_ms) invalidate();
     const auto previous_ms = last_ms_;
     last_ms_ = now;
+    last_raw_ = raw;
     connected_ = true;
     overload_ = raw <= -8388608 || raw >= 8388607;
     if (overload_) { clear_window(); captured_zero_.reset(); return; }

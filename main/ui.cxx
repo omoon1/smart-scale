@@ -1,5 +1,8 @@
 #include "ui.hxx"
 #include "equipment_icons.hxx"
+#ifdef ESP_PLATFORM
+#include "esp_log.h"
+#endif
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -275,6 +278,26 @@ void View::refresh_values() {
         displayed = weight_display_.update(displayed);
     }
     const auto weight_text = number(displayed);
+    // Log actual visible transitions, including unavailable/recovery. Retain the
+    // last text across screen redraws to avoid duplicate logs. Never log in the
+    // acquisition task or while holding the HX711 clocking critical section.
+    if (controller_.live() && weight_ && weight_text != last_logged_weight_) {
+        last_logged_weight_ = weight_text;
+        const auto& scale = controller_.scale();
+        const auto raw = scale.last_raw() ? std::to_string(*scale.last_raw()) : "NA";
+        const auto gross = scale.ready() ? number(scale.gross(), " g") : "NA";
+        char line[256];
+        std::snprintf(line, sizeof(line),
+            "display=%s g raw=%s sample_ms=%llu gross=%s net=%.4f g stable=%d ready=%d status=%s",
+            weight_text.c_str(), raw.c_str(), static_cast<unsigned long long>(scale.sample_ms()),
+            gross.c_str(), static_cast<double>(scale.ready() ? scale.net() : NAN),
+            scale.stable(), scale.ready(), scale.status());
+#ifdef ESP_PLATFORM
+        ESP_LOGI("weight", "%s", line);
+#else
+        std::printf("weight: %s\n", line);
+#endif
+    }
     const lv_font_t* weight_font = s.phase != Phase::ready && s.net_g >= 100.0F ?
         &lv_font_montserrat_32 : &lv_font_montserrat_48;
     if (s.phase == Phase::ready) {

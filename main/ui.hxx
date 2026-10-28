@@ -32,6 +32,7 @@ private:
     void refresh_values();
     Controller& controller_;
     WeightDisplay weight_display_;
+    std::string last_logged_weight_;
     std::uint32_t display_epoch_{};
     Phase display_phase_{Phase::ready};
     std::array<Binding, 64> bindings_{};
