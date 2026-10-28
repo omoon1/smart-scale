@@ -43,14 +43,14 @@ Equipment and record snapshots are copied values; editing a later profile cannot
 
 The standalone `recognize()` helper checks empty weight within a provisional 0.5 g tolerance and portafilter+dose candidates within the required inclusive ±3 g range. It returns the measured difference, not the saved usual dose. Different matching equipment IDs remain ambiguous. The on-screen dummy fixtures provide explicit recognition results; no load-cell classification or historical ranking service is connected yet.
 
-Recipe assumptions are 1:2 for espresso and 1:15 for a whole pour-over set. They are target suggestions only, never actual-dose defaults. Pour-over cup-only has no input-water target. Dose wheel range is provisionally 0.1–60.0 g, step 0.1 g. The wheel can start at 18.0 g when unknown, but this is an uncommitted editor value until Apply. Unknown state is `?`.
+Recipe assumptions are 1:2 for espresso and 1:15 for a whole pour-over set. They are target suggestions only, never actual-dose defaults. Pour-over cup-only has no input-water target. Dose wheel range is provisionally 0.1–60.0 g, step 0.1 g. The wheel can start at 18.0 g when unknown, but this is an uncommitted editor value until the user changes the wheel selection. Unknown state is `?`.
 
 ## Requirement coverage
 
 | Requirements | Prototype behavior / boundary |
 | --- | --- |
 | UX-01–04, OBJ-01–03 | Ready screen, full-card touch targets, separate net/tare/dose, unknown marker, extraction lock; placement/tare are simulated |
-| MODE-01, DOSE-01–03 | Mode dialog, vertical dose wheel, apply/cancel, measured/manual source, no ratio without valid dose |
+| MODE-01, DOSE-01–03 | Direct mode toggle, vertical dose wheel with immediate updates, measured/manual source, no ratio without valid dose |
 | REC-03/04/05/06/07 | Tested pure recognition helper with inclusive ±3 g, actual difference, separate empty tolerance, ambiguity, immutable empty reference |
 | REC-01/02 | History-driven ranking and learning deferred; fixture usual-dose values only |
 | SEQ-01–05, STATE-01–04 | Sequenced dummy events, split additions/removal, separate roles, session lifetime, value snapshots; long-term storage deferred |

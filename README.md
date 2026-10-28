@@ -44,8 +44,8 @@ For the interactive desktop simulator, install SDL2 development files (`brew ins
 ## Try the screens
 
 1. Boot into the known-cup fixture: 142.6 g cup, automatic tare, measured 18.2 g dose.
-2. Touch the **entire object card** to choose equipment or register a new profile. Touch the dose card for the vertical 0.1 g wheel. Close cancels; Apply commits.
-3. Touch the mode at the top to select Espresso or Pour-over. Mode and dose are locked during extraction in this prototype.
+2. Touch the **entire object card** to choose equipment or register a new profile. Touch the dose card for the vertical 0.1 g wheel. Dose changes save immediately as you scroll; close returns to weighing.
+3. Tap the mode at the top to switch directly between Espresso and Pour-over. Mode and dose are locked during extraction in this prototype.
 4. Tap **Run demo** to inject simulated liquid. This is a development control; production brewing will be triggered by sensor events. The app switches to extraction when that event arrives, including unknown-object cases.
 5. Use **Scenarios** for known cup, unknown baseline, the portafilter → beans → removal → cup sequence, or V60 bloom/pours. The sequence starts after Run demo. A pour-over pause does not end the brew.
 6. **Finish** opens results. Target arrival only alerts; simulated flow continues until Finish. **Next brew** starts an empty session after simulated load removal.

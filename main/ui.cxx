@@ -64,6 +64,12 @@ void View::clicked(lv_event_t* e) {
     const auto binding = *static_cast<Binding*>(lv_event_get_user_data(e));
     binding.view->action(binding.action, binding.value);
 }
+void View::dose_changed(lv_event_t* event) {
+    auto& self = *static_cast<View*>(lv_event_get_user_data(event));
+    const auto selected = lv_roller_get_selected(lv_event_get_target(event));
+    self.controller_.set_dose(static_cast<float>(selected + config::dose_min_tenths) / 10);
+    self.refresh_values();
+}
 void View::schedule_draw() {
     if (!pending_draw_) { pending_draw_ = true; lv_async_call(deferred_draw, this); }
 }
@@ -107,8 +113,8 @@ void View::draw() {
     const auto phase = rendered_phase_;
     if (phase == Phase::ready) {
         button(screen_, controller_.session().mode == Mode::espresso ? "Espresso" : "Pour-over",
-               16, 8, 156, 44, Action::modes);
-    } else label(screen_, phase == Phase::brewing ? "Extracting" : phase == Phase::result ? "Brew complete" : "Reset",
+               16, 8, 156, 44, Action::toggle_mode);
+    } else label(screen_, phase == Phase::brewing ? "Running" : phase == Phase::result ? "Brew complete" : "Reset",
                  20, 19, 230, &lv_font_montserrat_22);
     if (phase == Phase::ready) label(screen_, "SMART SCALE", 188, 22, 114, &lv_font_montserrat_14, muted);
     label(screen_, "DEMO   82% " LV_SYMBOL_BATTERY_3, 328, 24, 145, &lv_font_montserrat_14, mint);
@@ -136,7 +142,23 @@ void View::draw_ready(lv_obj_t* root) {
     lv_obj_set_height(object_text_, 23);
     object_weight_ = label(object, "", 12, 40, 160, &lv_font_montserrat_28);
     auto* dose = button(root, "", 280, 158, 184, 84, Action::dose);
-    dose_text_ = label(dose, "", 12, 10, 160, &lv_font_montserrat_18);
+    label(dose, "Coffee", 38, 10, 134, &lv_font_montserrat_18);
+    // Native LVGL bean silhouette and curved seam; no extra font or image asset.
+    auto* bean = lv_obj_create(dose);
+    style(bean, ink);
+    lv_obj_set_pos(bean, 13, 10);
+    lv_obj_set_size(bean, 16, 22);
+    lv_obj_set_style_radius(bean, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_width(bean, 0, 0);
+    lv_obj_clear_flag(bean, LV_OBJ_FLAG_CLICKABLE);
+    static const lv_point_t seam_points[] = {{10, 1}, {8, 5}, {6, 9}, {6, 13}, {8, 17}, {8, 21}};
+    auto* seam = lv_line_create(bean);
+    lv_line_set_points(seam, seam_points, 6);
+    lv_obj_set_style_line_color(seam, color(panel), 0);
+    lv_obj_set_style_line_width(seam, 2, 0);
+    lv_obj_set_style_line_rounded(seam, true, 0);
+    lv_obj_clear_flag(seam, LV_OBJ_FLAG_CLICKABLE);
+    dose_text_ = label(dose, "", 12, 34, 160, &lv_font_montserrat_18);
     button(root, controller_.demo_running() ? "Demo running" : "Run demo", 16, 266, 140, 44, Action::run, 0, true);
     button(root, "Scenarios", 164, 266, 110, 44, Action::demo);
     button(root, "Reset", 364, 266, 100, 44, Action::reset);
@@ -199,18 +221,21 @@ void View::refresh_values() {
             lv_label_set_text(object_text_, item ? item->name.c_str() : "Object");
             lv_label_set_text(object_weight_, number(item ? item->empty_g : std::nullopt, " g").c_str());
         }
-        if (dose_text_) lv_label_set_text(dose_text_, ("Coffee dose\n" + number(s.dose_g, " g")).c_str());
+        if (dose_text_) lv_label_set_text(dose_text_, number(s.dose_g, " g").c_str());
         return;
     }
     if (s.phase != Phase::brewing && s.phase != Phase::result) return;
     if (object_text_) lv_label_set_text(object_text_,
-        ((s.vessel ? s.vessel->name : "Object ?") + "  /  Locked during extraction").c_str());
+        s.vessel ? s.vessel->name.c_str() : "Object ?");
     char clock[32];
     const auto secs = static_cast<unsigned>(s.seconds);
     std::snprintf(clock, sizeof(clock), "%02u:%02u", secs / 60, secs % 60);
     lv_label_set_text(time_, clock);
+    // Demo volume estimate: assume liquid density of 1.0 g/ml.
+    constexpr float demo_density_g_ml = 1.0F;
+    const float flow_ml_s = s.flow_g_s / demo_density_g_ml;
     lv_label_set_text(flow_, s.phase == Phase::result ? ("Ratio " + (s.ratio() ? "1:" + number(s.ratio()) : "?")).c_str()
-        : s.uncertain ? "Flow unavailable" : number(s.flow_g_s, " g/s").c_str());
+        : s.uncertain ? "Flow unavailable" : number(flow_ml_s, " ml/s").c_str());
     std::string status;
     if (s.uncertain) status = "Baseline uncertain - weight unavailable";
     else if (s.target_g && s.net_g >= *s.target_g) status = "Target reached  +" + number(s.net_g - *s.target_g, " g");
@@ -275,7 +300,6 @@ void View::draw_dialog(lv_obj_t* root) {
                    Action::choose_object, static_cast<int>(i));
         button(box, "+ Register equipment", 12, 246, 280, 46, Action::registration, 0, true);
     } else if (dialog_ == Dialog::dose) {
-        label(box, "Coffee dose", 18, 16, 220, &lv_font_montserrat_22);
         roller_ = lv_roller_create(box);
         std::string values;
         for (int i = config::dose_min_tenths; i <= config::dose_max_tenths; ++i) {
@@ -287,20 +311,16 @@ void View::draw_dialog(lv_obj_t* root) {
         lv_obj_set_style_text_font(roller_, &lv_font_montserrat_22, LV_PART_SELECTED);
         lv_roller_set_visible_row_count(roller_, 5);
         lv_obj_set_size(roller_, 220, 176);
-        lv_obj_set_pos(roller_, 42, 56);
+        lv_obj_set_pos(roller_, 20, 64);
         lv_obj_set_style_bg_color(roller_, color(bg), 0);
         lv_obj_set_style_text_color(roller_, color(muted), 0);
         lv_obj_set_style_bg_color(roller_, color(mint), LV_PART_SELECTED);
         lv_obj_set_style_text_color(roller_, color(bg), LV_PART_SELECTED);
         const auto selected = static_cast<int>(std::lround(controller_.session().dose_g.value_or(18.0F) * 10)) - 1;
         lv_roller_set_selected(roller_, static_cast<uint16_t>(std::clamp(selected, 0, 599)), LV_ANIM_OFF);
-        label(box, "Swipe vertically / 0.1 g steps", 36, 235, 260, &lv_font_montserrat_14, muted);
-        button(box, "Apply dose", 14, 254, 276, 44, Action::apply_dose, 0, true);
-    } else if (dialog_ == Dialog::modes) {
-        label(box, "Brew mode", 18, 16, 220, &lv_font_montserrat_22);
-        button(box, "Espresso", 16, 76, 270, 60, Action::choose_mode, 0, true);
-        button(box, "Pour-over", 16, 148, 270, 60, Action::choose_mode, 1);
-        label(box, "Cup-only pour-over has no\ninput-water target.", 20, 234, 260, &lv_font_montserrat_14, muted);
+        lv_obj_add_event_cb(roller_, dose_changed, LV_EVENT_VALUE_CHANGED, this);
+        label(box, LV_SYMBOL_UP, 258, 112, 28, &lv_font_montserrat_22, muted);
+        label(box, LV_SYMBOL_DOWN, 258, 188, 28, &lv_font_montserrat_22, muted);
     } else if (dialog_ == Dialog::demo) {
         label(box, "Dummy scenarios", 16, 18, 230, &lv_font_montserrat_22);
         const char* names[] = {"Cup + 18.2 g dose", "Unknown object / no baseline", "Portafilter > beans > cup", "V60 / bloom + pours"};
@@ -352,15 +372,13 @@ void View::action(Action a, int value) {
     switch (a) {
     case Action::objects: open(Dialog::objects); return;
     case Action::dose: open(Dialog::dose); return;
-    case Action::modes: open(Dialog::modes); return;
+    case Action::toggle_mode:
+        controller_.set_mode(controller_.session().mode == Mode::espresso ? Mode::pour_over : Mode::espresso);
+        break;
     case Action::demo: open(Dialog::demo); return;
     case Action::registration: open(Dialog::registration); return;
     case Action::close: dialog_ = Dialog::none; break;
-    case Action::apply_dose:
-        if (roller_) controller_.set_dose(static_cast<float>(lv_roller_get_selected(roller_) + 1) / 10);
-        dialog_ = Dialog::none; break;
     case Action::choose_object: controller_.select_equipment(static_cast<std::size_t>(value)); dialog_ = Dialog::none; break;
-    case Action::choose_mode: controller_.set_mode(static_cast<Mode>(value)); dialog_ = Dialog::none; break;
     case Action::choose_scenario: controller_.load_scenario(static_cast<Scenario>(value)); dialog_ = Dialog::none; break;
     case Action::run: controller_.run_demo(); break;
     case Action::pause: controller_.pause_demo(); break;
