@@ -36,3 +36,49 @@ The icon set uses original vector geometry, pre-rendered at 32 px for the picker
 ## Held adjustment and equipment removal
 
 Host tests cover repeated fine adjustment, no extra increment on release, stopping after release/slide-off/brew start, removal confirmation and cancel, list compaction, removal of all profiles, and registration from the empty state. Controller tests cover phase locks, invalid IDs, monotonic IDs after deletion, preserved readings and archived snapshots, and all demo types with an empty profile list. Repeat defaults are LVGL 8.4's 400 ms hold threshold and 100 ms interval. Check touch release/slide-off behavior on the physical FT6336 device before release.
+
+
+## HX711 integration checks
+
+- `make test`: existing 503 session checks and new signed ADC/calibration/tare/live-session suite pass.
+- `make preview`: original UI interaction checks and live injected-raw touch calibration, tare, Start, and timeout checks pass. Screens 16–21 show disconnected, calibration, live, brewing, and fault states; visually inspected at 480×320.
+- `make build`: ESP-IDF v5.5.2 / ESP32-S3 firmware compiles and links, including GPIO and NVS adapters.
+- Local build environment note: the installed component manager 2.5.2 attempted to inspect sandbox PIDs through psutil and failed before configuration. Only its ignored local Python environment was adjusted to use the Linux parent PID fallback. No dependency workaround is committed; CI uses the existing Espressif container.
+- Hardware acceptance remains open: electrical signal timing, load-cell polarity, repeatability/linearity, physical disconnection behavior, and calibration persistence on actual flash. See [HX711 acceptance steps](hx711.md).
+
+
+## Display, recognition, and calibration follow-up
+
+- Updated `make test`: 502 session checks plus scale/live tests pass. The legacy filled-portafilter inference tests were replaced with identity-only ±40 g boundary/ambiguity tests, because ±40 g cannot establish a dose.
+- Added regression checks for ±0.1 g flicker at zero and at 100 g, accumulated small changes, negative readings, invalid-reading reset, tare epochs, and unchanged domain weight beneath a zeroed display.
+- Added live recognition checks for both inclusive boundaries, unmatched and ambiguous placements, manual override without tare, identity lock during filling/brewing, fresh placement after removal, and dose measurement only after explicit tare.
+- Actual LVGL touch tests calibrate with each of 20 g, 50 g, and 100 g and verify the resulting measurement, followed by tare/start/fault checks. `make preview` and the ESP-IDF firmware build pass.
+
+
+## Acquisition, filtering, and stability follow-up
+
+- `make test`: 502 session checks, existing live/display/recognition tests, and new timestamp/filter/stability tests pass. Fixtures now allow real filter settling rather than assuming ten samples are sufficient.
+- New tests cover minimum stability duration at ~80 SPS, isolated spike rejection, duplicate/backward timestamps, sustained noise, slow drift rejection, real positive/negative steps at 10/~80 SPS, saturation/timeout resets, stale calibration cancellation, sample-timestamp flow with batched UI updates, and explicit acquisition-gap invalidation.
+- `make preview` passes all existing and live touchscreen tests, including 20/50/100 g calibration. `make build` compiles and links the acquisition task/queue and domain changes with ESP-IDF v5.5.2.
+- On-device acceptance still required: verify 10/80 SPS sample cadence, induce an extended UI/NVS stall to exercise the real FreeRTOS queue overflow path, verify timeout/reconnect, measure settling latency, and check repeatability/drift with known masses. Host tests exercise the controller's gap handling, not actual FreeRTOS scheduling or electrical timing.
+
+
+## Bounded diagnostics and stability confirmation
+
+Weight-change logging is capped at one line/second, plus one `hx711_diag` summary per five seconds. Summaries report stability failure bits and measured limits, calibration, sample cadence/age, batching, overflow, and fault counts. Stability entry now requires 500 ms of continuous passing checks; exit on failure remains immediate, with no relaxation of the measurement thresholds. Native tests cover pending confirmation, entry, immediate exit, drift flags, and invalidation. Firmware and LVGL checks pass; hardware diagnosis awaits logs captured under a fixed load.
+
+
+## Drift-window correction from device diagnostics
+
+Supplied diagnostics showed `sd=0.0565–0.0760 g` below the 0.10 g limit, but short-window slopes of -0.0934 and +0.0758 g/s exceeded 0.05 g/s (`fail=4`). Sporadic `fail=0 hold_ms=0` indicates checks had just passed without sustained confirmation. Overflow/fault counters were zero. These sparse logs identify a stability-gate failure but do not establish the physical source of variation.
+
+Drift now uses 3.2 s of history (minimum 3.0 s), separate from the unchanged 1.2 s noise/settling window. Limits and immediate failure exit are unchanged; initial stability takes approximately 3.5–4 s. A 320-sample buffer supports the longer window at 80 SPS. Diagnostics add drift-window count and duration without adding log lines.
+
+`make test`, `make preview`, and the ESP-IDF firmware build pass. Synthetic ±0.08 g oscillation tests at 10, ~11, and ~80 SPS remain stable after warmup; the same noise with sustained 0.10 g/s drift is rejected. Sudden steps still fail short-window checks. This is a synthetic regression scenario informed by the log's noise scale, not a replay of unavailable raw samples. Physical verification remains necessary.
+
+
+## Object recognition rearming
+
+Fixed two reproducible paths: registering equipment while an already-unknown object remains on the platform now retries matching, and a normal brief lift now rearms matching without waiting for the full drift window. Removal requires 300 ms of near-zero median samples; a single low sample does not reset identity. Manual identity selection is permitted while settling, without weakening tare/calibration/start checks. Empty profile lists explicitly display Register object; profiles remain RAM-only. The existing diagnostic summary includes profile count and recognition state.
+
+Native tests cover registration in place, transient lows, a 600 ms lift, replacement with a different profile, ambiguity resolved by deletion, and explicit selection while tare remains blocked. Existing session/filter suites, LVGL previews, and ESP-IDF build pass. Physical confirmation is still required; no claim is made that the user's exact cause is established without their `profiles`/`object` diagnostics.

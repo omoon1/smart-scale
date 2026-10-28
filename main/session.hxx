@@ -1,5 +1,6 @@
 #pragma once
 #include "config.hxx"
+#include "scale.hxx"
 #include <array>
 #include <cstdint>
 #include <optional>
@@ -33,13 +34,22 @@ struct Session {
     [[nodiscard]] std::optional<float> ratio() const;
 };
 struct Record { Session session; bool aborted{}; };
-struct Recognition { std::optional<Equipment> equipment; std::optional<float> dose_g; };
+struct Recognition { std::optional<Equipment> equipment; bool ambiguous{}; };
 Recognition recognize(float total_g, const Equipment* equipment, std::size_t count);
 
 // Pure C++ state owner. All calls are serialized by the UI task.
 class Controller {
 public:
-    Controller();
+    explicit Controller(bool live = false);
+    bool live() const { return live_; }
+    const char* recognition_status() const;
+    bool object_ambiguous() const { return object_ambiguous_; }
+    Scale& scale() { return scale_; }
+    const Scale& scale() const { return scale_; }
+    void sensor_fault();
+    void sensor_sample(std::optional<std::int32_t> raw, std::uint64_t now_ms);
+    bool tare();
+    bool start_brew();
     [[nodiscard]] const Session& session() const { return session_; }
     [[nodiscard]] const auto& equipment() const { return equipment_; }
     [[nodiscard]] std::size_t equipment_count() const { return equipment_count_; }
@@ -66,6 +76,10 @@ private:
     void target();
     void place_demo_kind(Kind kind);
     void archive(bool aborted);
+    bool live_{};
+    std::optional<std::uint64_t> empty_since_;
+    bool recognition_checked_{}, object_ambiguous_{}, dose_tared_{};
+    Scale scale_;
     Session session_{};
     std::array<Equipment, config::max_equipment> equipment_{};
     std::size_t equipment_count_{3};

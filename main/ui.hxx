@@ -1,9 +1,10 @@
 #pragma once
 #include "session.hxx"
+#include "weight_display.hxx"
 #include "lvgl.h"
 
 namespace smart_scale::ui {
-enum class Dialog { none, objects, dose, demo, registration, remove_equipment };
+enum class Dialog { none, calibration, objects, dose, demo, registration, remove_equipment };
 class View {
 public:
     explicit View(Controller& controller) : controller_(controller) {}
@@ -12,7 +13,7 @@ public:
     void open(Dialog dialog);
     void reset();
 private:
-    enum class Action { objects, dose, toggle_mode, demo, close,
+    enum class Action { tare, calibration, capture_zero, calibrate, objects, dose, toggle_mode, demo, close,
         request_remove, confirm_remove, cancel_remove, dose_adjust, dose_preset, choose_object, choose_scenario, run, pause, finish, next,
         reset, remove, registration, register_next, register_back, register_save, choose_icon, stable };
     struct Binding { View* view{}; Action action{}; int value{}; };
@@ -30,6 +31,11 @@ private:
     void schedule_draw();
     void refresh_values();
     Controller& controller_;
+    WeightDisplay weight_display_;
+    std::string last_logged_weight_;
+    std::uint64_t last_weight_log_ms_{};
+    std::uint32_t display_epoch_{};
+    Phase display_phase_{Phase::ready};
     std::array<Binding, 64> bindings_{};
     std::size_t binding_count_{};
     lv_obj_t *screen_{}, *weight_{}, *weight_unit_{}, *time_{}, *flow_{}, *status_{}, *object_text_{}, *dose_text_{},
@@ -46,5 +52,9 @@ private:
     unsigned registration_icon_{};
     std::array<lv_obj_t*, 20> icon_buttons_{};
     std::string registration_error_;
+    float registration_weight_{156.8F};
+    lv_obj_t *start_button_{}, *tare_button_{};
+    lv_obj_t *sensor_status_{}, *calibration_message_{}, *registration_weight_label_{}, *registration_status_{}, *registration_next_{};
+    std::string calibration_message_text_;
 };
 }

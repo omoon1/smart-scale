@@ -1,8 +1,18 @@
 # Architecture and UX coverage
 
-## Executive summary
+## HX711 integration
 
-This first milestone makes the supplied Smart Scale UX requirements reviewable on the target display and on a desktop. It implements the screen flows with deterministic dummy measurements. It does not claim production recognition, measurement accuracy, persistent storage, or physical start-detection performance.
+The physical firmware constructs `Controller(true)` with no demo fixtures. `device::scale::Acquisition` owns HX711 reads in a dedicated priority-5 task, polling readiness at one RTOS tick (1 ms). It publishes timestamped counts through a bounded 128-entry FreeRTOS queue. `app_main` drains at most one queue capacity per UI cycle and passes samples into the pure-C++ `Scale` model under the LVGL lock used by touch events. The producer never accesses the controller or LVGL. Only a ~100 us GPIO shift is inside a FreeRTOS critical section; conversion readiness never blocks. Channel A gain 128 is fixed. Acquisition supports the module's 10/80 SPS settings independently of the approximately 10 Hz UI refresh. A full queue is flushed and marked as a gap; stale backlog or sensor gaps invalidate an active brew.
+
+`Scale` separates persisted empty-platform calibration from transient vessel tare. Its median-of-three spike rejection and timestamp-based low-pass filter (tau 0.3 s) preserve signed weight changes. Stability uses a trailing 1.2 s window of median-filtered samples, before the low-pass stage: at least eight samples spanning 1 s, low standard deviation and a settled low-pass output. Regression slope is evaluated separately over a trailing 3.2 s window requiring at least 3.0 s of history; all checks must pass continuously for 500 ms. A fixed 320-sample buffer accommodates both windows at 10/80 SPS. This gates tare, calibration, registration, and brew start. The UI exposes empty-zero capture and 20/50/100 g calibration. A versioned NVS blob stores zero and signed counts/g atomically; no old cell's constants are imported. Flash writes run outside the LVGL lock; save failure is visible and the previous saved calibration remains available on reboot.
+
+Live brewing uses an explicit Start action that tares the stable vessel. Weight is an absolute net reading, not a sum of positive deltas, so noise cannot ratchet the weight upward. Flow is the difference of filtered readings divided by acquisition timestamp intervals and is reported in g/s. A timeout, saturation, or detected load removal latches uncertainty for the current brew; reconnecting cannot silently repair its history. Reset preserves calibration but clears transient tare. Stable-placement recognition matches registered empty weights within ±40 g; ambiguity requires manual selection. Recognition selects identity without altering tare or inferring dose. Profiles/records still live in RAM. The existing desktop constructor preserves its demo source and fixture behavior.
+
+See [operating limits and failure modes](hx711.md). Physical signal timing and accuracy still require hardware acceptance.
+
+## Original UI milestone
+
+The original UI milestone makes the supplied Smart Scale UX requirements reviewable on the target display and on a desktop. It implements the screen flows with deterministic dummy measurements. It does not claim production recognition, measurement accuracy, persistent storage, or physical start-detection performance.
 
 ```mermaid
 flowchart TD
@@ -41,7 +51,9 @@ Reset without load goes directly to Ready. Opening a modal never changes the ses
 
 Equipment and record snapshots are copied values; editing a later profile cannot mutate a past snapshot. Up to eight profiles and eight records are kept. Record retention is a documented FIFO ring; there is no durable storage in this milestone. Curves hold at most 601 timestamped samples; when full they are decimated while retaining the origin and actual timestamps. The chart plots those timestamps, not sample indices. Numeric values, curve, and record all use one session.
 
-The standalone `recognize()` helper checks empty weight within a provisional 0.5 g tolerance and portafilter+dose candidates within the required inclusive ±3 g range. It returns the measured difference, not the saved usual dose. Different matching equipment IDs remain ambiguous. The on-screen dummy fixtures provide explicit recognition results; no load-cell classification or historical ranking service is connected yet.
+`recognize()` now checks registered empty weights within the inclusive ±40 g identity tolerance. Different matching equipment IDs are ambiguous; it no longer infers dose from a possible empty-versus-filled match. Live mode invokes it once per stable placement and locks identity until a near-zero median persists for 300 ms. Unresolved matches are retried after profile registration/deletion. Removal does not need the full drift window. An unknown load is not reclassified as contents are added. Manual selection resolves ambiguity without changing the measurement. Portafilter dose measurement requires an explicit tare followed by adding beans. The desktop fixtures still provide explicit demo identities.
+
+`WeightDisplay` holds only the main numeric label with a 0.15 g hysteresis threshold and ±0.15 g zero deadband. Domain calculations, calibration, recognition, flow, and records continue to use the original filtered readings. Display state resets on invalid data, tare/calibration epochs, and phase changes.
 
 Recipe assumptions are 1:2 for espresso and 1:15 for a whole pour-over set. They are target suggestions only, never actual-dose defaults. Pour-over cup-only has no input-water target. Dose wheel range is provisionally 0.1–60.0 g, step 0.1 g. The wheel can start at 18.0 g when unknown, but this is an uncommitted editor value until the user changes the wheel selection. Unknown state is `?`.
 
@@ -51,7 +63,7 @@ Recipe assumptions are 1:2 for espresso and 1:15 for a whole pour-over set. They
 | --- | --- |
 | UX-01–04, OBJ-01–03 | Ready screen, full-card touch targets, separate net/tare/dose, unknown marker, extraction lock; placement/tare are simulated |
 | MODE-01, DOSE-01–03 | Direct mode toggle, dose presets and coarse/fine buttons with immediate updates, measured/manual source, no ratio without valid dose |
-| REC-03/04/05/06/07 | Tested pure recognition helper with inclusive ±3 g, actual difference, separate empty tolerance, ambiguity, immutable empty reference |
+| REC-03/04/05/06/07 | Live stable-placement identity matching with inclusive ±40 g, ambiguity handling, manual override, immutable empty reference; dose requires explicit tare |
 | REC-01/02 | History-driven ranking and learning deferred; fixture usual-dose values only |
 | SEQ-01–05, STATE-01–04 | Sequenced dummy events, split additions/removal, separate roles, session lifetime, value snapshots; long-term storage deferred |
 | BREW-01 | Transitions on first dummy liquid event; physical detection ≤2 s remains a hardware acceptance test |

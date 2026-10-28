@@ -10,14 +10,15 @@ bool near(float a, float b) { return std::abs(a - b) < 0.001F; }
 int main() {
     Controller c;
     const auto pf = c.equipment()[1];
-    for (float dose : {15.0F, 18.0F, 19.2F, 21.0F}) {
-        const auto r = recognize(482.3F + dose, &pf, 1);
-        CHECK(r.equipment.has_value()); CHECK(r.dose_g.has_value()); CHECK(near(*r.dose_g, dose));
+    for (float offset : {-40.0F, -18.0F, 0.0F, 18.0F, 40.0F}) {
+        const auto r = recognize(482.3F + offset, &pf, 1);
+        CHECK(r.equipment.has_value()); CHECK(!r.ambiguous);
     }
-    for (float dose : {14.9F, 21.1F}) CHECK(!recognize(482.3F + dose, &pf, 1).equipment);
+    for (float offset : {-40.1F, 40.1F}) CHECK(!recognize(482.3F + offset, &pf, 1).equipment);
     auto duplicate = pf; duplicate.id = 99;
     const Equipment ambiguous[] = {pf, duplicate};
     CHECK(!recognize(500.3F, ambiguous, 2).equipment);
+    CHECK(recognize(500.3F, ambiguous, 2).ambiguous);
     CHECK(!recognize(std::numeric_limits<float>::quiet_NaN(), &pf, 1).equipment);
 
     c.load_scenario(Scenario::sequential);

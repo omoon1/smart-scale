@@ -44,9 +44,14 @@ idf:
 	@./scripts/idf.sh $(ARGS)
 test:
 	@mkdir -p build-host
-	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main main/session.cxx tests/session_test.cxx -o build-host/session_tests
+	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main main/session.cxx main/scale.cxx tests/session_test.cxx -o build-host/session_tests
 	@./build-host/session_tests
+	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main main/session.cxx main/scale.cxx tests/scale_test.cxx -o build-host/scale_tests
+	@./build-host/scale_tests
+	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main main/session.cxx main/scale.cxx tests/filter_test.cxx -o build-host/filter_tests
+	@./build-host/filter_tests
 preview:
 	@./scripts/host.sh --screenshots
+	@./scripts/host.sh --live-screenshots
 simulator:
 	@./scripts/host.sh --interactive

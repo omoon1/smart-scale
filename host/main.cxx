@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
@@ -78,9 +79,44 @@ int main(int argc, char** argv) {
     static lv_indev_drv_t pointer;
     lv_indev_drv_init(&pointer); pointer.type = LV_INDEV_TYPE_POINTER; pointer.read_cb = input;
     lv_indev_drv_register(&pointer);
-    smart_scale::Controller controller;
+    const bool live_test = argc > 1 && std::string(argv[1]) == "--live-screenshots";
+    smart_scale::Controller controller(live_test);
     smart_scale::ui::View view(controller);
     view.init();
+    if (live_test) {
+        std::filesystem::create_directories("build-host/screens");
+        screenshot(view, "16-hx711-disconnected");
+        click(view, 268, 286);
+        screenshot(view, "17-hx711-calibrate");
+        std::uint64_t now = 0;
+        auto feed = [&](int raw) {
+            for (int i = 0; i < 60; ++i) { controller.sensor_sample(raw, now += 100); controller.tick(0.1F); pump(view); }
+        };
+        const int masses[] = {20, 50, 100};
+        for (int i = 0; i < 3; ++i) {
+            feed(-78000);
+            click(view, 240, 154); // Capture empty zero in centered dialog.
+            feed(-78000 + masses[i] * 866);
+            click(view, 146 + i * 94, 206);
+            require(controller.scale().ready(), "touch calibration succeeds");
+            require(std::abs(controller.scale().gross() - masses[i]) < 0.01F, "20/50/100 g buttons use exact mass");
+        }
+        screenshot(view, "18-hx711-calibrated");
+        click(view, 366, 32); // Close dialog.
+        feed(8600); // 100 g vessel.
+        click(view, 172, 286); // Tare.
+        require(std::abs(controller.scale().net()) < 0.01F, "touch tare");
+        screenshot(view, "19-hx711-live");
+        click(view, 60, 286); // Start brew.
+        require(controller.session().phase == smart_scale::Phase::brewing, "touch starts real brew");
+        feed(25920);
+        screenshot(view, "20-hx711-brewing");
+        controller.sensor_sample(std::nullopt, now + 1100); controller.tick(1.1F);
+        screenshot(view, "21-hx711-timeout");
+        require(controller.session().uncertain, "timeout invalidates live brew");
+        std::cout << "Live HX711 UI checks passed\n";
+        return 0;
+    }
     const bool smoke = argc > 1 && std::string(argv[1]) == "--interactive-smoke";
     if (argc > 1 && (std::string(argv[1]) == "--interactive" || smoke)) {
 #ifdef SMART_SCALE_SDL
@@ -160,7 +196,7 @@ int main(int argc, char** argv) {
     require(*controller.session().dose_g == 0.1F, "Lower bound clamps");
     click(view, 240, 156); pump(view, 500); pump(view, 500);
     const auto idle_flushes = flush_count;
-    for (int i = 0; i < 10; ++i) pump(view, 100);
+    for (int i = 0; i < 60; ++i) pump(view, 100);
     require(flush_count == idle_flushes, "Unchanged dose dialog performs no display transfers");
     click(view, 364, 30);
     require(*controller.session().dose_g == 20.0F, "Closing preserves selected dose");

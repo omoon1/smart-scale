@@ -2,7 +2,9 @@
 
 ESP-IDF + modern C++ coffee-scale UX prototype for the **Waveshare ESP32-S3-Touch-LCD-3.5** (ST7796 display / FT6336 touch). LVGL renders a 480 × 320 landscape interface on the native 320 × 480 panel.
 
-**This is a dummy-data prototype.** Weight, flow, battery level, stable readings, and recognition scenarios are simulated. Equipment profiles and the last eight brew records live in RAM and disappear on reboot. No load-cell driver, calibration, network service, or machine control is connected.
+**Device firmware now reads an HX711 load cell** on GPIO17 (DOUT) / GPIO18 (SCK), with live weight, tare, touchscreen two-point calibration, and calibration persistence in NVS. Calibrate your own cell before use; there is no hard-coded calibration factor. The desktop simulator retains deterministic dummy scenarios. Equipment profiles and the last eight brew records remain RAM-only. No network service or machine control is connected.
+
+See [HX711 wiring, calibration, and operating instructions](docs/hx711.md). Camera use is incompatible with these GPIO assignments.
 
 ![Actual LVGL screens](docs/screens/overview.png)
 
@@ -43,7 +45,15 @@ make flash /dev/ttyACM0
 
 For the interactive desktop simulator, install SDL2 development files (`brew install sdl2` or `sudo apt install libsdl2-dev`). `make preview` requires CMake/Ninja, provided by `make install` or your package manager; it does not require SDL or a display server. Images are in `build-host/screens/`. `python scripts/screens.py` converts them to PNGs when Pillow is installed.
 
-## Try the screens
+## Use the physical scale
+
+1. Connect the HX711 as described in [the wiring guide](docs/hx711.md), then build and flash.
+2. Tap **Calibrate**. With the platform empty and stable, **Capture empty zero**. Place a known **20 g, 50 g, or 100 g** mass, wait for stability, and tap its mass. Calibration is saved across reboots.
+3. Remove the mass. Registered objects are recognized within ±40 g when placed and stable; overlapping matches require manual selection. Recognition does not automatically tare. Place a container, wait for **Stable**, and tap **Tare** to weigh ingredients.
+4. Set the coffee dose if required. Tap **Start brew** with the vessel in place, before pouring. This captures a fresh baseline and starts the timer. Tap **Finish** to save a RAM record.
+5. Use **Reset** or **Next brew**, then remove the load. A disconnected sensor displays `?`; a failed measurement during brewing invalidates that brew.
+
+## Try the desktop demo screens
 
 1. Boot into the known-cup fixture: 142.6 g cup, automatic tare, measured 18.2 g dose.
 2. Touch the **entire object card** to choose equipment or register a new profile. Touch the dose card for the dose editor: 18/20/22 g presets, plus ±1 g and ±0.1 g buttons across 0.1–60.0 g. Hold an adjustment button to repeat after 400 ms, every 100 ms until release or slide-off. Dose changes save immediately; close returns to weighing.
@@ -61,6 +71,9 @@ The `.cxx`/`.hxx` organization, nested device namespaces, `device()` accessor, t
 
 | Path | Responsibility |
 | --- | --- |
+| `main/scale.hxx`, `scale.cxx` | Calibration, tare, stability, and sensor health |
+| `main/acquisition.hxx`, `acquisition.cxx` | Dedicated timestamped acquisition task and bounded sample queue |
+| `main/hx711.hxx`, `hx711.cxx` | ESP-IDF HX711 GPIO reader and NVS persistence |
 | `main/session.hxx`, `session.cxx` | Platform-independent state, recognition helper, bounded RAM records, dummy source |
 | `main/ui.hxx`, `ui.cxx` | LVGL screen rendering, modal drafts, event routing |
 | `main/device.hxx`, `device.cxx` | Board I2C/SPI, display, touch, backlight, debounced BOOT button |

@@ -1,5 +1,9 @@
 #include "ui.hxx"
 #include "equipment_icons.hxx"
+#ifdef ESP_PLATFORM
+#include "esp_log.h"
+#include "esp_timer.h"
+#endif
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -118,7 +122,7 @@ void View::open(Dialog dialog) {
     }
     schedule_draw();
 }
-void View::reset() { controller_.reset(); dialog_ = Dialog::none; schedule_draw(); }
+void View::reset() { controller_.scale().cancel_calibration(); controller_.reset(); dialog_ = Dialog::none; schedule_draw(); }
 void View::update() {
     if (rendered_phase_ != controller_.session().phase) {
         dialog_ = Dialog::none; // Cancel unconfirmed edits when extraction starts.
@@ -135,6 +139,8 @@ void View::draw() {
     binding_count_ = 0;
     weight_ = weight_unit_ = time_ = flow_ = status_ = object_text_ = dose_text_ = target_text_ = chart_ = nullptr;
     dose_value_ = icon_name_ = kind_input_ = chart_max_ = chart_time_ = current_point_ = object_weight_ = nullptr;
+    start_button_ = tare_button_ = nullptr;
+    sensor_status_ = calibration_message_ = registration_weight_label_ = registration_status_ = registration_next_ = nullptr;
     icon_buttons_.fill(nullptr);
     series_ = target_series_ = nullptr;
     rendered_phase_ = controller_.session().phase;
@@ -144,14 +150,14 @@ void View::draw() {
                16, 8, 156, 44, Action::toggle_mode);
     } else label(screen_, phase == Phase::brewing ? "Running" : phase == Phase::result ? "Brew complete" : "Reset",
                  20, 19, 230, &lv_font_montserrat_22);
-    label(screen_, "DEMO   82% " LV_SYMBOL_BATTERY_3, 328, 24, 145, &lv_font_montserrat_14, mint);
+    label(screen_, controller_.live() ? "HX711  LIVE" : "DEMO   82% " LV_SYMBOL_BATTERY_3, 328, 24, 145, &lv_font_montserrat_14, mint);
     if (phase == Phase::brewing || phase == Phase::result) draw_brew(screen_, phase == Phase::result);
     else if (phase == Phase::remove_load) {
         label(screen_, LV_SYMBOL_REFRESH, 214, 82, 60, &lv_font_montserrat_48, amber);
         label(screen_, "Remove objects from the scale", 32, 154, 420, &lv_font_montserrat_22);
-        label(screen_, "The current load will not become the empty zero.\nSession cleared. Equipment and demo records retained.",
+        label(screen_, "The current load will not become the empty zero.\nSession cleared. Equipment and records retained.",
               32, 192, 420, &lv_font_montserrat_14, muted);
-        button(screen_, "Simulate removal", 140, 264, 200, 44, Action::remove, 0, true);
+        if (!controller_.live()) button(screen_, "Simulate removal", 140, 264, 200, 44, Action::remove, 0, true);
     } else draw_ready(screen_);
     if (dialog_ != Dialog::none) draw_dialog(screen_);
     lv_scr_load(screen_);
@@ -161,7 +167,7 @@ void View::draw() {
 void View::draw_ready(lv_obj_t* root) {
     weight_ = label(root, "0.0", 22, 108, 218, &weight_font_72);
     weight_unit_ = label(root, "g", 0, 0, 28, &lv_font_montserrat_22);
-    label(root, "Place to weigh.", 24, 222, 250, &lv_font_montserrat_14, muted);
+    sensor_status_ = label(root, "Place to weigh.", 24, 210, 248, &lv_font_montserrat_14, muted);
     auto* object = button(root, "", 280, 66, 184, 84, Action::objects);
     object_text_ = label(object, "", 12, 10, 160, &lv_font_montserrat_18);
     lv_label_set_long_mode(object_text_, LV_LABEL_LONG_DOT);
@@ -185,8 +191,14 @@ void View::draw_ready(lv_obj_t* root) {
     lv_obj_set_style_line_rounded(seam, true, 0);
     lv_obj_clear_flag(seam, LV_OBJ_FLAG_CLICKABLE);
     dose_text_ = label(dose, "", 12, 34, 160, &lv_font_montserrat_18);
-    button(root, controller_.demo_running() ? "Demo running" : "Run demo", 16, 266, 140, 44, Action::run, 0, true);
-    button(root, "Scenarios", 164, 266, 110, 44, Action::demo);
+    if (controller_.live()) {
+        start_button_ = button(root, "Start brew", 16, 266, 110, 44, Action::run, 0, true);
+        tare_button_ = button(root, "Tare", 134, 266, 76, 44, Action::tare);
+        button(root, "Calibrate", 218, 266, 108, 44, Action::calibration);
+    } else {
+        button(root, controller_.demo_running() ? "Demo running" : "Run demo", 16, 266, 140, 44, Action::run, 0, true);
+        button(root, "Scenarios", 164, 266, 110, 44, Action::demo);
+    }
     button(root, "Reset", 364, 266, 100, 44, Action::reset);
 }
 void View::draw_brew(lv_obj_t* root, bool result) {
@@ -227,18 +239,73 @@ void View::draw_brew(lv_obj_t* root, bool result) {
     status_ = label(root, "", 32, 84, 430, &lv_font_montserrat_14, mint);
     target_text_ = label(root, "", 20, 244, 440, &lv_font_montserrat_14, muted);
     if (result) {
-        label(root, "Demo record: RAM only", 20, 282, 240, &lv_font_montserrat_14, mint);
+        label(root, controller_.live() ? "Brew record: RAM only" : "Demo record: RAM only", 20, 282, 240, &lv_font_montserrat_14, mint);
         button(root, "Next brew", 322, 270, 142, 44, Action::next, 0, true);
     } else {
-        button(root, controller_.session().paused ? "Resume flow" : "Pause flow", 16, 270, 140, 44, Action::pause);
+        if (!controller_.live()) button(root, controller_.session().paused ? "Resume flow" : "Pause flow", 16, 270, 140, 44, Action::pause);
         button(root, "Reset", 164, 270, 96, 44, Action::reset);
         button(root, "Finish", 322, 270, 142, 44, Action::finish, 0, true);
     }
 }
 void View::refresh_values() {
     const auto& s = controller_.session();
-    const auto weight_text = (s.phase == Phase::ready || (s.baseline_known && !s.uncertain))
-        ? number(s.net_g) : "?";
+    if (start_button_) {
+        const bool ready = controller_.scale().ready() && controller_.scale().stable();
+        if (ready && s.loaded) lv_obj_clear_state(start_button_, LV_STATE_DISABLED);
+        else lv_obj_add_state(start_button_, LV_STATE_DISABLED);
+        if (ready) lv_obj_clear_state(tare_button_, LV_STATE_DISABLED);
+        else lv_obj_add_state(tare_button_, LV_STATE_DISABLED);
+    }
+    if (sensor_status_ && controller_.live()) set_text(sensor_status_, controller_.scale().status());
+    if (calibration_message_) set_text(calibration_message_,
+        (calibration_message_text_ + "\n" + controller_.scale().status()).c_str());
+    if (registration_weight_label_) {
+        const bool stable = controller_.scale().ready() && controller_.scale().stable();
+        set_text(registration_weight_label_, number(controller_.scale().ready() ?
+            std::optional<float>{controller_.scale().gross()} : std::nullopt, " g").c_str());
+        set_text(registration_status_, controller_.scale().status());
+        if (stable) lv_obj_clear_state(registration_next_, LV_STATE_DISABLED);
+        else lv_obj_add_state(registration_next_, LV_STATE_DISABLED);
+    }
+    const bool available = (s.phase == Phase::ready || (s.baseline_known && !s.uncertain)) &&
+        (!controller_.live() || s.phase == Phase::result || controller_.scale().ready());
+    std::optional<float> displayed = available ? std::optional<float>{s.net_g} : std::nullopt;
+    if (controller_.live()) {
+        if (display_epoch_ != controller_.scale().display_epoch() || display_phase_ != s.phase) {
+            weight_display_.reset();
+            display_epoch_ = controller_.scale().display_epoch();
+            display_phase_ = s.phase;
+        }
+        displayed = weight_display_.update(displayed);
+    }
+    const auto weight_text = number(displayed);
+    // Log actual visible transitions, including unavailable/recovery. Retain the
+    // last text across screen redraws to avoid duplicate logs. Never log in the
+    // acquisition task or while holding the HX711 clocking critical section.
+#ifdef ESP_PLATFORM
+    const auto log_ms = static_cast<std::uint64_t>(esp_timer_get_time() / 1000);
+#else
+    const auto log_ms = static_cast<std::uint64_t>(lv_tick_get());
+#endif
+    if (controller_.live() && weight_ && weight_text != last_logged_weight_ &&
+        (last_logged_weight_.empty() || log_ms - last_weight_log_ms_ >= 1000)) {
+        last_weight_log_ms_ = log_ms;
+        last_logged_weight_ = weight_text;
+        const auto& scale = controller_.scale();
+        const auto raw = scale.last_raw() ? std::to_string(*scale.last_raw()) : "NA";
+        const auto gross = scale.ready() ? number(scale.gross(), " g") : "NA";
+        char line[256];
+        std::snprintf(line, sizeof(line),
+            "display=%s g raw=%s sample_ms=%llu gross=%s net=%.4f g stable=%d ready=%d status=%s",
+            weight_text.c_str(), raw.c_str(), static_cast<unsigned long long>(scale.sample_ms()),
+            gross.c_str(), static_cast<double>(scale.ready() ? scale.net() : NAN),
+            scale.stable(), scale.ready(), scale.status());
+#ifdef ESP_PLATFORM
+        ESP_LOGI("weight", "%s", line);
+#else
+        std::printf("weight: %s\n", line);
+#endif
+    }
     const lv_font_t* weight_font = s.phase != Phase::ready && s.net_g >= 100.0F ?
         &lv_font_montserrat_32 : &lv_font_montserrat_48;
     if (s.phase == Phase::ready) {
@@ -267,7 +334,7 @@ void View::refresh_values() {
     if (s.phase == Phase::ready) {
         const auto& item = s.active_object;
         if (object_text_) {
-            set_text(object_text_, item ? item->name.c_str() : "Object");
+            set_text(object_text_, item ? item->name.c_str() : controller_.live() && !controller_.equipment_count() ? "Register object" : controller_.object_ambiguous() ? "Choose object" : "Object ?");
             set_text(object_weight_, number(item ? item->empty_g : std::nullopt, " g").c_str());
         }
         if (dose_text_) set_text(dose_text_, number(s.dose_g, " g").c_str());
@@ -280,11 +347,11 @@ void View::refresh_values() {
     const auto secs = static_cast<unsigned>(s.seconds);
     std::snprintf(clock, sizeof(clock), "%02u:%02u", secs / 60, secs % 60);
     set_text(time_, clock);
-    // Demo volume estimate: assume liquid density of 1.0 g/ml.
+    // Demo volume estimate; real sensor flow is reported in grams per second.
     constexpr float demo_density_g_ml = 1.0F;
     const float flow_ml_s = s.flow_g_s / demo_density_g_ml;
     set_text(flow_, s.phase == Phase::result ? ("Ratio " + (s.ratio() ? "1:" + number(s.ratio()) : "?")).c_str()
-        : s.uncertain ? "Flow unavailable" : number(flow_ml_s, " ml/s").c_str());
+        : s.uncertain ? "Flow unavailable" : number(controller_.live() ? s.flow_g_s : flow_ml_s, controller_.live() ? " g/s" : " ml/s").c_str());
     std::string status;
     if (s.uncertain) status = "Baseline uncertain - weight unavailable";
     else if (s.target_g && s.net_g >= *s.target_g) status = "Target reached  +" + number(s.net_g - *s.target_g, " g");
@@ -338,7 +405,15 @@ void View::draw_dialog(lv_obj_t* root) {
     lv_obj_center(box);
     const int width = dialog_ == Dialog::registration ? 452 : 304;
     button(box, LV_SYMBOL_CLOSE, width - 52, 4, 44, 44, Action::close);
-    if (dialog_ == Dialog::objects) {
+    if (dialog_ == Dialog::calibration) {
+        label(box, "Calibrate scale", 16, 18, 230, &lv_font_montserrat_22);
+        label(box, "1. Empty platform, wait, capture zero.\n2. Place known mass and wait.\n3. Tap its exact mass below.", 16, 62, 272);
+        button(box, "Capture empty zero", 16, 126, 272, 42, Action::capture_zero);
+        button(box, "20 g", 16, 178, 84, 42, Action::calibrate, 20);
+        button(box, "50 g", 110, 178, 84, 42, Action::calibrate, 50);
+        button(box, "100 g", 204, 178, 84, 42, Action::calibrate, 100);
+        calibration_message_ = label(box, "", 16, 232, 272, &lv_font_montserrat_14, mint);
+    } else if (dialog_ == Dialog::objects) {
         auto* list = lv_obj_create(box);
         style(list);
         lv_obj_set_pos(list, 12, 52);
@@ -419,16 +494,34 @@ void View::draw_registration(lv_obj_t* box) {
         lv_obj_set_pos(kind_input_, 18, 110); lv_obj_set_size(kind_input_, 414, 50);
     } else {
         label(box, "Empty reference weight", 18, 60, 400, &lv_font_montserrat_22);
-        label(box, "156.8 g", 18, 102, 280, &lv_font_montserrat_48);
-        label(box, "Simulated reading - no load cell attached", 18, 165, 416, &lv_font_montserrat_14, muted);
-        button(box, registration_stable_ ? "Stable reading" : "Unstable - wait", 18, 196, 250, 46, Action::stable, 0, registration_stable_);
+        if (controller_.live()) {
+            registration_weight_label_ = label(box, "?", 18, 102, 280, &lv_font_montserrat_48);
+            registration_status_ = label(box, "", 18, 165, 416, &lv_font_montserrat_14, muted);
+            label(box, "Place empty equipment on the platform.", 18, 204, 416);
+        } else {
+            label(box, "156.8 g", 18, 102, 280, &lv_font_montserrat_48);
+            label(box, "Simulated reading - no load cell attached", 18, 165, 416, &lv_font_montserrat_14, muted);
+            button(box, registration_stable_ ? "Stable reading" : "Unstable - wait", 18, 196, 250, 46, Action::stable, 0, registration_stable_);
+        }
     }
     button(box, "Back", 16, 254, 90, 40, Action::register_back);
     auto* next = button(box, "Continue", 290, 254, 144, 40, Action::register_next, 0, true);
+    registration_next_ = next;
     if (registration_step_ == 1 && !registration_stable_) lv_obj_add_state(next, LV_STATE_DISABLED);
 }
 void View::action(Action a, int value) {
     switch (a) {
+    case Action::tare: controller_.tare(); break;
+    case Action::calibration:
+        controller_.scale().cancel_calibration();
+        calibration_message_text_.clear(); open(Dialog::calibration); return;
+    case Action::capture_zero:
+        calibration_message_text_ = controller_.scale().capture_zero() ? "" : "Wait for a stable reading.";
+        break;
+    case Action::calibrate:
+        calibration_message_text_ = controller_.scale().calibrate(static_cast<float>(value)) ?
+            "Calibrated. Remove known mass." : "Capture zero, then stable mass.";
+        break;
     case Action::dose_adjust:
     case Action::dose_preset: {
         if (dialog_ != Dialog::dose || controller_.session().phase != Phase::ready) return;
@@ -457,10 +550,10 @@ void View::action(Action a, int value) {
         break;
     case Action::demo: open(Dialog::demo); return;
     case Action::registration: open(Dialog::registration); return;
-    case Action::close: dialog_ = Dialog::none; break;
+    case Action::close: controller_.scale().cancel_calibration(); dialog_ = Dialog::none; break;
     case Action::choose_object: controller_.select_equipment(static_cast<std::size_t>(value)); dialog_ = Dialog::none; break;
     case Action::choose_scenario: controller_.load_scenario(static_cast<Scenario>(value)); dialog_ = Dialog::none; break;
-    case Action::run: controller_.run_demo(); break;
+    case Action::run: if (controller_.live()) controller_.start_brew(); else controller_.run_demo(); break;
     case Action::pause: controller_.pause_demo(); break;
     case Action::finish: controller_.finish(); break;
     case Action::next: controller_.next(); break;
@@ -468,6 +561,11 @@ void View::action(Action a, int value) {
     case Action::remove: controller_.remove_object(); break;
     case Action::stable: registration_stable_ = !registration_stable_; break;
     case Action::register_next:
+        if (controller_.live() && registration_step_ == 1) {
+            if (!controller_.scale().ready() || !controller_.scale().stable() || controller_.scale().gross() <= 0) return;
+            registration_weight_ = controller_.scale().gross();
+            registration_stable_ = true;
+        }
         if (registration_step_ == 0 && kind_input_) {
             registration_kind_ = static_cast<Kind>(lv_dropdown_get_selected(kind_input_));
         }
@@ -493,7 +591,7 @@ void View::action(Action a, int value) {
         const auto registration_name = std::string(kind_name(registration_kind_)) + " " + equipment_icons[registration_icon_];
         const char* config = registration_kind_ == Kind::cup ? "Container only" : registration_kind_ == Kind::portafilter ?
             "Clean, with basket" : "Dripper + server + filter";
-        if (controller_.register_equipment({0, registration_kind_, registration_name, config, 156.8F, std::nullopt}, registration_stable_))
+        if (controller_.register_equipment({0, registration_kind_, registration_name, config, controller_.live() ? registration_weight_ : 156.8F, std::nullopt}, registration_stable_))
             dialog_ = Dialog::objects;
         else registration_error_ = "Equipment list full";
         break;
