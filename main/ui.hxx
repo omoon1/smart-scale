@@ -12,7 +12,7 @@ public:
     void open(Dialog dialog);
     void reset();
 private:
-    enum class Action { objects, dose, toggle_mode, demo, close, apply_dose,
+    enum class Action { objects, dose, toggle_mode, demo, close,
         choose_object, choose_scenario, run, pause, finish, next,
         reset, remove, registration, register_next, register_back, register_save, stable };
     struct Binding { View* view{}; Action action{}; int value{}; };
@@ -25,6 +25,7 @@ private:
     void draw_registration(lv_obj_t* parent);
     void action(Action action, int value);
     static void clicked(lv_event_t* event);
+    static void dose_changed(lv_event_t* event);
     static void deferred_draw(void* context);
     void schedule_draw();
     void refresh_values();
