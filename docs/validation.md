@@ -36,3 +36,12 @@ The icon set uses original vector geometry, pre-rendered at 32 px for the picker
 ## Held adjustment and equipment removal
 
 Host tests cover repeated fine adjustment, no extra increment on release, stopping after release/slide-off/brew start, removal confirmation and cancel, list compaction, removal of all profiles, and registration from the empty state. Controller tests cover phase locks, invalid IDs, monotonic IDs after deletion, preserved readings and archived snapshots, and all demo types with an empty profile list. Repeat defaults are LVGL 8.4's 400 ms hold threshold and 100 ms interval. Check touch release/slide-off behavior on the physical FT6336 device before release.
+
+
+## HX711 integration checks
+
+- `make test`: existing 503 session checks and new signed ADC/calibration/tare/live-session suite pass.
+- `make preview`: original UI interaction checks and live injected-raw touch calibration, tare, Start, and timeout checks pass. Screens 16–21 show disconnected, calibration, live, brewing, and fault states; visually inspected at 480×320.
+- `make build`: ESP-IDF v5.5.2 / ESP32-S3 firmware compiles and links, including GPIO and NVS adapters.
+- Local build environment note: the installed component manager 2.5.2 attempted to inspect sandbox PIDs through psutil and failed before configuration. Only its ignored local Python environment was adjusted to use the Linux parent PID fallback. No dependency workaround is committed; CI uses the existing Espressif container.
+- Hardware acceptance remains open: electrical signal timing, load-cell polarity, repeatability/linearity, physical disconnection behavior, and calibration persistence on actual flash. See [HX711 acceptance steps](hx711.md).

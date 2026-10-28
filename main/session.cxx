@@ -24,11 +24,51 @@ Recognition recognize(float total, const Equipment* items, std::size_t count) {
     }
     return result;
 }
-Controller::Controller() {
+Controller::Controller(bool live) : live_(live) {
+    if (live_) { equipment_count_ = 0; return; }
     equipment_[0] = {1, Kind::cup, "Ceramic cup", "Cup only", 142.6F, std::nullopt};
     equipment_[1] = {2, Kind::portafilter, "Portafilter A", "Clean, with basket", 482.3F, 18.0F};
     equipment_[2] = {3, Kind::pour_over_set, "V60 set", "Dripper + server + filter", 326.4F, 20.0F};
     load_scenario(Scenario::known);
+}
+void Controller::sensor_sample(std::optional<std::int32_t> raw, std::uint64_t now) {
+    if (!live_) return;
+    if (raw) scale_.ingest(*raw, now);
+    scale_.check_timeout(now);
+    if (session_.phase == Phase::result) return; // Keep archived result immutable.
+    if (!scale_.ready()) {
+        if (session_.phase == Phase::brewing) session_.uncertain = true;
+        return;
+    }
+    if (scale_.stable()) {
+        session_.loaded = scale_.gross() > 2.0F;
+        if (!session_.loaded) {
+            if (session_.phase == Phase::remove_load) session_.phase = Phase::ready;
+            if (session_.phase == Phase::ready) {
+                session_.active_object.reset();
+                scale_.clear_tare();
+            }
+        }
+    }
+    // A significant negative step during brewing indicates removal, not flow.
+    if (session_.phase == Phase::brewing && scale_.net() < session_.net_g - 5.0F)
+        session_.uncertain = true;
+}
+bool Controller::tare() {
+    if (!live_ || session_.phase != Phase::ready || !scale_.tare()) return false;
+    session_.net_g = 0;
+    session_.baseline_known = true;
+    return true;
+}
+bool Controller::start_brew() {
+    if (!live_ || session_.phase != Phase::ready || !session_.loaded || scale_.gross() <= 2.0F || !scale_.tare()) return false;
+    session_.phase = Phase::brewing;
+    session_.baseline_known = true;
+    session_.uncertain = false;
+    session_.net_g = session_.seconds = session_.flow_g_s = 0;
+    session_.samples[0] = {0, 0};
+    session_.sample_count = 1;
+    return true;
 }
 const Record& Controller::latest_record() const {
     return records_[(next_record_ + records_.size() - 1) % records_.size()];
@@ -42,6 +82,10 @@ void Controller::target() {
 }
 bool Controller::select_equipment(std::size_t index) {
     if (session_.phase != Phase::ready || index >= equipment_count_) return false;
+    if (live_) {
+        if (!scale_.ready() || !scale_.stable() || scale_.gross() <= 2.0F || !equipment_[index].empty_g) return false;
+        scale_.set_tare(*equipment_[index].empty_g);
+    }
     place(index);
     return true;
 }
@@ -52,7 +96,7 @@ void Controller::place(std::size_t index) {
     if (item.kind == Kind::portafilter) session_.weighing_tool = item;
     else session_.vessel = item;
     session_.loaded = true;
-    session_.baseline_known = true; // Stable baseline supplied by the dummy source.
+    session_.baseline_known = true; // Live selection is gated on a stable sensor.
     session_.net_g = 0;
     target();
 }
@@ -166,9 +210,11 @@ void Controller::reset() {
     demo_running_ = false;
     demo_time_ = 0;
     demo_stage_ = 0;
+    if (live_) scale_.clear_tare();
 }
 void Controller::next() { reset(); }
 void Controller::load_scenario(Scenario scenario) {
+    if (live_) return;
     if (session_.phase == Phase::brewing) return;
     session_ = {};
     scenario_ = scenario;
@@ -187,10 +233,34 @@ void Controller::load_scenario(Scenario scenario) {
     }
 }
 void Controller::run_demo() {
+    if (live_) return;
     if (session_.phase == Phase::ready || session_.phase == Phase::brewing) demo_running_ = true;
 }
 void Controller::pause_demo() { session_.paused = !session_.paused; }
 void Controller::tick(float dt) {
+    if (live_) {
+        if (!std::isfinite(dt) || dt <= 0) return;
+        const bool valid = scale_.ready();
+        if (session_.phase == Phase::brewing) {
+            session_.seconds += dt;
+            if (!valid || !session_.loaded) session_.uncertain = true;
+            if (!session_.uncertain) {
+                const float net = scale_.net();
+                session_.flow_g_s = (net - session_.net_g) / dt;
+                session_.net_g = net;
+                if (session_.sample_count == session_.samples.size()) {
+                    for (std::size_t i = 1; i <= 300; ++i) session_.samples[i] = session_.samples[i * 2];
+                    session_.sample_count = 301;
+                }
+                session_.samples[session_.sample_count++] = {session_.seconds, net};
+            } else session_.flow_g_s = 0;
+        } else if (session_.phase == Phase::ready && valid) {
+            session_.net_g = scale_.net();
+            if (scale_.stable() && session_.active_object && session_.active_object->kind == Kind::portafilter)
+                weigh_beans(session_.net_g);
+        }
+        return;
+    }
     if (!demo_running_ || !std::isfinite(dt) || dt <= 0) return;
     demo_time_ += dt;
     if (scenario_ == Scenario::sequential && session_.phase == Phase::ready) {

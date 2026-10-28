@@ -1,5 +1,6 @@
 #pragma once
 #include "config.hxx"
+#include "scale.hxx"
 #include <array>
 #include <cstdint>
 #include <optional>
@@ -39,7 +40,13 @@ Recognition recognize(float total_g, const Equipment* equipment, std::size_t cou
 // Pure C++ state owner. All calls are serialized by the UI task.
 class Controller {
 public:
-    Controller();
+    explicit Controller(bool live = false);
+    bool live() const { return live_; }
+    Scale& scale() { return scale_; }
+    const Scale& scale() const { return scale_; }
+    void sensor_sample(std::optional<std::int32_t> raw, std::uint64_t now_ms);
+    bool tare();
+    bool start_brew();
     [[nodiscard]] const Session& session() const { return session_; }
     [[nodiscard]] const auto& equipment() const { return equipment_; }
     [[nodiscard]] std::size_t equipment_count() const { return equipment_count_; }
@@ -66,6 +73,8 @@ private:
     void target();
     void place_demo_kind(Kind kind);
     void archive(bool aborted);
+    bool live_{};
+    Scale scale_;
     Session session_{};
     std::array<Equipment, config::max_equipment> equipment_{};
     std::size_t equipment_count_{3};

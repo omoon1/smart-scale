@@ -20,6 +20,10 @@ Display and touch rotation follow the vendor 90-degree configuration. Display RG
 
 The UI uses the board's existing 3.3 V power rail. The adapter only changes the vendor-documented DCDC1 PWM bit; it does not initialize camera/audio/RTC rails or change battery charging policy. USB-powered display bring-up is the initial validation target. Battery-powered operation, wake/power policy, and any factory bootloader state still need validation on the physical device.
 
+## HX711 load cell
+
+Use GPIO17 for DOUT, GPIO18 for SCK, 3V3 and GND. Keep the camera disconnected. See [HX711 bring-up](hx711.md) for module voltage requirements, calibration, and physical acceptance checks. Device firmware now uses live measurements; the scenario checks below apply to the desktop demo.
+
 ## Flash and check
 
 1. Connect a USB data cable and find the serial port. Run `make flash-monitor PORT=...`.

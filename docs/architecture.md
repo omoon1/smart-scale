@@ -1,8 +1,18 @@
 # Architecture and UX coverage
 
-## Executive summary
+## HX711 integration
 
-This first milestone makes the supplied Smart Scale UX requirements reviewable on the target display and on a desktop. It implements the screen flows with deterministic dummy measurements. It does not claim production recognition, measurement accuracy, persistent storage, or physical start-detection performance.
+The physical firmware constructs `Controller(true)` with no demo fixtures. `app_main` polls `device::scale::HX711` outside the LVGL lock, then passes signed raw counts into the pure-C++ `Scale` model under the same lock used by touch events. Only a ~100 us GPIO shift is inside a FreeRTOS critical section; conversion readiness never blocks. Channel A gain 128 is fixed. The UI loop polls at approximately 10 Hz; 80 SPS conversions are not all consumed.
+
+`Scale` separates persisted empty-platform calibration from transient vessel tare. Its ten-sample average and range check gate tare, calibration, registration, and brew start. The UI exposes empty-zero capture and 100/500/1000 g calibration. A versioned NVS blob stores zero and signed counts/g atomically; no old cell's constants are imported. Flash writes run outside the LVGL lock; save failure is visible and the previous saved calibration remains available on reboot.
+
+Live brewing uses an explicit Start action that tares the stable vessel. Weight is an absolute net reading, not a sum of positive deltas, so noise cannot ratchet the weight upward. Flow is the difference of filtered readings divided by elapsed time and is reported in g/s. A timeout, saturation, or detected load removal latches uncertainty for the current brew; reconnecting cannot silently repair its history. Reset preserves calibration but clears transient tare. Equipment selection is manual, and profiles/records still live in RAM. The existing desktop constructor preserves its demo source and fixture behavior.
+
+See [operating limits and failure modes](hx711.md). Physical signal timing and accuracy still require hardware acceptance.
+
+## Original UI milestone
+
+The original UI milestone makes the supplied Smart Scale UX requirements reviewable on the target display and on a desktop. It implements the screen flows with deterministic dummy measurements. It does not claim production recognition, measurement accuracy, persistent storage, or physical start-detection performance.
 
 ```mermaid
 flowchart TD

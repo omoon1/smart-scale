@@ -15,5 +15,7 @@ inline constexpr float object_tolerance_g = 0.5F; // Demo assumption, not calibr
 inline constexpr float combination_tolerance_g = 3.0F;
 inline constexpr int lcd_mosi = 1, lcd_clock = 5, lcd_dc = 3, lcd_backlight = 6;
 inline constexpr int i2c_sda = 8, i2c_scl = 7;
+// Camera must remain disconnected: GPIO17/18 share its VSYNC/HREF.
+inline constexpr int hx711_dout = 17, hx711_sck = 18;
 inline constexpr int reset_button = 0; // BOOT, not the hardware EN/reset switch.
 }
