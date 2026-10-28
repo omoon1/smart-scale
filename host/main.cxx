@@ -120,14 +120,16 @@ int main(int argc, char** argv) {
     click(view, 360, 200); screenshot(view, "03-dose");
     auto* wheel = find_roller(lv_scr_act());
     require(wheel != nullptr, "Dose card opens numeric wheel");
+    require(controller.session().dose_g && *controller.session().dose_g == 18.2F, "Opening wheel preserves dose");
     lv_roller_set_selected(wheel, 287, LV_ANIM_OFF);
+    lv_event_send(wheel, LV_EVENT_VALUE_CHANGED, nullptr);
+    require(controller.session().dose_g && *controller.session().dose_g == 28.8F, "Wheel selection updates dose immediately");
     click(view, 364, 30);
-    require(controller.session().dose_g && *controller.session().dose_g == 18.2F, "Cancel preserves dose");
+    require(controller.session().dose_g && *controller.session().dose_g == 28.8F, "Closing preserves selected dose");
     click(view, 360, 200);
     wheel = find_roller(lv_scr_act()); require(wheel != nullptr, "Wheel reopens");
-    lv_roller_set_selected(wheel, 287, LV_ANIM_OFF);
-    click(view, 240, 284);
-    require(controller.session().dose_g && *controller.session().dose_g == 28.8F, "Apply maps roller index to 0.1 g value");
+    require(lv_roller_get_selected(wheel) == 287, "Wheel reopens at saved selection");
+    click(view, 364, 30);
     controller.load_scenario(Scenario::known); pump(view);
     click(view, 90, 290); // Start dummy liquid stream via UI.
     for (int i = 0; i < 190; ++i) { controller.tick(0.1F); pump(view, 100); }
