@@ -3,7 +3,7 @@
 #include "lvgl.h"
 
 namespace smart_scale::ui {
-enum class Dialog { none, objects, dose, demo, registration };
+enum class Dialog { none, objects, dose, demo, registration, remove_equipment };
 class View {
 public:
     explicit View(Controller& controller) : controller_(controller) {}
@@ -13,7 +13,7 @@ public:
     void reset();
 private:
     enum class Action { objects, dose, toggle_mode, demo, close,
-        dose_adjust, dose_preset, choose_object, choose_scenario, run, pause, finish, next,
+        request_remove, confirm_remove, cancel_remove, dose_adjust, dose_preset, choose_object, choose_scenario, run, pause, finish, next,
         reset, remove, registration, register_next, register_back, register_save, choose_icon, stable };
     struct Binding { View* view{}; Action action{}; int value{}; };
     lv_obj_t* button(lv_obj_t* parent, const char* text, int x, int y, int w, int h,
@@ -25,6 +25,7 @@ private:
     void draw_registration(lv_obj_t* parent);
     void action(Action action, int value);
     static void clicked(lv_event_t* event);
+    static void dose_pressed(lv_event_t* event);
     static void deferred_draw(void* context);
     void schedule_draw();
     void refresh_values();
@@ -38,6 +39,7 @@ private:
     Phase rendered_phase_{Phase::ready};
     Dialog dialog_{Dialog::none};
     bool pending_draw_{};
+    std::uint32_t remove_equipment_id_{};
     int registration_step_{};
     Kind registration_kind_{Kind::cup};
     bool registration_stable_{true};

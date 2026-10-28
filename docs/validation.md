@@ -32,3 +32,7 @@ On device, compare touch-to-visible latency and energy per dose-selection task a
 The host checks Container type options, stable-weight gating, absence of keyboard/text input, all 20 in-place icon selections, Back navigation, and saving the selected type plus icon. Ready and brewing weight units use a separate smaller label aligned by font baseline. Review screenshots include the three-step registration, the selected icon, and larger dose buttons with no title/footer. Device touch accuracy and battery use remain physical validation tasks.
 
 The icon set uses original vector geometry, pre-rendered at 32 px for the picker and 22 px for names. Host checks require both fonts to contain all 20 identifiers. Portafilter uses private-use U+E004; other icons use Unicode identifiers. Profiles are currently RAM-only, so no persistent-name migration is needed.
+
+## Held adjustment and equipment removal
+
+Host tests cover repeated fine adjustment, no extra increment on release, stopping after release/slide-off/brew start, removal confirmation and cancel, list compaction, removal of all profiles, and registration from the empty state. Controller tests cover phase locks, invalid IDs, monotonic IDs after deletion, preserved readings and archived snapshots, and all demo types with an empty profile list. Repeat defaults are LVGL 8.4's 400 ms hold threshold and 100 ms interval. Check touch release/slide-off behavior on the physical FT6336 device before release.

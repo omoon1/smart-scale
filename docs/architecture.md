@@ -57,7 +57,7 @@ Recipe assumptions are 1:2 for espresso and 1:15 for a whole pour-over set. They
 | BREW-01 | Transitions on first dummy liquid event; physical detection ≤2 s remains a hardware acceptance test |
 | BREW-02–06, END-01 | Weight/time/flow, timestamped graph and current point, target line, excess indication, pauses, manual finish, result delta and RAM save status |
 | RESET-01–03 | BOOT and UI Reset, aborted RAM record, clears session, remove-load gate; MCU reset is a reboot |
-| EQ-01–05 | Three-step registration, stable fixture weight, 20-icon picker and type-plus-icon names, immutable record copies; editable configurations/defaults/deletion deferred |
+| EQ-01–05 | Three-step registration, stable fixture weight, 20-icon picker and type-plus-icon names, immutable record copies; confirmed profile removal; editable configurations/defaults deferred |
 | NFR-01 | Runtime is offline; persistent local records and deduplicated sync deferred |
 | NFR-02/03 | 480×320 actual LVGL rendering, text plus color, shared time/measurement state; physical readability and power-loss recovery unverified |
 | NFR-04 | No network stack is started and no cloud credentials/API are present |
@@ -86,3 +86,7 @@ Recipe assumptions are 1:2 for espresso and 1:15 for a whole pour-over set. They
 Introduce a load-cell source that emits timestamped placement, stability, removal, dose, and liquid events. Keep a pre-detection buffer and qualify start detection against measured minimum flow/vibration conditions. Replace RAM records with a versioned NVS/filesystem repository and atomic writes before adding offline synchronization. Clarify automatic combination learning, unknown-object tare, equipment configuration editing, dose edit policy, and language/localization before treating prototype assumptions as production requirements.
 
 No API is exposed by this firmware. A future BLE/cloud adapter should dispatch validated commands into the same serialized controller boundary, with pairing/authorization and idempotent record synchronization defined separately.
+
+Equipment deletion addresses stable, monotonically allocated profile IDs rather than row indexes. Compacting the list clears matching current-session selections but leaves archived equipment snapshots, physical-load state, and net weight unchanged. Demo placement resolves by equipment kind; missing kinds remain without a known baseline instead of falling through to another list entry.
+
+Dose adjustments use LVGL short-click, long-press, and repeat events. There is no repeat timer outside input handling. Press locking is disabled on these buttons, and pending redraws/non-ready phases reject further adjustments.

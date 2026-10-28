@@ -79,12 +79,23 @@ lv_obj_t* View::button(lv_obj_t* p, const char* text, int x, int y, int w, int h
     LV_ASSERT(binding_count_ < bindings_.size());
     auto& binding = bindings_[binding_count_++];
     binding = {this, action, value};
-    lv_obj_add_event_cb(obj, clicked, LV_EVENT_CLICKED, &binding);
+    if (action == Action::dose_adjust) {
+        lv_obj_clear_flag(obj, LV_OBJ_FLAG_PRESS_LOCK);
+        lv_obj_add_event_cb(obj, dose_pressed, LV_EVENT_SHORT_CLICKED, &binding);
+        lv_obj_add_event_cb(obj, dose_pressed, LV_EVENT_LONG_PRESSED, &binding);
+        lv_obj_add_event_cb(obj, dose_pressed, LV_EVENT_LONG_PRESSED_REPEAT, &binding);
+    } else lv_obj_add_event_cb(obj, clicked, LV_EVENT_CLICKED, &binding);
     return obj;
 }
 void View::clicked(lv_event_t* e) {
     const auto binding = *static_cast<Binding*>(lv_event_get_user_data(e));
     binding.view->action(binding.action, binding.value);
+}
+void View::dose_pressed(lv_event_t* e) {
+    const auto binding = *static_cast<Binding*>(lv_event_get_user_data(e));
+    // Native input repeat ends on release/press-lost; no background timer survives.
+    if (!binding.view->pending_draw_)
+        binding.view->action(binding.action, binding.value);
 }
 void View::schedule_draw() {
     if (!pending_draw_) { pending_draw_ = true; lv_async_call(deferred_draw, this); }
@@ -333,10 +344,27 @@ void View::draw_dialog(lv_obj_t* root) {
         lv_obj_set_pos(list, 12, 52);
         lv_obj_set_size(list, 280, 186);
         lv_obj_add_flag(list, LV_OBJ_FLAG_SCROLLABLE);
-        for (std::size_t i = 0; i < controller_.equipment_count(); ++i)
-            button(list, controller_.equipment()[i].name.c_str(), 0, static_cast<int>(i) * 52, 270, 46,
-                   Action::choose_object, static_cast<int>(i));
+        if (!controller_.equipment_count()) label(list, "No equipment yet", 14, 64, 250,
+                                                   &lv_font_montserrat_18, muted);
+        for (std::size_t i = 0; i < controller_.equipment_count(); ++i) {
+            const auto& item = controller_.equipment()[i];
+            auto* row = button(list, item.name.c_str(), 0, static_cast<int>(i) * 52, 214, 46,
+                              Action::choose_object, static_cast<int>(i));
+            lv_label_set_long_mode(lv_obj_get_child(row, 0), LV_LABEL_LONG_DOT);
+            lv_obj_set_height(lv_obj_get_child(row, 0), 24);
+            lv_obj_center(lv_obj_get_child(row, 0));
+            button(list, LV_SYMBOL_TRASH, 224, static_cast<int>(i) * 52, 46, 46,
+                   Action::request_remove, static_cast<int>(item.id));
+        }
         button(box, "+ Register equipment", 12, 246, 280, 46, Action::registration, 0, true);
+    } else if (dialog_ == Dialog::remove_equipment) {
+        label(box, "Remove equipment?", 16, 60, 272, &lv_font_montserrat_22);
+        for (std::size_t i = 0; i < controller_.equipment_count(); ++i)
+            if (controller_.equipment()[i].id == remove_equipment_id_)
+                label(box, controller_.equipment()[i].name.c_str(), 16, 108, 272, &lv_font_montserrat_22, mint);
+        label(box, "Saved brews stay unchanged.", 16, 174, 272, &lv_font_montserrat_14, muted);
+        button(box, "Cancel", 16, 238, 128, 50, Action::cancel_remove);
+        button(box, "Remove", 160, 238, 128, 50, Action::confirm_remove, 0, true);
     } else if (dialog_ == Dialog::dose) {
         dose_value_ = label(box, "", 16, 48, 272, &lv_font_montserrat_48);
         lv_obj_set_style_text_align(dose_value_, LV_TEXT_ALIGN_CENTER, 0);
@@ -411,6 +439,17 @@ void View::action(Action a, int value) {
         refresh_values();
         return; // Keep the existing dialog and redraw only changed values.
     }
+    case Action::request_remove:
+        if (pending_draw_ || dialog_ != Dialog::objects || controller_.session().phase != Phase::ready) return;
+        remove_equipment_id_ = static_cast<std::uint32_t>(value);
+        dialog_ = Dialog::remove_equipment;
+        break;
+    case Action::confirm_remove:
+        if (pending_draw_ || dialog_ != Dialog::remove_equipment || controller_.session().phase != Phase::ready) return;
+        controller_.remove_equipment(remove_equipment_id_);
+        dialog_ = Dialog::objects;
+        break;
+    case Action::cancel_remove: dialog_ = Dialog::objects; break;
     case Action::objects: open(Dialog::objects); return;
     case Action::dose: open(Dialog::dose); return;
     case Action::toggle_mode:

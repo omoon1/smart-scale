@@ -137,6 +137,21 @@ int main(int argc, char** argv) {
     click(view, 200, 216); // -0.1 g.
     require(*controller.session().dose_g == 20.0F, "Decrement buttons preserve precision");
     require(lv_scr_act() == dose_screen, "Adjustments do not rebuild the screen");
+    mouse_x = 276; mouse_y = 240; mouse_down = true;
+    for (int i = 0; i < 25; ++i) pump(view, 40);
+    const float repeated = *controller.session().dose_g;
+    require(repeated > 20.1F, "Holding fine adjustment repeats");
+    mouse_down = false; pump(view);
+    require(*controller.session().dose_g == repeated, "Release adds no extra click");
+    for (int i = 0; i < 20; ++i) pump(view, 40);
+    require(*controller.session().dose_g == repeated, "Repeat stops after release");
+    mouse_down = true;
+    for (int i = 0; i < 20; ++i) pump(view, 40);
+    mouse_x = 40; pump(view); // Slide outside the button.
+    const float lost = *controller.session().dose_g;
+    for (int i = 0; i < 20; ++i) pump(view, 40);
+    mouse_down = false; pump(view);
+    require(*controller.session().dose_g == lost, "Repeat stops when pointer leaves");
     controller.set_dose(60.0F); pump(view);
     click(view, 344, 216); click(view, 276, 216);
     require(*controller.session().dose_g == 60.0F, "Upper bound clamps");
@@ -152,6 +167,15 @@ int main(int argc, char** argv) {
     click(view, 360, 200);
     require(*controller.session().dose_g == 20.0F, "Reopening preserves dose");
     click(view, 364, 30);
+    view.open(ui::Dialog::dose); pump(view);
+    mouse_x = 276; mouse_y = 240; mouse_down = true;
+    for (int i = 0; i < 20; ++i) pump(view, 40);
+    controller.liquid(1, 1); pump(view);
+    const float locked_dose = *controller.session().dose_g;
+    for (int i = 0; i < 20; ++i) pump(view, 40);
+    mouse_down = false; pump(view);
+    require(*controller.session().dose_g == locked_dose, "Brew start cancels held adjustment");
+    controller.finish();
     controller.load_scenario(Scenario::known); pump(view);
     click(view, 90, 290); // Start dummy liquid stream via UI.
     for (int i = 0; i < 190; ++i) { controller.tick(0.1F); pump(view, 100); }
@@ -212,5 +236,18 @@ int main(int argc, char** argv) {
     require(controller.equipment()[3].name == "Pour-over set 🦋", "Selected type and icon survive Back and Save");
     require(controller.equipment()[3].kind == Kind::pour_over_set, "Selected equipment type survives registration");
     screenshot(view, "13-registered");
+    click(view, 344, 84); // First row trash button.
+    screenshot(view, "14-remove-equipment");
+    require(controller.equipment_count() == 4, "Remove requires confirmation");
+    click(view, 160, 270); // Cancel.
+    require(controller.equipment_count() == 4, "Cancel preserves equipment");
+    click(view, 344, 84); click(view, 310, 270);
+    require(controller.equipment_count() == 3, "Confirm removes the intended equipment");
+    require(controller.equipment()[0].kind == Kind::portafilter, "List compacts after removal");
+    for (int i = 0; i < 3; ++i) { click(view, 344, 84); click(view, 310, 270); }
+    require(controller.equipment_count() == 0, "All equipment can be removed");
+    screenshot(view, "15-empty-equipment");
+    click(view, 240, 276); pump(view);
+    require(find_type(lv_scr_act(), &lv_dropdown_class), "Empty list still allows registration");
     std::cout << "UI interaction checks passed\n";
 }
