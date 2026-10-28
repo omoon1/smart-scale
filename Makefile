@@ -3,16 +3,43 @@ SHELL := /bin/bash
 PORT ?=
 BAUD ?= 460800
 ARGS ?= --help
-.PHONY: help install setup build flash monitor flash-monitor menuconfig size clean fullclean idf test preview simulator
+# Treat a trailing /dev/... argument as a port, not a file to build.
+PORT_ARGS := $(filter /dev/%,$(MAKECMDGOALS))
+ifneq ($(word 2,$(PORT_ARGS)),)
+$(error Select one serial port only)
+endif
+ifneq ($(PORT_ARGS),)
+ifneq ($(strip $(PORT)),)
+ifneq ($(PORT),$(PORT_ARGS))
+$(error PORT and the positional serial port must match)
+endif
+endif
+endif
+SERIAL_PORT := $(if $(PORT_ARGS),$(PORT_ARGS),$(PORT))
+.PHONY: help install setup build probe flash monitor flash-monitor menuconfig size clean fullclean idf test preview simulator $(PORT_ARGS)
+ifneq ($(PORT_ARGS),)
+$(PORT_ARGS):
+	@:
+endif
 help:
-	@printf '%s\n' 'make install         Install pinned ESP-IDF and tools into .tools/' 'make build           Build ESP32-S3 firmware' 'make flash PORT=...  Flash device' 'make monitor PORT=...  Serial monitor (Ctrl+] exits)' 'make flash-monitor PORT=...  Flash and monitor' 'make menuconfig      Configure firmware' 'make idf ARGS="..."   Run local idf.py with arbitrary arguments' 'make test            Run native C++ state tests' 'make preview         Render actual LVGL screens into build-host/screens/' 'make simulator       Run the same UI in an SDL2 desktop window'
+	@printf '%s\n' 'make install         Install pinned ESP-IDF and tools into .tools/' 'make build           Build ESP32-S3 firmware' 'make probe           Discover serial ports (Linux/macOS)' 'make flash /dev/ttyACM0  Flash, then monitor (Ctrl+] exits)' 'make monitor /dev/ttyACM0  Open serial monitor only' 'make flash PORT=...  Alternative port syntax; flash and monitor' 'make menuconfig      Configure firmware' 'make idf ARGS="..."   Run local idf.py with arbitrary arguments' 'make test            Run native C++ state tests' 'make preview         Render actual LVGL screens into build-host/screens/' 'make simulator       Run the same UI in an SDL2 desktop window'
 install setup:
 	@./scripts/install-idf.sh
 build menuconfig size clean fullclean:
 	@./scripts/idf.sh $@
-flash monitor flash-monitor:
-	@test -n "$(PORT)" || { echo 'Set PORT, e.g. PORT=/dev/ttyACM0'; exit 2; }
-	@./scripts/idf.sh -p "$(PORT)" -b "$(BAUD)" $(subst -, ,$@)
+probe:
+	@bash scripts/probe.sh
+flash flash-monitor:
+	@test -n "$(SERIAL_PORT)" || { echo 'Run make probe, then make flash /dev/ttyACM0 (or PORT=...)'; exit 2; }
+	@./scripts/idf.sh -p "$(SERIAL_PORT)" -b "$(BAUD)" flash monitor
+# `make flash monitor /dev/...` must not open a second monitor, even with -j.
+monitor:
+ifeq ($(filter flash flash-monitor,$(MAKECMDGOALS)),)
+	@test -n "$(SERIAL_PORT)" || { echo 'Run make probe, then make monitor /dev/ttyACM0 (or PORT=...)'; exit 2; }
+	@./scripts/idf.sh -p "$(SERIAL_PORT)" -b "$(BAUD)" monitor
+else
+	@:
+endif
 idf:
 	@./scripts/idf.sh $(ARGS)
 test:
