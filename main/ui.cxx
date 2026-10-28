@@ -142,7 +142,23 @@ void View::draw_ready(lv_obj_t* root) {
     lv_obj_set_height(object_text_, 23);
     object_weight_ = label(object, "", 12, 40, 160, &lv_font_montserrat_28);
     auto* dose = button(root, "", 280, 158, 184, 84, Action::dose);
-    dose_text_ = label(dose, "", 12, 10, 160, &lv_font_montserrat_18);
+    label(dose, "Coffee", 38, 10, 134, &lv_font_montserrat_18);
+    // Native LVGL bean silhouette and curved seam; no extra font or image asset.
+    auto* bean = lv_obj_create(dose);
+    style(bean, ink);
+    lv_obj_set_pos(bean, 13, 10);
+    lv_obj_set_size(bean, 16, 22);
+    lv_obj_set_style_radius(bean, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_width(bean, 0, 0);
+    lv_obj_clear_flag(bean, LV_OBJ_FLAG_CLICKABLE);
+    static const lv_point_t seam_points[] = {{10, 1}, {8, 5}, {6, 9}, {6, 13}, {8, 17}, {8, 21}};
+    auto* seam = lv_line_create(bean);
+    lv_line_set_points(seam, seam_points, 6);
+    lv_obj_set_style_line_color(seam, color(panel), 0);
+    lv_obj_set_style_line_width(seam, 2, 0);
+    lv_obj_set_style_line_rounded(seam, true, 0);
+    lv_obj_clear_flag(seam, LV_OBJ_FLAG_CLICKABLE);
+    dose_text_ = label(dose, "", 12, 34, 160, &lv_font_montserrat_18);
     button(root, controller_.demo_running() ? "Demo running" : "Run demo", 16, 266, 140, 44, Action::run, 0, true);
     button(root, "Scenarios", 164, 266, 110, 44, Action::demo);
     button(root, "Reset", 364, 266, 100, 44, Action::reset);
@@ -205,7 +221,7 @@ void View::refresh_values() {
             lv_label_set_text(object_text_, item ? item->name.c_str() : "Object");
             lv_label_set_text(object_weight_, number(item ? item->empty_g : std::nullopt, " g").c_str());
         }
-        if (dose_text_) lv_label_set_text(dose_text_, ("Coffee dose\n" + number(s.dose_g, " g")).c_str());
+        if (dose_text_) lv_label_set_text(dose_text_, number(s.dose_g, " g").c_str());
         return;
     }
     if (s.phase != Phase::brewing && s.phase != Phase::result) return;
