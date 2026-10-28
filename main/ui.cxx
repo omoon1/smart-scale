@@ -114,7 +114,7 @@ void View::draw() {
     if (phase == Phase::ready) {
         button(screen_, controller_.session().mode == Mode::espresso ? "Espresso" : "Pour-over",
                16, 8, 156, 44, Action::toggle_mode);
-    } else label(screen_, phase == Phase::brewing ? "Extracting" : phase == Phase::result ? "Brew complete" : "Reset",
+    } else label(screen_, phase == Phase::brewing ? "Running" : phase == Phase::result ? "Brew complete" : "Reset",
                  20, 19, 230, &lv_font_montserrat_22);
     if (phase == Phase::ready) label(screen_, "SMART SCALE", 188, 22, 114, &lv_font_montserrat_14, muted);
     label(screen_, "DEMO   82% " LV_SYMBOL_BATTERY_3, 328, 24, 145, &lv_font_montserrat_14, mint);
@@ -226,13 +226,16 @@ void View::refresh_values() {
     }
     if (s.phase != Phase::brewing && s.phase != Phase::result) return;
     if (object_text_) lv_label_set_text(object_text_,
-        ((s.vessel ? s.vessel->name : "Object ?") + "  /  Locked during extraction").c_str());
+        s.vessel ? s.vessel->name.c_str() : "Object ?");
     char clock[32];
     const auto secs = static_cast<unsigned>(s.seconds);
     std::snprintf(clock, sizeof(clock), "%02u:%02u", secs / 60, secs % 60);
     lv_label_set_text(time_, clock);
+    // Demo volume estimate: assume liquid density of 1.0 g/ml.
+    constexpr float demo_density_g_ml = 1.0F;
+    const float flow_ml_s = s.flow_g_s / demo_density_g_ml;
     lv_label_set_text(flow_, s.phase == Phase::result ? ("Ratio " + (s.ratio() ? "1:" + number(s.ratio()) : "?")).c_str()
-        : s.uncertain ? "Flow unavailable" : number(s.flow_g_s, " g/s").c_str());
+        : s.uncertain ? "Flow unavailable" : number(flow_ml_s, " ml/s").c_str());
     std::string status;
     if (s.uncertain) status = "Baseline uncertain - weight unavailable";
     else if (s.target_g && s.net_g >= *s.target_g) status = "Target reached  +" + number(s.net_g - *s.target_g, " g");
