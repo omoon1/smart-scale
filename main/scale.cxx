@@ -2,39 +2,95 @@
 #include <algorithm>
 
 namespace smart_scale {
+void Scale::clear_window() {
+    count_ = cursor_ = median_count_ = median_cursor_ = 0;
+    filtered_.reset();
+    flow_g_s_ = 0;
+    ++display_epoch_;
+}
+void Scale::invalidate() {
+    connected_ = false;
+    captured_zero_.reset();
+    clear_window();
+}
 float Scale::mean() const {
     double sum = 0;
-    for (unsigned i = 0; i < count_; ++i) sum += samples_[i];
-    return count_ ? static_cast<float>(sum / count_) : 0;
+    unsigned n = 0;
+    for (unsigned i = 0; i < count_; ++i) {
+        if (last_ms_ - samples_[i].ms <= config::stability_window_ms) { sum += samples_[i].counts; ++n; }
+    }
+    return n ? static_cast<float>(sum / n) : 0;
 }
 void Scale::ingest(std::int32_t raw, std::uint64_t now) {
-    if (connected_ && now - last_ms_ > 1000) clear_window();
+    // Ignore duplicate/out-of-order timestamps. Gaps cannot reuse an old baseline.
+    if (connected_ && now <= last_ms_) return;
+    if (connected_ && now - last_ms_ > config::sensor_timeout_ms) invalidate();
+    const auto previous_ms = last_ms_;
     last_ms_ = now;
     connected_ = true;
     overload_ = raw <= -8388608 || raw >= 8388607;
-    if (overload_) { clear_window(); return; }
-    samples_[cursor_] = raw;
+    if (overload_) { clear_window(); captured_zero_.reset(); return; }
+    median_[median_cursor_] = raw;
+    median_cursor_ = (median_cursor_ + 1) % median_.size();
+    median_count_ = std::min<unsigned>(median_count_ + 1, median_.size());
+    if (median_count_ < median_.size()) return;
+    auto sorted = median_;
+    std::sort(sorted.begin(), sorted.end());
+    const double value = sorted[1];
+    // Stability uses unsmoothed, spike-rejected samples, not the low-pass output.
+    samples_[cursor_] = {value, now};
     cursor_ = (cursor_ + 1) % samples_.size();
     count_ = std::min<unsigned>(count_ + 1, samples_.size());
-    if (calibration_ && std::abs(gross()) > 10000) overload_ = true;
-}
-void Scale::check_timeout(std::uint64_t now) {
-    if (now - last_ms_ > 1000) {
-        connected_ = false;
-        captured_zero_.reset(); // A disconnected calibration sequence must restart.
+    const double dt = static_cast<double>(now - previous_ms) / 1000;
+    if (!filtered_) filtered_ = value;
+    else {
+        const double previous = *filtered_;
+        const double alpha = -std::expm1(-dt / config::filter_tau_s);
+        *filtered_ += alpha * (value - *filtered_);
+        flow_g_s_ = calibration_ ? static_cast<float>((*filtered_ - previous) / calibration_->counts_per_gram / dt) : 0;
+    }
+    if (calibration_ && std::abs(gross()) > 10000) {
+        overload_ = true;
         clear_window();
+        captured_zero_.reset();
     }
 }
+void Scale::check_timeout(std::uint64_t now) {
+    if (connected_ && now > last_ms_ && now - last_ms_ > config::sensor_timeout_ms) invalidate();
+}
 bool Scale::stable() const {
-    if (!connected_ || overload_ || count_ != samples_.size()) return false;
-    const auto bounds = std::minmax_element(samples_.begin(), samples_.end());
-    const float limit = calibration_ ? std::max(20.0F, std::abs(calibration_->counts_per_gram) * 0.3F) : 500.0F;
-    return static_cast<double>(*bounds.second) - *bounds.first <= limit;
+    if (!connected_ || overload_ || !filtered_) return false;
+    double sx = 0, sy = 0;
+    unsigned n = 0;
+    std::uint64_t oldest = last_ms_;
+    for (unsigned i = 0; i < count_; ++i) {
+        const auto& s = samples_[i];
+        if (last_ms_ - s.ms > config::stability_window_ms) continue;
+        oldest = std::min(oldest, s.ms);
+        sx += static_cast<double>(last_ms_ - s.ms) / 1000;
+        sy += s.counts;
+        ++n;
+    }
+    if (n < 8 || last_ms_ - oldest < config::stability_min_ms) return false;
+    const double mx = sx / n, my = sy / n;
+    double xx = 0, xy = 0, yy = 0;
+    for (unsigned i = 0; i < count_; ++i) {
+        const auto& s = samples_[i];
+        if (last_ms_ - s.ms > config::stability_window_ms) continue;
+        const double x = static_cast<double>(last_ms_ - s.ms) / 1000 - mx, y = s.counts - my;
+        xx += x * x; xy += x * y; yy += y * y;
+    }
+    const double factor = calibration_ ? std::abs(calibration_->counts_per_gram) : 0;
+    const double std_limit = calibration_ ? std::max(2.0, factor * config::stability_std_g) : 150.0;
+    const double drift_limit = calibration_ ? std::max(1.0, factor * config::stability_drift_g_s) : 50.0;
+    return xx > 0 && std::sqrt(yy / n) <= std_limit && std::abs(xy / xx) <= drift_limit &&
+        std::abs(*filtered_ - my) <= std_limit;
 }
 bool Scale::restore(Calibration c) {
     if (!valid_calibration(c)) return false;
     calibration_ = c;
     tare_g_ = 0;
+    flow_g_s_ = 0;
     ++display_epoch_;
     return true;
 }
@@ -56,6 +112,7 @@ bool Scale::calibrate(float grams) {
 bool Scale::tare() {
     if (!ready() || !stable()) return false;
     tare_g_ = gross();
+    flow_g_s_ = 0;
     ++display_epoch_;
     return true;
 }

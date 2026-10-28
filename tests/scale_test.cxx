@@ -13,7 +13,7 @@ int main() {
     assert(signed_hx711(0xffffff) == -1);
     Scale scale;
     std::uint64_t now = 0;
-    auto feed = [&](int raw) { for (int i = 0; i < 10; ++i) scale.ingest(raw, now += 100); };
+    auto feed = [&](int raw) { for (int i = 0; i < 60; ++i) scale.ingest(raw, now += 100); };
     assert(!scale.ready() && !scale.tare() && !scale.capture_zero());
     assert(!scale.restore({0, 0}));
     assert(!scale.restore({0, std::numeric_limits<float>::quiet_NaN()}));
@@ -33,7 +33,7 @@ int main() {
     scale.clear_tare(); near(scale.net(), 510);
     Scale rebooted;
     assert(rebooted.restore(*calibration) && !rebooted.ready());
-    for (int i = 0; i < 10; ++i) rebooted.ingest(-78000, 100 * i);
+    for (int i = 0; i < 60; ++i) rebooted.ingest(-78000, 100 * i);
     near(rebooted.net(), 0);
     scale.check_timeout(now + 1001);
     assert(!scale.ready() && !scale.stable() && !scale.tare());
@@ -45,7 +45,7 @@ int main() {
     scale.ingest(8388607, now += 100);
     assert(!scale.ready() && !scale.stable());
     feed(-78000);
-    scale.ingest(-79000, now += 100);
+    for (int i = 0; i < 3; ++i) scale.ingest(-79000, now += 100);
     assert(!scale.stable());
     scale.saved(false);
     assert(std::string(scale.status()).find("not saved") != std::string::npos);
@@ -55,7 +55,7 @@ int main() {
     live.run_demo(); live.load_scenario(Scenario::known);
     assert(!live.demo_running() && !live.session().dose_g);
     assert(live.scale().restore({0, 100}));
-    auto sample = [&](int raw, int count = 10) {
+    auto sample = [&](int raw, int count = 60) {
         for (int i = 0; i < count; ++i) { live.sensor_sample(raw, now += 100); live.tick(0.1F); }
     };
     sample(0); assert(!live.start_brew()); // No vessel.
@@ -106,7 +106,7 @@ int main() {
     assert(detection.register_equipment({0, Kind::cup, "Cup", "", 150.0F, {}}, true));
     assert(detection.register_equipment({0, Kind::portafilter, "Portafilter", "", 500.0F, 18.0F}, true));
     auto place = [&](int raw) {
-        for (int i = 0; i < 10; ++i) { detection.sensor_sample(raw, now += 100); detection.tick(0.1F); }
+        for (int i = 0; i < 60; ++i) { detection.sensor_sample(raw, now += 100); detection.tick(0.1F); }
     };
     place(0); place(11000); // Inclusive lower boundary.
     assert(detection.session().active_object && detection.session().active_object->name == "Cup");

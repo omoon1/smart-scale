@@ -27,6 +27,11 @@ Controller::Controller(bool live) : live_(live) {
     equipment_[2] = {3, Kind::pour_over_set, "V60 set", "Dripper + server + filter", 326.4F, 20.0F};
     load_scenario(Scenario::known);
 }
+void Controller::sensor_fault() {
+    if (!live_) return;
+    scale_.invalidate();
+    if (session_.phase == Phase::brewing) session_.uncertain = true;
+}
 void Controller::sensor_sample(std::optional<std::int32_t> raw, std::uint64_t now) {
     if (!live_) return;
     if (raw) scale_.ingest(*raw, now);
@@ -48,7 +53,7 @@ void Controller::sensor_sample(std::optional<std::int32_t> raw, std::uint64_t no
         } else if (session_.phase == Phase::ready && !recognition_checked_) {
             recognition_checked_ = true; // Decide once per stable placement, not while filling.
             session_.vessel.reset(); // Unknown placement must not reuse the previous vessel.
-            const auto match = recognize(scale_.gross(), equipment_.data(), equipment_count_);
+            const auto match = recognize(scale_.reference_gross(), equipment_.data(), equipment_count_);
             object_ambiguous_ = match.ambiguous;
             if (match.equipment) {
                 session_.active_object = match.equipment;
@@ -266,7 +271,7 @@ void Controller::tick(float dt) {
             if (!valid || !session_.loaded) session_.uncertain = true;
             if (!session_.uncertain) {
                 const float net = scale_.net();
-                session_.flow_g_s = (net - session_.net_g) / dt;
+                session_.flow_g_s = scale_.flow();
                 session_.net_g = net;
                 if (session_.sample_count == session_.samples.size()) {
                     for (std::size_t i = 1; i <= 300; ++i) session_.samples[i] = session_.samples[i * 2];

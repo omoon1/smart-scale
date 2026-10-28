@@ -53,3 +53,11 @@ Host tests cover repeated fine adjustment, no extra increment on release, stoppi
 - Added regression checks for ±0.1 g flicker at zero and at 100 g, accumulated small changes, negative readings, invalid-reading reset, tare epochs, and unchanged domain weight beneath a zeroed display.
 - Added live recognition checks for both inclusive boundaries, unmatched and ambiguous placements, manual override without tare, identity lock during filling/brewing, fresh placement after removal, and dose measurement only after explicit tare.
 - Actual LVGL touch tests calibrate with each of 20 g, 50 g, and 100 g and verify the resulting measurement, followed by tare/start/fault checks. `make preview` and the ESP-IDF firmware build pass.
+
+
+## Acquisition, filtering, and stability follow-up
+
+- `make test`: 502 session checks, existing live/display/recognition tests, and new timestamp/filter/stability tests pass. Fixtures now allow real filter settling rather than assuming ten samples are sufficient.
+- New tests cover minimum stability duration at ~80 SPS, isolated spike rejection, duplicate/backward timestamps, sustained noise, slow drift rejection, real positive/negative steps at 10/~80 SPS, saturation/timeout resets, stale calibration cancellation, sample-timestamp flow with batched UI updates, and explicit acquisition-gap invalidation.
+- `make preview` passes all existing and live touchscreen tests, including 20/50/100 g calibration. `make build` compiles and links the acquisition task/queue and domain changes with ESP-IDF v5.5.2.
+- On-device acceptance still required: verify 10/80 SPS sample cadence, induce an extended UI/NVS stall to exercise the real FreeRTOS queue overflow path, verify timeout/reconnect, measure settling latency, and check repeatability/drift with known masses. Host tests exercise the controller's gap handling, not actual FreeRTOS scheduling or electrical timing.

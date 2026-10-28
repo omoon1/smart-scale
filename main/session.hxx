@@ -45,6 +45,7 @@ public:
     bool object_ambiguous() const { return object_ambiguous_; }
     Scale& scale() { return scale_; }
     const Scale& scale() const { return scale_; }
+    void sensor_fault();
     void sensor_sample(std::optional<std::int32_t> raw, std::uint64_t now_ms);
     bool tare();
     bool start_brew();

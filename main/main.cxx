@@ -2,7 +2,7 @@
 #include "device.hxx"
 #include "session.hxx"
 #include "ui.hxx"
-#include "hx711.hxx"
+#include "acquisition.hxx"
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
 #include "esp_timer.h"
@@ -21,8 +21,8 @@ extern "C" void app_main() {
     auto release = [](smart_scale::Controller* value) { value->~Controller(); heap_caps_free(value); };
     std::unique_ptr<smart_scale::Controller, decltype(release)> controller(
         new (storage) smart_scale::Controller(true), release);
-    smart_scale::device::scale::HX711 sensor;
-    ESP_ERROR_CHECK(sensor.init());
+    static smart_scale::device::scale::Acquisition acquisition;
+    ESP_ERROR_CHECK(acquisition.start());
     const auto storage_status = smart_scale::device::scale::init_storage();
     if (storage_status == ESP_OK) {
         if (auto calibration = smart_scale::device::scale::load_calibration())
@@ -39,10 +39,19 @@ extern "C" void app_main() {
         const auto now = esp_timer_get_time();
         const auto elapsed = static_cast<float>(now - previous) / 1000000.0F;
         previous = now;
-        const auto raw = sensor.read(); // No conversion wait and no LVGL lock held.
         std::optional<smart_scale::Calibration> save;
         if (lvgl_port_lock(0)) {
-            controller->sensor_sample(raw, static_cast<std::uint64_t>(now / 1000));
+            const auto now_ms = static_cast<std::uint64_t>(esp_timer_get_time() / 1000);
+            smart_scale::device::scale::Reading reading;
+            for (unsigned i = 0; i < acquisition.capacity && acquisition.receive(reading); ++i) {
+                if (reading.gap) controller->sensor_fault();
+                if (now_ms > reading.ms && now_ms - reading.ms > smart_scale::config::sensor_timeout_ms) {
+                    controller->sensor_fault();
+                    continue;
+                }
+                controller->sensor_sample(reading.raw, reading.ms);
+            }
+            controller->sensor_sample(std::nullopt, static_cast<std::uint64_t>(esp_timer_get_time() / 1000));
             if (display.reset_pressed()) view.reset();
             controller->tick(elapsed);
             view.update();

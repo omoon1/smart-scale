@@ -90,7 +90,7 @@ int main(int argc, char** argv) {
         screenshot(view, "17-hx711-calibrate");
         std::uint64_t now = 0;
         auto feed = [&](int raw) {
-            for (int i = 0; i < 10; ++i) { controller.sensor_sample(raw, now += 100); controller.tick(0.1F); pump(view); }
+            for (int i = 0; i < 60; ++i) { controller.sensor_sample(raw, now += 100); controller.tick(0.1F); pump(view); }
         };
         const int masses[] = {20, 50, 100};
         for (int i = 0; i < 3; ++i) {
@@ -196,7 +196,7 @@ int main(int argc, char** argv) {
     require(*controller.session().dose_g == 0.1F, "Lower bound clamps");
     click(view, 240, 156); pump(view, 500); pump(view, 500);
     const auto idle_flushes = flush_count;
-    for (int i = 0; i < 10; ++i) pump(view, 100);
+    for (int i = 0; i < 60; ++i) pump(view, 100);
     require(flush_count == idle_flushes, "Unchanged dose dialog performs no display transfers");
     click(view, 364, 30);
     require(*controller.session().dose_g == 20.0F, "Closing preserves selected dose");

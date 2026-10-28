@@ -72,6 +72,7 @@ The `.cxx`/`.hxx` organization, nested device namespaces, `device()` accessor, t
 | Path | Responsibility |
 | --- | --- |
 | `main/scale.hxx`, `scale.cxx` | Calibration, tare, stability, and sensor health |
+| `main/acquisition.hxx`, `acquisition.cxx` | Dedicated timestamped acquisition task and bounded sample queue |
 | `main/hx711.hxx`, `hx711.cxx` | ESP-IDF HX711 GPIO reader and NVS persistence |
 | `main/session.hxx`, `session.cxx` | Platform-independent state, recognition helper, bounded RAM records, dummy source |
 | `main/ui.hxx`, `ui.cxx` | LVGL screen rendering, modal drafts, event routing |
