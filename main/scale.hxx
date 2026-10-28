@@ -26,8 +26,9 @@ public:
     void cancel_calibration() { captured_zero_.reset(); }
     bool calibrate(float known_grams);
     bool tare();
-    void clear_tare() { tare_g_ = 0; }
-    void set_tare(float grams) { tare_g_ = grams; }
+    void clear_tare() { if (tare_g_ != 0) { tare_g_ = 0; ++display_epoch_; } }
+    void set_tare(float grams) { tare_g_ = grams; ++display_epoch_; }
+    std::uint32_t display_epoch() const { return display_epoch_; }
     bool ready() const { return connected_ && calibration_.has_value() && !overload_; }
     bool stable() const;
     float gross() const { return calibration_ ? (mean() - calibration_->zero) / calibration_->counts_per_gram : 0; }
@@ -43,6 +44,7 @@ private:
     std::uint64_t last_ms_{};
     bool connected_{}, overload_{}, save_failed_{};
     float tare_g_{};
+    std::uint32_t display_epoch_{};
     std::optional<float> captured_zero_;
     std::optional<Calibration> calibration_, pending_save_;
 };

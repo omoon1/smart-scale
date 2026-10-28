@@ -11,8 +11,9 @@ inline constexpr std::size_t max_equipment = 8;
 inline constexpr std::size_t max_records = 8;
 inline constexpr int dose_min_tenths = 1;
 inline constexpr int dose_max_tenths = 600;
-inline constexpr float object_tolerance_g = 0.5F; // Demo assumption, not calibrated.
-inline constexpr float combination_tolerance_g = 3.0F;
+inline constexpr float object_tolerance_g = 40.0F; // Identity only, not a dose or tare tolerance.
+inline constexpr float display_hysteresis_g = 0.15F;
+inline constexpr float display_zero_deadband_g = 0.15F;
 inline constexpr int lcd_mosi = 1, lcd_clock = 5, lcd_dc = 3, lcd_backlight = 6;
 inline constexpr int i2c_sda = 8, i2c_scl = 7;
 // Camera must remain disconnected: GPIO17/18 share its VSYNC/HREF.

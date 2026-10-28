@@ -1,4 +1,5 @@
 #include "session.hxx"
+#include "weight_display.hxx"
 #include <cassert>
 #include <cmath>
 #include <iostream>
@@ -76,5 +77,57 @@ int main() {
     sample(0); assert(live.session().uncertain); // Vessel removal invalidates result.
     live.reset(); sample(0);
     assert(live.session().phase == Phase::ready && live.record_count() == 2);
+    // Display stabilization leaves the measured value untouched, including tiny additions.
+    WeightDisplay display;
+    near(*display.update(0.0F), 0);
+    for (float noise : {0.1F, -0.1F, 0.14F, -0.14F}) near(*display.update(noise), 0);
+    near(*display.update(0.16F), 0.2F);
+    near(*display.update(0.10F), 0);
+    display.reset();
+    near(*display.update(100.04F), 100.0F);
+    for (float noise : {100.06F, 99.96F, 100.10F, 99.90F}) near(*display.update(noise), 100.0F);
+    near(*display.update(100.16F), 100.2F);
+    near(*display.update(100.21F), 100.2F);
+    near(*display.update(100.36F), 100.4F); // Slow additions accumulate against held value.
+    near(*display.update(100.23F), 100.2F); // Real decreases are not suppressed.
+    assert(!display.update(std::nullopt));
+    near(*display.update(25.0F), 25.0F);
+    assert(!display.update(std::numeric_limits<float>::quiet_NaN()));
+    display.reset(); near(*display.update(-0.16F), -0.2F);
+    auto epoch = live.scale().display_epoch();
+    sample(10000); assert(live.tare()); assert(live.scale().display_epoch() != epoch);
+    sample(10010); near(live.session().net_g, 0.1F);
+    WeightDisplay zero_display;
+    near(*zero_display.update(live.session().net_g), 0);
+    near(live.session().net_g, 0.1F); // UI deadband does not erase sensor data.
+
+    Controller detection(true);
+    assert(detection.scale().restore({0, 100}));
+    assert(detection.register_equipment({0, Kind::cup, "Cup", "", 150.0F, {}}, true));
+    assert(detection.register_equipment({0, Kind::portafilter, "Portafilter", "", 500.0F, 18.0F}, true));
+    auto place = [&](int raw) {
+        for (int i = 0; i < 10; ++i) { detection.sensor_sample(raw, now += 100); detection.tick(0.1F); }
+    };
+    place(0); place(11000); // Inclusive lower boundary.
+    assert(detection.session().active_object && detection.session().active_object->name == "Cup");
+    near(detection.scale().net(), 110); // Identity never tares an object automatically.
+    place(19000); assert(detection.session().active_object->name == "Cup");
+    place(0); place(19000); // Inclusive upper boundary.
+    assert(detection.session().active_object->name == "Cup");
+    place(0); place(19010); assert(!detection.session().active_object);
+    place(18000); assert(!detection.session().active_object); // No recognition while filling an unknown load.
+    place(0); place(48000);
+    assert(detection.session().active_object->kind == Kind::portafilter);
+    assert(!detection.session().dose_g); // ±40 g is not a coffee-dose tolerance.
+    assert(detection.tare()); place(49800); near(*detection.session().dose_g, 18);
+    assert(detection.session().active_object->kind == Kind::portafilter);
+    assert(detection.register_equipment({0, Kind::cup, "Other cup", "", 200.0F, {}}, true));
+    place(0); place(17500);
+    assert(!detection.session().active_object && detection.object_ambiguous());
+    assert(!detection.session().vessel);
+    assert(detection.select_equipment(2));
+    assert(!detection.object_ambiguous()); near(detection.scale().net(), 175);
+    assert(detection.start_brew()); place(20000);
+    assert(detection.session().active_object->name == "Other cup"); // Identity locked during brewing.
     std::cout << "HX711 calibration and live-session tests passed\n";
 }

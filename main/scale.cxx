@@ -35,6 +35,7 @@ bool Scale::restore(Calibration c) {
     if (!valid_calibration(c)) return false;
     calibration_ = c;
     tare_g_ = 0;
+    ++display_epoch_;
     return true;
 }
 bool Scale::capture_zero() {
@@ -55,6 +56,7 @@ bool Scale::calibrate(float grams) {
 bool Scale::tare() {
     if (!ready() || !stable()) return false;
     tare_g_ = gross();
+    ++display_epoch_;
     return true;
 }
 std::optional<Calibration> Scale::take_pending_save() {

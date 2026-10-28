@@ -13,14 +13,10 @@ Recognition recognize(float total, const Equipment* items, std::size_t count) {
     for (std::size_t i = 0; i < count; ++i) {
         const auto& item = items[i];
         if (!item.empty_g) continue;
-        const auto difference = total - *item.empty_g;
-        const bool empty = std::abs(difference) <= config::object_tolerance_g;
-        const bool filled = item.kind == Kind::portafilter && item.usual_dose_g &&
-            std::abs(difference - *item.usual_dose_g) <= config::combination_tolerance_g + 0.0001F;
-        if (!empty && !filled) continue;
-        if (result.equipment && result.equipment->id != item.id) return {}; // Ambiguous identity.
-        result.equipment = item;
-        result.dose_g = filled ? std::optional<float>{difference} : std::nullopt;
+        if (!std::isfinite(*item.empty_g) || *item.empty_g <= 0) continue;
+        if (std::abs(total - *item.empty_g) > config::object_tolerance_g) continue;
+        if (result.equipment && result.equipment->id != item.id) return {std::nullopt, true};
+        result.equipment = item; // Mass alone cannot distinguish empty from filled within ±40 g.
     }
     return result;
 }
@@ -46,8 +42,20 @@ void Controller::sensor_sample(std::optional<std::int32_t> raw, std::uint64_t no
             if (session_.phase == Phase::remove_load) session_.phase = Phase::ready;
             if (session_.phase == Phase::ready) {
                 session_.active_object.reset();
+                recognition_checked_ = object_ambiguous_ = dose_tared_ = false;
                 scale_.clear_tare();
             }
+        } else if (session_.phase == Phase::ready && !recognition_checked_) {
+            recognition_checked_ = true; // Decide once per stable placement, not while filling.
+            session_.vessel.reset(); // Unknown placement must not reuse the previous vessel.
+            const auto match = recognize(scale_.gross(), equipment_.data(), equipment_count_);
+            object_ambiguous_ = match.ambiguous;
+            if (match.equipment) {
+                session_.active_object = match.equipment;
+                if (match.equipment->kind == Kind::portafilter) session_.weighing_tool = match.equipment;
+                else session_.vessel = match.equipment;
+            }
+            target();
         }
     }
     // A significant negative step during brewing indicates removal, not flow.
@@ -57,6 +65,7 @@ void Controller::sensor_sample(std::optional<std::int32_t> raw, std::uint64_t no
 bool Controller::tare() {
     if (!live_ || session_.phase != Phase::ready || !scale_.tare()) return false;
     session_.net_g = 0;
+    dose_tared_ = true;
     session_.baseline_known = true;
     return true;
 }
@@ -84,7 +93,15 @@ bool Controller::select_equipment(std::size_t index) {
     if (session_.phase != Phase::ready || index >= equipment_count_) return false;
     if (live_) {
         if (!scale_.ready() || !scale_.stable() || scale_.gross() <= 2.0F || !equipment_[index].empty_g) return false;
-        scale_.set_tare(*equipment_[index].empty_g);
+        recognition_checked_ = true;
+        object_ambiguous_ = false;
+        const auto& item = equipment_[index];
+        if (!session_.active_object || session_.active_object->id != item.id) dose_tared_ = false;
+        session_.active_object = item;
+        if (item.kind == Kind::portafilter) session_.weighing_tool = item;
+        else session_.vessel = item;
+        target();
+        return true; // Identity selection must not change an actual measurement/tare.
     }
     place(index);
     return true;
@@ -210,7 +227,10 @@ void Controller::reset() {
     demo_running_ = false;
     demo_time_ = 0;
     demo_stage_ = 0;
-    if (live_) scale_.clear_tare();
+    if (live_) {
+        scale_.clear_tare();
+        recognition_checked_ = object_ambiguous_ = dose_tared_ = false;
+    }
 }
 void Controller::next() { reset(); }
 void Controller::load_scenario(Scenario scenario) {
@@ -256,7 +276,7 @@ void Controller::tick(float dt) {
             } else session_.flow_g_s = 0;
         } else if (session_.phase == Phase::ready && valid) {
             session_.net_g = scale_.net();
-            if (scale_.stable() && session_.active_object && session_.active_object->kind == Kind::portafilter)
+            if (dose_tared_ && scale_.stable() && session_.active_object && session_.active_object->kind == Kind::portafilter)
                 weigh_beans(session_.net_g);
         }
         return;

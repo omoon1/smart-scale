@@ -48,8 +48,8 @@ For the interactive desktop simulator, install SDL2 development files (`brew ins
 ## Use the physical scale
 
 1. Connect the HX711 as described in [the wiring guide](docs/hx711.md), then build and flash.
-2. Tap **Calibrate**. With the platform empty and stable, **Capture empty zero**. Place a known **100 g, 500 g, or 1000 g** mass, wait for stability, and tap its mass. Calibration is saved across reboots.
-3. Remove the mass. Place a container, wait for **Stable**, and tap **Tare** to weigh ingredients.
+2. Tap **Calibrate**. With the platform empty and stable, **Capture empty zero**. Place a known **20 g, 50 g, or 100 g** mass, wait for stability, and tap its mass. Calibration is saved across reboots.
+3. Remove the mass. Registered objects are recognized within ±40 g when placed and stable; overlapping matches require manual selection. Recognition does not automatically tare. Place a container, wait for **Stable**, and tap **Tare** to weigh ingredients.
 4. Set the coffee dose if required. Tap **Start brew** with the vessel in place, before pouring. This captures a fresh baseline and starts the timer. Tap **Finish** to save a RAM record.
 5. Use **Reset** or **Next brew**, then remove the load. A disconnected sensor displays `?`; a failed measurement during brewing invalidates that brew.
 

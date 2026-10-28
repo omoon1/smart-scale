@@ -34,7 +34,7 @@ struct Session {
     [[nodiscard]] std::optional<float> ratio() const;
 };
 struct Record { Session session; bool aborted{}; };
-struct Recognition { std::optional<Equipment> equipment; std::optional<float> dose_g; };
+struct Recognition { std::optional<Equipment> equipment; bool ambiguous{}; };
 Recognition recognize(float total_g, const Equipment* equipment, std::size_t count);
 
 // Pure C++ state owner. All calls are serialized by the UI task.
@@ -42,6 +42,7 @@ class Controller {
 public:
     explicit Controller(bool live = false);
     bool live() const { return live_; }
+    bool object_ambiguous() const { return object_ambiguous_; }
     Scale& scale() { return scale_; }
     const Scale& scale() const { return scale_; }
     void sensor_sample(std::optional<std::int32_t> raw, std::uint64_t now_ms);
@@ -74,6 +75,7 @@ private:
     void place_demo_kind(Kind kind);
     void archive(bool aborted);
     bool live_{};
+    bool recognition_checked_{}, object_ambiguous_{}, dose_tared_{};
     Scale scale_;
     Session session_{};
     std::array<Equipment, config::max_equipment> equipment_{};

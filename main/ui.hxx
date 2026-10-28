@@ -1,5 +1,6 @@
 #pragma once
 #include "session.hxx"
+#include "weight_display.hxx"
 #include "lvgl.h"
 
 namespace smart_scale::ui {
@@ -30,6 +31,9 @@ private:
     void schedule_draw();
     void refresh_values();
     Controller& controller_;
+    WeightDisplay weight_display_;
+    std::uint32_t display_epoch_{};
+    Phase display_phase_{Phase::ready};
     std::array<Binding, 64> bindings_{};
     std::size_t binding_count_{};
     lv_obj_t *screen_{}, *weight_{}, *weight_unit_{}, *time_{}, *flow_{}, *status_{}, *object_text_{}, *dose_text_{},

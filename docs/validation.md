@@ -45,3 +45,11 @@ Host tests cover repeated fine adjustment, no extra increment on release, stoppi
 - `make build`: ESP-IDF v5.5.2 / ESP32-S3 firmware compiles and links, including GPIO and NVS adapters.
 - Local build environment note: the installed component manager 2.5.2 attempted to inspect sandbox PIDs through psutil and failed before configuration. Only its ignored local Python environment was adjusted to use the Linux parent PID fallback. No dependency workaround is committed; CI uses the existing Espressif container.
 - Hardware acceptance remains open: electrical signal timing, load-cell polarity, repeatability/linearity, physical disconnection behavior, and calibration persistence on actual flash. See [HX711 acceptance steps](hx711.md).
+
+
+## Display, recognition, and calibration follow-up
+
+- Updated `make test`: 502 session checks plus scale/live tests pass. The legacy filled-portafilter inference tests were replaced with identity-only ±40 g boundary/ambiguity tests, because ±40 g cannot establish a dose.
+- Added regression checks for ±0.1 g flicker at zero and at 100 g, accumulated small changes, negative readings, invalid-reading reset, tare epochs, and unchanged domain weight beneath a zeroed display.
+- Added live recognition checks for both inclusive boundaries, unmatched and ambiguous placements, manual override without tare, identity lock during filling/brewing, fresh placement after removal, and dose measurement only after explicit tare.
+- Actual LVGL touch tests calibrate with each of 20 g, 50 g, and 100 g and verify the resulting measurement, followed by tare/start/fault checks. `make preview` and the ESP-IDF firmware build pass.

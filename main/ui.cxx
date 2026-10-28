@@ -263,8 +263,18 @@ void View::refresh_values() {
         if (stable) lv_obj_clear_state(registration_next_, LV_STATE_DISABLED);
         else lv_obj_add_state(registration_next_, LV_STATE_DISABLED);
     }
-    const auto weight_text = controller_.live() && s.phase != Phase::result && !controller_.scale().ready() ? "?" : (s.phase == Phase::ready || (s.baseline_known && !s.uncertain))
-        ? number(s.net_g) : "?";
+    const bool available = (s.phase == Phase::ready || (s.baseline_known && !s.uncertain)) &&
+        (!controller_.live() || s.phase == Phase::result || controller_.scale().ready());
+    std::optional<float> displayed = available ? std::optional<float>{s.net_g} : std::nullopt;
+    if (controller_.live()) {
+        if (display_epoch_ != controller_.scale().display_epoch() || display_phase_ != s.phase) {
+            weight_display_.reset();
+            display_epoch_ = controller_.scale().display_epoch();
+            display_phase_ = s.phase;
+        }
+        displayed = weight_display_.update(displayed);
+    }
+    const auto weight_text = number(displayed);
     const lv_font_t* weight_font = s.phase != Phase::ready && s.net_g >= 100.0F ?
         &lv_font_montserrat_32 : &lv_font_montserrat_48;
     if (s.phase == Phase::ready) {
@@ -293,7 +303,7 @@ void View::refresh_values() {
     if (s.phase == Phase::ready) {
         const auto& item = s.active_object;
         if (object_text_) {
-            set_text(object_text_, item ? item->name.c_str() : "Object");
+            set_text(object_text_, item ? item->name.c_str() : controller_.object_ambiguous() ? "Choose object" : "Object ?");
             set_text(object_weight_, number(item ? item->empty_g : std::nullopt, " g").c_str());
         }
         if (dose_text_) set_text(dose_text_, number(s.dose_g, " g").c_str());
@@ -368,9 +378,9 @@ void View::draw_dialog(lv_obj_t* root) {
         label(box, "Calibrate scale", 16, 18, 230, &lv_font_montserrat_22);
         label(box, "1. Empty platform, wait, capture zero.\n2. Place known mass and wait.\n3. Tap its exact mass below.", 16, 62, 272);
         button(box, "Capture empty zero", 16, 126, 272, 42, Action::capture_zero);
-        button(box, "100 g", 16, 178, 84, 42, Action::calibrate, 100);
-        button(box, "500 g", 110, 178, 84, 42, Action::calibrate, 500);
-        button(box, "1000 g", 204, 178, 84, 42, Action::calibrate, 1000);
+        button(box, "20 g", 16, 178, 84, 42, Action::calibrate, 20);
+        button(box, "50 g", 110, 178, 84, 42, Action::calibrate, 50);
+        button(box, "100 g", 204, 178, 84, 42, Action::calibrate, 100);
         calibration_message_ = label(box, "", 16, 232, 272, &lv_font_montserrat_14, mint);
     } else if (dialog_ == Dialog::objects) {
         auto* list = lv_obj_create(box);

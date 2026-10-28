@@ -92,11 +92,15 @@ int main(int argc, char** argv) {
         auto feed = [&](int raw) {
             for (int i = 0; i < 10; ++i) { controller.sensor_sample(raw, now += 100); controller.tick(0.1F); pump(view); }
         };
-        feed(-78000);
-        click(view, 240, 154); // Capture empty zero in centered dialog.
-        feed(355000);
-        click(view, 240, 206); // 500 g.
-        require(controller.scale().ready(), "touch calibration succeeds");
+        const int masses[] = {20, 50, 100};
+        for (int i = 0; i < 3; ++i) {
+            feed(-78000);
+            click(view, 240, 154); // Capture empty zero in centered dialog.
+            feed(-78000 + masses[i] * 866);
+            click(view, 146 + i * 94, 206);
+            require(controller.scale().ready(), "touch calibration succeeds");
+            require(std::abs(controller.scale().gross() - masses[i]) < 0.01F, "20/50/100 g buttons use exact mass");
+        }
         screenshot(view, "18-hx711-calibrated");
         click(view, 366, 32); // Close dialog.
         feed(8600); // 100 g vessel.
