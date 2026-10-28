@@ -57,7 +57,7 @@ Recipe assumptions are 1:2 for espresso and 1:15 for a whole pour-over set. They
 | BREW-01 | Transitions on first dummy liquid event; physical detection ≤2 s remains a hardware acceptance test |
 | BREW-02–06, END-01 | Weight/time/flow, timestamped graph and current point, target line, excess indication, pauses, manual finish, result delta and RAM save status |
 | RESET-01–03 | BOOT and UI Reset, aborted RAM record, clears session, remove-load gate; MCU reset is a reboot |
-| EQ-01–05 | Optional four-step registration, type-specific configuration, stable fixture weight, name, immutable record copies; editable configurations/defaults/deletion deferred |
+| EQ-01–05 | Three-step registration, stable fixture weight, 20-icon picker and type-plus-icon names, immutable record copies; editable configurations/defaults/deletion deferred |
 | NFR-01 | Runtime is offline; persistent local records and deduplicated sync deferred |
 | NFR-02/03 | 480×320 actual LVGL rendering, text plus color, shared time/measurement state; physical readability and power-loss recovery unverified |
 | NFR-04 | No network stack is started and no cloud credentials/API are present |
@@ -75,7 +75,7 @@ Recipe assumptions are 1:2 for espresso and 1:15 for a whole pour-over set. They
 | Extraction starts in a popup | Draft discarded, committed values retained, modal closed |
 | Reset under load | Session cleared; no zero capture until object removal |
 | Nonfinite/out-of-range dose | Command rejected without changing established dose |
-| Registration unstable/full/blank name | Continue or Save prevented; existing profiles retained |
+| Registration unstable/full | Continue or Save prevented; existing profiles retained |
 | Long extraction | Bounded sample array decimates history; timestamps retained |
 | More than eight demo records | Oldest RAM record overwritten |
 | Power cycle / EN reset | RAM state lost and known demo fixture loaded; not presented as recovery |

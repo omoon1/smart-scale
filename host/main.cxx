@@ -55,6 +55,13 @@ void require(bool value, const char* message) {
     if (!value) { std::cerr << "UI test failed: " << message << '\n'; std::exit(1); }
 }
 
+lv_obj_t* find_type(lv_obj_t* parent, const lv_obj_class_t* type) {
+    if (lv_obj_check_type(parent, type)) return parent;
+    for (unsigned i = 0; i < lv_obj_get_child_cnt(parent); ++i)
+        if (auto* found = find_type(lv_obj_get_child(parent, static_cast<int>(i)), type)) return found;
+    return nullptr;
+}
+
 }
 int main(int argc, char** argv) {
     lv_init();
@@ -172,11 +179,27 @@ int main(int argc, char** argv) {
     screenshot(view, "08-pour-over");
     controller.finish(); controller.load_scenario(Scenario::known); pump(view);
     view.open(ui::Dialog::registration); screenshot(view, "09-register-type");
-    click(view, 370, 284); screenshot(view, "10-register-configuration");
-    click(view, 370, 284); screenshot(view, "11-register-weight");
-    click(view, 370, 284); screenshot(view, "12-register-name");
-    click(view, 370, 132);
+    auto* type = find_type(lv_scr_act(), &lv_dropdown_class);
+    require(type && std::string(lv_dropdown_get_options(type)) == "Container\nPortafilter\nPour-over set", "Container replaces Cup");
+    lv_dropdown_set_selected(type, 2);
+    click(view, 370, 284); screenshot(view, "10-register-weight");
+    click(view, 150, 222); // Mark unstable.
+    click(view, 370, 284);
+    require(find_type(lv_scr_act(), &lv_dropdown_class) == nullptr, "Weight step stays active");
+    require(controller.equipment_count() == 3, "Unstable reading cannot save");
+    click(view, 150, 222); // Stable again.
+    click(view, 370, 284); screenshot(view, "11-register-icon");
+    require(!find_type(lv_scr_act(), &lv_keyboard_class) && !find_type(lv_scr_act(), &lv_textarea_class), "Icon picker has no keyboard or text input");
+    auto* icon_screen = lv_scr_act();
+    for (int i = 0; i < 20; ++i) click(view, 68 + (i % 5) * 84, 88 + (i / 5) * 46);
+    require(lv_scr_act() == icon_screen, "All 20 icon choices update in place");
+    click(view, 65, 282); // Back to weight.
+    click(view, 370, 284); // Return to picker; preserve icon.
+    screenshot(view, "12-register-icon-selected");
+    click(view, 370, 282);
     require(controller.equipment_count() == 4, "Registration saves profile");
+    require(controller.equipment()[3].name == "Pour-over set 😺", "Selected type and icon survive Back and Save");
+    require(controller.equipment()[3].kind == Kind::pour_over_set, "Selected equipment type survives registration");
     screenshot(view, "13-registered");
     std::cout << "UI interaction checks passed\n";
 }

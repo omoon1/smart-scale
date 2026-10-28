@@ -8,7 +8,7 @@
 - `make test`: 470 checks pass, including required candidate boundaries, ambiguity, actual dose preservation, sequential placement, extraction locks, unknown baseline, paused flow, abort/reset, session isolation, snapshot history, input validation, capacity limits, and bounded graph timestamps.
 - `make preview`: the same `ui.cxx` is compiled against LVGL 8.4.0 and rendered at 480×320; 13 screenshots are produced. Touch-driven checks exercise object/dose dialogs, draft cancellation, dose commit, start/finish/next, remove-load gating, popup interruption, and equipment registration.
 - Native SDL2 variant: compiled against SDL2 headers and the installed SDL2 runtime; a 20-frame display/texture smoke check passes using SDL's dummy video driver. An interactive window requires a desktop display server.
-- Visual inspection: ready, objects, dose, extraction, result, remove-load, unknown, pour-over pause, all four registration steps, and registered list inspected. Corrected missing close controls, keyboard placement, title overlap, and long-roller coordinate overflow.
+- Visual inspection: ready, objects, dose, extraction, result, remove-load, unknown, pour-over pause, all three registration steps, and registered list inspected. Registration uses a bundled monochrome emoji font and no keyboard.
 - `bash -n scripts/*.sh`: installer/wrapper/preview scripts pass syntax checks.
 
 The test environment has a process namespace where `psutil.Process()` cannot resolve its own PID. Component Manager 2.5.2's CMake parent lookup needed an **environment-only** `psutil.NoSuchProcess` fallback to `os.getppid()` in the ignored `.tools/` Python package. No toolchain source, application source, or dependency lock was altered to bypass compilation. This workaround is not shipped; normal Linux/macOS installations should not need it.
@@ -26,3 +26,7 @@ Power-loss recovery, durable local records, equipment/history persistence, cloud
 `make preview` exercises presets, coarse/fine increments, both dose bounds, close/reopen persistence, and brew-time editor dismissal. It also asserts that adjustments retain the current screen and that an unchanged dose dialog produces zero flush callbacks across ten 100 ms updates after button transitions settle. `make test` covers the controller state machine.
 
 On device, compare touch-to-visible latency and energy per dose-selection task at the same brightness. Verify 0.1 and 60.0 g limits and extraction transitions. Desktop flush counts verify removal of redundant rendering, not physical frame rate or battery-life improvement.
+
+## Equipment icon and layout checks
+
+The host checks Container type options, stable-weight gating, absence of keyboard/text input, all 20 in-place icon selections, Back navigation, and saving the selected type plus icon. Ready and brewing weight units use a separate smaller label aligned by font baseline. Review screenshots include the three-step registration, the selected icon, and larger dose buttons with no title/footer. Device touch accuracy and battery use remain physical validation tasks.

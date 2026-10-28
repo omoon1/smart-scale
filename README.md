@@ -53,7 +53,7 @@ For the interactive desktop simulator, install SDL2 development files (`brew ins
 6. **Finish** opens results. Target arrival only alerts; simulated flow continues until Finish. **Next brew** starts an empty session after simulated load removal.
 7. On-screen **Reset**, the board's **BOOT/GPIO0** button, or desktop **R** clears session values and marks an active RAM record aborted. Registered profiles remain until reboot. The board's hardware RESET/EN switch reboots the MCU and cannot execute this application action.
 
-Registration offers type, configuration, simulated stable empty weight, and editable name. Tap the stability badge to test the unstable state; Continue is disabled until stable. The list holds eight profiles, including fixtures. Optional recipe defaults and editable measurement configurations are deferred.
+Registration has three steps: type (Container, Portafilter, or Pour-over set), simulated stable empty weight, and a 20-icon picker. Names are generated as the equipment type plus the selected icon; no keyboard is shown. Tap the stability badge to test the unstable state; Continue is disabled until stable. The list holds eight profiles, including fixtures. Optional recipe defaults and editable measurement configurations are deferred.
 
 ## Implementation
 

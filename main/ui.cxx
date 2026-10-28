@@ -6,9 +6,26 @@
 #include <string>
 
 LV_FONT_DECLARE(weight_font_72);
+LV_FONT_DECLARE(equipment_emoji_22);
 
 namespace smart_scale::ui {
 namespace {
+constexpr const char* equipment_icons[] = {
+    "☕", "☀", "☁", "☂", "❄", "♥", "⚓", "⚡", "⚙", "☺",
+    "😀", "😁", "😂", "😃", "😄", "😉", "😊", "😋", "😎", "😺"
+};
+static_assert(std::size(equipment_icons) == 20);
+const lv_font_t* icon_font(const lv_font_t* font) {
+    // Keep built-in fonts immutable and supply the same emoji subset everywhere.
+    static lv_font_t f14 = lv_font_montserrat_14, f18 = lv_font_montserrat_18,
+                     f22 = lv_font_montserrat_22, f28 = lv_font_montserrat_28;
+    for (auto* f : {&f14, &f18, &f22, &f28}) f->fallback = &equipment_emoji_22;
+    if (font == &lv_font_montserrat_14) return &f14;
+    if (font == &lv_font_montserrat_18) return &f18;
+    if (font == &lv_font_montserrat_22) return &f22;
+    if (font == &lv_font_montserrat_28) return &f28;
+    return font;
+}
 constexpr auto bg = 0x0C1415, panel = 0x172224, border = 0x344345;
 constexpr auto ink = 0xF2F6F4, muted = 0xA4B8B4, mint = 0x9DEBCB, amber = 0xFFC36B;
 lv_color_t color(unsigned rgb) { return lv_color_hex(rgb); }
@@ -28,7 +45,7 @@ lv_obj_t* label(lv_obj_t* p, const char* text, int x, int y, int width,
     set_text(obj, text);
     lv_obj_set_pos(obj, x, y);
     lv_obj_set_width(obj, width);
-    lv_obj_set_style_text_font(obj, font, 0);
+    lv_obj_set_style_text_font(obj, icon_font(font), 0);
     lv_obj_set_style_text_color(obj, color(rgb), 0);
     lv_obj_clear_flag(obj, LV_OBJ_FLAG_CLICKABLE);
     return obj;
@@ -45,7 +62,7 @@ void style(lv_obj_t* obj, unsigned rgb = panel) {
 }
 const char* kind_name(Kind kind) {
     switch (kind) {
-    case Kind::cup: return "Cup";
+    case Kind::cup: return "Container";
     case Kind::portafilter: return "Portafilter";
     case Kind::pour_over_set: return "Pour-over set";
     }
@@ -87,7 +104,7 @@ void View::open(Dialog dialog) {
         registration_step_ = 0;
         registration_stable_ = true;
         registration_kind_ = Kind::cup;
-        registration_name_ = "My cup";
+        registration_icon_ = 0;
         registration_error_.clear();
     }
     schedule_draw();
@@ -107,8 +124,9 @@ void View::draw() {
     lv_obj_set_style_radius(screen_, 0, 0);
     lv_obj_set_style_border_width(screen_, 0, 0);
     binding_count_ = 0;
-    weight_ = time_ = flow_ = status_ = object_text_ = dose_text_ = target_text_ = chart_ = nullptr;
-    dose_value_ = name_input_ = kind_input_ = chart_max_ = chart_time_ = current_point_ = object_weight_ = nullptr;
+    weight_ = weight_unit_ = time_ = flow_ = status_ = object_text_ = dose_text_ = target_text_ = chart_ = nullptr;
+    dose_value_ = icon_name_ = kind_input_ = chart_max_ = chart_time_ = current_point_ = object_weight_ = nullptr;
+    icon_buttons_.fill(nullptr);
     series_ = target_series_ = nullptr;
     rendered_phase_ = controller_.session().phase;
     const auto phase = rendered_phase_;
@@ -117,7 +135,6 @@ void View::draw() {
                16, 8, 156, 44, Action::toggle_mode);
     } else label(screen_, phase == Phase::brewing ? "Running" : phase == Phase::result ? "Brew complete" : "Reset",
                  20, 19, 230, &lv_font_montserrat_22);
-    if (phase == Phase::ready) label(screen_, "SMART SCALE", 188, 22, 114, &lv_font_montserrat_14, muted);
     label(screen_, "DEMO   82% " LV_SYMBOL_BATTERY_3, 328, 24, 145, &lv_font_montserrat_14, mint);
     if (phase == Phase::brewing || phase == Phase::result) draw_brew(screen_, phase == Phase::result);
     else if (phase == Phase::remove_load) {
@@ -133,7 +150,8 @@ void View::draw() {
     refresh_values();
 }
 void View::draw_ready(lv_obj_t* root) {
-    weight_ = label(root, "0.0 g", 22, 108, 250, &weight_font_72);
+    weight_ = label(root, "0.0", 22, 108, 218, &weight_font_72);
+    weight_unit_ = label(root, "g", 0, 0, 28, &lv_font_montserrat_22);
     label(root, "Place to weigh.", 24, 222, 250, &lv_font_montserrat_14, muted);
     auto* object = button(root, "", 280, 66, 184, 84, Action::objects);
     object_text_ = label(object, "", 12, 10, 160, &lv_font_montserrat_18);
@@ -193,7 +211,8 @@ void View::draw_brew(lv_obj_t* root, bool result) {
     label(root, "g", 12, 96, 16, &lv_font_montserrat_14, muted);
     label(root, "0", 18, 217, 20, &lv_font_montserrat_14, muted);
     label(root, "time (s)", 186, 224, 68, &lv_font_montserrat_14, muted);
-    weight_ = label(root, "", 278, 104, 190, &lv_font_montserrat_48);
+    weight_ = label(root, "", 278, 104, 164, &lv_font_montserrat_48);
+    weight_unit_ = label(root, "g", 0, 0, 24, &lv_font_montserrat_14);
     time_ = label(root, "", 280, 162, 100, &lv_font_montserrat_22);
     flow_ = label(root, "", 280, 192, 180, &lv_font_montserrat_18, mint);
     status_ = label(root, "", 32, 84, 430, &lv_font_montserrat_14, mint);
@@ -210,7 +229,7 @@ void View::draw_brew(lv_obj_t* root, bool result) {
 void View::refresh_values() {
     const auto& s = controller_.session();
     const auto weight_text = (s.phase == Phase::ready || (s.baseline_known && !s.uncertain))
-        ? number(s.net_g, " g") : "? g";
+        ? number(s.net_g) : "?";
     const lv_font_t* weight_font = s.phase != Phase::ready && s.net_g >= 100.0F ?
         &lv_font_montserrat_32 : &lv_font_montserrat_48;
     if (s.phase == Phase::ready) {
@@ -218,14 +237,24 @@ void View::refresh_values() {
         weight_font = &weight_font_72;
         lv_point_t text_size{};
         lv_txt_get_size(&text_size, weight_text.c_str(), weight_font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-        if (text_size.x > 250) weight_font = &lv_font_montserrat_48;
+        if (text_size.x > 218) weight_font = &lv_font_montserrat_48;
         lv_txt_get_size(&text_size, weight_text.c_str(), weight_font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-        if (text_size.x > 250) weight_font = &lv_font_montserrat_32;
+        if (text_size.x > 218) weight_font = &lv_font_montserrat_32;
     }
     if (weight_ && lv_obj_get_style_text_font(weight_, 0) != weight_font)
         lv_obj_set_style_text_font(weight_, weight_font, 0);
     if (dose_value_) set_text(dose_value_, number(s.dose_g, " g").c_str());
-    if (weight_) set_text(weight_, weight_text.c_str());
+    if (weight_) {
+        set_text(weight_, weight_text.c_str());
+        lv_point_t size{};
+        lv_txt_get_size(&size, weight_text.c_str(), weight_font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+        const auto* unit_font = s.phase == Phase::ready ? &lv_font_montserrat_22 : &lv_font_montserrat_14;
+        const int x = (s.phase == Phase::ready ? 22 : 278) + size.x + 6;
+        const int y = (s.phase == Phase::ready ? 108 : 104) + weight_font->line_height - weight_font->base_line
+                      - unit_font->line_height + unit_font->base_line;
+        if (lv_obj_get_x(weight_unit_) != x || lv_obj_get_y(weight_unit_) != y)
+            lv_obj_set_pos(weight_unit_, x, y);
+    }
     if (s.phase == Phase::ready) {
         const auto& item = s.active_object;
         if (object_text_) {
@@ -311,18 +340,23 @@ void View::draw_dialog(lv_obj_t* root) {
                    Action::choose_object, static_cast<int>(i));
         button(box, "+ Register equipment", 12, 246, 280, 46, Action::registration, 0, true);
     } else if (dialog_ == Dialog::dose) {
-        label(box, "Coffee dose", 16, 16, 200, &lv_font_montserrat_22);
-        dose_value_ = label(box, "", 16, 62, 272, &lv_font_montserrat_48);
+        dose_value_ = label(box, "", 16, 48, 272, &lv_font_montserrat_48);
         lv_obj_set_style_text_align(dose_value_, LV_TEXT_ALIGN_CENTER, 0);
-        button(box, "18 g", 16, 126, 84, 44, Action::dose_preset, 180);
-        button(box, "20 g", 110, 126, 84, 44, Action::dose_preset, 200);
-        button(box, "22 g", 204, 126, 84, 44, Action::dose_preset, 220);
-        button(box, "-1 g", 16, 184, 60, 48, Action::dose_adjust, -10);
-        button(box, "-0.1", 84, 184, 64, 48, Action::dose_adjust, -1);
-        button(box, "+0.1", 156, 184, 64, 48, Action::dose_adjust, 1);
-        button(box, "+1 g", 228, 184, 60, 48, Action::dose_adjust, 10);
-        label(box, "0.1 - 60.0 g  |  Saved immediately", 16, 258, 272,
-              &lv_font_montserrat_14, muted);
+        button(box, "18 g", 16, 112, 84, 70, Action::dose_preset, 180);
+        button(box, "20 g", 110, 112, 84, 70, Action::dose_preset, 200);
+        button(box, "22 g", 204, 112, 84, 70, Action::dose_preset, 220);
+        button(box, "-1 g", 16, 198, 60, 88, Action::dose_adjust, -10);
+        button(box, "-0.1", 84, 198, 64, 88, Action::dose_adjust, -1);
+        button(box, "+0.1", 156, 198, 64, 88, Action::dose_adjust, 1);
+        button(box, "+1 g", 228, 198, 60, 88, Action::dose_adjust, 10);
+        for (unsigned i = 0; i < lv_obj_get_child_cnt(box); ++i) {
+            auto* child = lv_obj_get_child(box, static_cast<int>(i));
+            if (lv_obj_check_type(child, &lv_btn_class)) {
+                auto* caption = lv_obj_get_child(child, 0);
+                lv_obj_set_style_text_font(caption, &lv_font_montserrat_18, 0);
+                lv_obj_center(caption);
+            }
+        }
     } else if (dialog_ == Dialog::demo) {
         label(box, "Dummy scenarios", 16, 18, 230, &lv_font_montserrat_22);
         const char* names[] = {"Cup + 18.2 g dose", "Unknown object / no baseline", "Portafilter > beans > cup", "V60 / bloom + pours"};
@@ -330,45 +364,42 @@ void View::draw_dialog(lv_obj_t* root) {
     } else draw_registration(box);
 }
 void View::draw_registration(lv_obj_t* box) {
-    const auto title = "Register equipment  " + std::to_string(registration_step_ + 1) + "/4";
+    if (registration_step_ == 2) {
+        const auto name = std::string(kind_name(registration_kind_)) + " " + equipment_icons[registration_icon_];
+        icon_name_ = label(box, name.c_str(), 16, 16, 370, &lv_font_montserrat_22, mint);
+        for (unsigned i = 0; i < std::size(equipment_icons); ++i) {
+            auto* item = button(box, equipment_icons[i], 16 + (i % 5) * 84, 58 + (i / 5) * 46,
+                                76, 44, Action::choose_icon, static_cast<int>(i));
+            auto* caption = lv_obj_get_child(item, 0);
+            lv_obj_set_style_text_font(caption, &equipment_emoji_22, 0);
+            lv_obj_center(caption);
+            lv_obj_set_style_border_color(item, color(i == registration_icon_ ? mint : border), 0);
+            lv_obj_set_style_border_width(item, i == registration_icon_ ? 2 : 1, 0);
+            icon_buttons_[i] = item;
+        }
+        button(box, "Back", 16, 254, 90, 40, Action::register_back);
+        label(box, registration_error_.empty() ? "Icon 3/3" : registration_error_.c_str(),
+              116, 266, 168, &lv_font_montserrat_14, registration_error_.empty() ? muted : amber);
+        button(box, "Save", 290, 254, 144, 40, Action::register_save, 0, true);
+        return;
+    }
+    const auto title = "Register equipment  " + std::to_string(registration_step_ + 1) + "/3";
     label(box, title.c_str(), 16, 14, 370, &lv_font_montserrat_18);
     if (registration_step_ == 0) {
         label(box, "Choose equipment type", 18, 64, 390, &lv_font_montserrat_22);
         kind_input_ = lv_dropdown_create(box);
-        lv_dropdown_set_options(kind_input_, "Cup\nPortafilter\nPour-over set");
+        lv_dropdown_set_options(kind_input_, "Container\nPortafilter\nPour-over set");
         lv_dropdown_set_selected(kind_input_, static_cast<unsigned>(registration_kind_));
         lv_obj_set_pos(kind_input_, 18, 110); lv_obj_set_size(kind_input_, 414, 50);
-    } else if (registration_step_ == 1) {
-        label(box, kind_name(registration_kind_), 18, 64, 400, &lv_font_montserrat_28, mint);
-        const char* desc = registration_kind_ == Kind::cup ? "Cup only: measures beverage collected." :
-            registration_kind_ == Kind::portafilter ? "Clean and empty, with the basket installed.\nA different basket needs a new profile." :
-            "Dripper + server + filter on the scale.\nUse the actual post-rinse tare for brewing.";
-        label(box, desc, 18, 110, 408, &lv_font_montserrat_18);
-        label(box, "Configuration is stored with the profile.", 18, 210, 410, &lv_font_montserrat_14, muted);
-    } else if (registration_step_ == 2) {
+    } else {
         label(box, "Empty reference weight", 18, 60, 400, &lv_font_montserrat_22);
         label(box, "156.8 g", 18, 102, 280, &lv_font_montserrat_48);
         label(box, "Simulated reading - no load cell attached", 18, 165, 416, &lv_font_montserrat_14, muted);
         button(box, registration_stable_ ? "Stable reading" : "Unstable - wait", 18, 196, 250, 46, Action::stable, 0, registration_stable_);
-    } else {
-        name_input_ = lv_textarea_create(box);
-        lv_textarea_set_one_line(name_input_, true);
-        lv_textarea_set_max_length(name_input_, 24);
-        lv_textarea_set_accepted_chars(name_input_, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -_");
-        lv_textarea_set_text(name_input_, registration_name_.c_str());
-        lv_obj_set_pos(name_input_, 16, 52); lv_obj_set_size(name_input_, 418, 42);
-        button(box, "Back", 16, 103, 90, 40, Action::register_back);
-        button(box, "Save (RAM)", 290, 103, 144, 40, Action::register_save, 0, true);
-        auto* kb = lv_keyboard_create(box);
-        lv_obj_set_align(kb, LV_ALIGN_TOP_LEFT);
-        lv_obj_set_size(kb, 444, 144); lv_obj_set_pos(kb, 3, 155);
-        lv_keyboard_set_textarea(kb, name_input_);
-        if (!registration_error_.empty()) label(box, registration_error_.c_str(), 112, 112, 176, &lv_font_montserrat_14, amber);
-        return;
     }
     button(box, "Back", 16, 254, 90, 40, Action::register_back);
     auto* next = button(box, "Continue", 290, 254, 144, 40, Action::register_next, 0, true);
-    if (registration_step_ == 2 && !registration_stable_) lv_obj_add_state(next, LV_STATE_DISABLED);
+    if (registration_step_ == 1 && !registration_stable_) lv_obj_add_state(next, LV_STATE_DISABLED);
 }
 void View::action(Action a, int value) {
     switch (a) {
@@ -402,22 +433,32 @@ void View::action(Action a, int value) {
     case Action::register_next:
         if (registration_step_ == 0 && kind_input_) {
             registration_kind_ = static_cast<Kind>(lv_dropdown_get_selected(kind_input_));
-            registration_name_ = std::string("My ") + kind_name(registration_kind_);
         }
-        if (registration_step_ != 2 || registration_stable_) ++registration_step_;
+        if (registration_step_ == 0 || (registration_step_ == 1 && registration_stable_)) ++registration_step_;
         break;
     case Action::register_back:
-        if (name_input_) registration_name_ = lv_textarea_get_text(name_input_);
         if (registration_step_ > 0) --registration_step_; else dialog_ = Dialog::objects;
         break;
+    case Action::choose_icon: {
+        if (registration_step_ != 2 || value < 0 || value >= 20) return;
+        const auto previous = registration_icon_;
+        registration_icon_ = static_cast<unsigned>(value);
+        for (const auto index : {previous, registration_icon_}) {
+            lv_obj_set_style_border_color(icon_buttons_[index], color(index == registration_icon_ ? mint : border), 0);
+            lv_obj_set_style_border_width(icon_buttons_[index], index == registration_icon_ ? 2 : 1, 0);
+        }
+        const auto name = std::string(kind_name(registration_kind_)) + " " + equipment_icons[registration_icon_];
+        set_text(icon_name_, name.c_str());
+        return;
+    }
     case Action::register_save: {
-        if (!name_input_) return;
-        registration_name_ = lv_textarea_get_text(name_input_);
-        const char* config = registration_kind_ == Kind::cup ? "Cup only" : registration_kind_ == Kind::portafilter ?
+        if (registration_step_ != 2 || dialog_ != Dialog::registration) return;
+        const auto registration_name = std::string(kind_name(registration_kind_)) + " " + equipment_icons[registration_icon_];
+        const char* config = registration_kind_ == Kind::cup ? "Container only" : registration_kind_ == Kind::portafilter ?
             "Clean, with basket" : "Dripper + server + filter";
-        if (controller_.register_equipment({0, registration_kind_, registration_name_, config, 156.8F, std::nullopt}, registration_stable_))
+        if (controller_.register_equipment({0, registration_kind_, registration_name, config, 156.8F, std::nullopt}, registration_stable_))
             dialog_ = Dialog::objects;
-        else registration_error_ = "Name empty / list full";
+        else registration_error_ = "Equipment list full";
         break;
     }
     }

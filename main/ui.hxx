@@ -14,7 +14,7 @@ public:
 private:
     enum class Action { objects, dose, toggle_mode, demo, close,
         dose_adjust, dose_preset, choose_object, choose_scenario, run, pause, finish, next,
-        reset, remove, registration, register_next, register_back, register_save, stable };
+        reset, remove, registration, register_next, register_back, register_save, choose_icon, stable };
     struct Binding { View* view{}; Action action{}; int value{}; };
     lv_obj_t* button(lv_obj_t* parent, const char* text, int x, int y, int w, int h,
                      Action action, int value = 0, bool primary = false);
@@ -31,8 +31,8 @@ private:
     Controller& controller_;
     std::array<Binding, 64> bindings_{};
     std::size_t binding_count_{};
-    lv_obj_t *screen_{}, *weight_{}, *time_{}, *flow_{}, *status_{}, *object_text_{}, *dose_text_{},
-             *target_text_{}, *chart_{}, *dose_value_{}, *name_input_{}, *kind_input_{},
+    lv_obj_t *screen_{}, *weight_{}, *weight_unit_{}, *time_{}, *flow_{}, *status_{}, *object_text_{}, *dose_text_{},
+             *target_text_{}, *chart_{}, *dose_value_{}, *icon_name_{}, *kind_input_{},
              *chart_max_{}, *chart_time_{}, *current_point_{}, *object_weight_{};
     lv_chart_series_t *series_{}, *target_series_{};
     Phase rendered_phase_{Phase::ready};
@@ -41,6 +41,8 @@ private:
     int registration_step_{};
     Kind registration_kind_{Kind::cup};
     bool registration_stable_{true};
-    std::string registration_name_, registration_error_;
+    unsigned registration_icon_{};
+    std::array<lv_obj_t*, 20> icon_buttons_{};
+    std::string registration_error_;
 };
 }

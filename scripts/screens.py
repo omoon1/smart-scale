@@ -12,7 +12,7 @@ if not paths:
     raise SystemExit("Run make preview first")
 for path in paths:
     Image.open(path).save(output / f"{path.stem}.png")
-selected = ["01-ready", "02-objects", "03-dose", "04-extracting", "05-result", "12-register-name"]
+selected = ["01-ready", "02-objects", "03-dose", "04-extracting", "05-result", "12-register-icon-selected"]
 sheet = Image.new("RGB", (1008, 1092), "#e8eee9")
 draw = ImageDraw.Draw(sheet)
 for index, name in enumerate(selected):
