@@ -33,6 +33,7 @@ private:
     Controller& controller_;
     WeightDisplay weight_display_;
     std::string last_logged_weight_;
+    std::uint64_t last_weight_log_ms_{};
     std::uint32_t display_epoch_{};
     Phase display_phase_{Phase::ready};
     std::array<Binding, 64> bindings_{};

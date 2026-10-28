@@ -25,6 +25,7 @@ void Acquisition::run(void* context) {
             last = now;
             if (xQueueSend(self.queue_, &reading, 0) != pdTRUE) {
                 // A stalled consumer must not silently lose history or replay stale data.
+                self.overflows_.fetch_add(1, std::memory_order_relaxed);
                 xQueueReset(self.queue_);
                 reading.gap = true;
                 xQueueSend(self.queue_, &reading, 0);

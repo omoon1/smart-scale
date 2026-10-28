@@ -5,10 +5,12 @@ namespace smart_scale {
 void Scale::clear_window() {
     count_ = cursor_ = median_count_ = median_cursor_ = 0;
     filtered_.reset();
+    stable_since_.reset();
     flow_g_s_ = 0;
     ++display_epoch_;
 }
 void Scale::invalidate() {
+    ++faults_;
     connected_ = false;
     captured_zero_.reset();
     clear_window();
@@ -28,9 +30,10 @@ void Scale::ingest(std::int32_t raw, std::uint64_t now) {
     const auto previous_ms = last_ms_;
     last_ms_ = now;
     last_raw_ = raw;
+    ++received_;
     connected_ = true;
     overload_ = raw <= -8388608 || raw >= 8388607;
-    if (overload_) { clear_window(); captured_zero_.reset(); return; }
+    if (overload_) { ++faults_; clear_window(); captured_zero_.reset(); return; }
     median_[median_cursor_] = raw;
     median_cursor_ = (median_cursor_ + 1) % median_.size();
     median_count_ = std::min<unsigned>(median_count_ + 1, median_.size());
@@ -54,13 +57,21 @@ void Scale::ingest(std::int32_t raw, std::uint64_t now) {
         overload_ = true;
         clear_window();
         captured_zero_.reset();
+        ++faults_;
     }
+    if (stability_stats().failed == 0) {
+        if (!stable_since_) stable_since_ = now;
+    } else stable_since_.reset();
 }
 void Scale::check_timeout(std::uint64_t now) {
     if (connected_ && now > last_ms_ && now - last_ms_ > config::sensor_timeout_ms) invalidate();
 }
 bool Scale::stable() const {
-    if (!connected_ || overload_ || !filtered_) return false;
+    return stable_since_ && stable_for_ms() >= config::stability_hold_ms && stability_stats().failed == 0;
+}
+StabilityStats Scale::stability_stats() const {
+    StabilityStats stats;
+    if (!connected_ || overload_ || !filtered_) return stats;
     double sx = 0, sy = 0;
     unsigned n = 0;
     std::uint64_t oldest = last_ms_;
@@ -72,20 +83,31 @@ bool Scale::stable() const {
         sy += s.counts;
         ++n;
     }
-    if (n < 8 || last_ms_ - oldest < config::stability_min_ms) return false;
+    stats.samples = n;
+    stats.span_ms = last_ms_ - oldest;
+    if (n < 8 || stats.span_ms < config::stability_min_ms) return stats;
     const double mx = sx / n, my = sy / n;
-    double xx = 0, xy = 0, yy = 0;
+    double xx = 0, xy = 0, yy = 0, low = my, high = my;
     for (unsigned i = 0; i < count_; ++i) {
         const auto& s = samples_[i];
         if (last_ms_ - s.ms > config::stability_window_ms) continue;
         const double x = static_cast<double>(last_ms_ - s.ms) / 1000 - mx, y = s.counts - my;
+        low = std::min(low, s.counts); high = std::max(high, s.counts);
         xx += x * x; xy += x * y; yy += y * y;
     }
     const double factor = calibration_ ? std::abs(calibration_->counts_per_gram) : 0;
     const double std_limit = calibration_ ? std::max(2.0, factor * config::stability_std_g) : 150.0;
     const double drift_limit = calibration_ ? std::max(1.0, factor * config::stability_drift_g_s) : 50.0;
-    return xx > 0 && std::sqrt(yy / n) <= std_limit && std::abs(xy / xx) <= drift_limit &&
-        std::abs(*filtered_ - my) <= std_limit;
+    stats.std_counts = std::sqrt(yy / n);
+    stats.drift_counts_s = xx > 0 ? -xy / xx : 0; // x is sample age; reverse sign for time.
+    stats.residual_counts = std::abs(*filtered_ - my);
+    stats.peak_to_peak_counts = high - low;
+    stats.std_limit = std_limit;
+    stats.drift_limit = drift_limit;
+    stats.failed = (xx <= 0 ? 1U : 0U) | (stats.std_counts > std_limit ? 2U : 0U) |
+        (std::abs(stats.drift_counts_s) > drift_limit ? 4U : 0U) |
+        (stats.residual_counts > std_limit ? 8U : 0U);
+    return stats;
 }
 bool Scale::restore(Calibration c) {
     if (!valid_calibration(c)) return false;

@@ -5,6 +5,17 @@
 using namespace smart_scale;
 void near(float a, float b, float tolerance = 0.02F) { assert(std::abs(a - b) < tolerance); }
 int main() {
+    Scale confirmation;
+    assert(confirmation.restore({0, 1000}));
+    for (unsigned ms = 100; ms <= 1500; ms += 100) confirmation.ingest(100000, ms);
+    assert(confirmation.stability_stats().failed == 0 && !confirmation.stable());
+    assert(confirmation.stability_stats().samples >= 8);
+    for (unsigned ms = 1600; ms <= 1800; ms += 100) confirmation.ingest(100000, ms);
+    assert(confirmation.stable());
+    confirmation.ingest(101000, 1900); confirmation.ingest(101000, 2000);
+    assert(!confirmation.stable() && confirmation.stability_stats().failed != 0);
+    confirmation.invalidate();
+    assert(confirmation.stability_stats().failed == 1 && confirmation.faults() == 1);
     Scale s;
     assert(s.restore({0, 1000}));
     std::uint64_t t = 0;
@@ -25,6 +36,7 @@ int main() {
     // Slow drift has low spread but must fail the slope limit (0.05 g/s).
     for (unsigned i = 1; i <= 60; ++i) s.ingest(200000 + 10 * i, t += 100);
     assert(!s.stable() && !s.tare() && !s.capture_zero());
+    assert((s.stability_stats().failed & 4) != 0);
     assert(s.gross() > 200.5F); near(s.flow(), 0.1F, 0.01F);
     s.ingest(8388607, t += 100); assert(!s.ready());
     s.ingest(0, t += 100); assert(!s.ready());

@@ -61,3 +61,8 @@ Host tests cover repeated fine adjustment, no extra increment on release, stoppi
 - New tests cover minimum stability duration at ~80 SPS, isolated spike rejection, duplicate/backward timestamps, sustained noise, slow drift rejection, real positive/negative steps at 10/~80 SPS, saturation/timeout resets, stale calibration cancellation, sample-timestamp flow with batched UI updates, and explicit acquisition-gap invalidation.
 - `make preview` passes all existing and live touchscreen tests, including 20/50/100 g calibration. `make build` compiles and links the acquisition task/queue and domain changes with ESP-IDF v5.5.2.
 - On-device acceptance still required: verify 10/80 SPS sample cadence, induce an extended UI/NVS stall to exercise the real FreeRTOS queue overflow path, verify timeout/reconnect, measure settling latency, and check repeatability/drift with known masses. Host tests exercise the controller's gap handling, not actual FreeRTOS scheduling or electrical timing.
+
+
+## Bounded diagnostics and stability confirmation
+
+Weight-change logging is capped at one line/second, plus one `hx711_diag` summary per five seconds. Summaries report stability failure bits and measured limits, calibration, sample cadence/age, batching, overflow, and fault counts. Stability entry now requires 500 ms of continuous passing checks; exit on failure remains immediate, with no relaxation of the measurement thresholds. Native tests cover pending confirmation, entry, immediate exit, drift flags, and invalidation. Firmware and LVGL checks pass; hardware diagnosis awaits logs captured under a fixed load.

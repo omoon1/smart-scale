@@ -18,6 +18,14 @@ constexpr std::int32_t signed_hx711(std::uint32_t bits) {
     bits &= 0xffffff;
     return (bits & 0x800000) ? static_cast<std::int32_t>(bits) - 0x1000000 : static_cast<std::int32_t>(bits);
 }
+struct StabilityStats {
+    unsigned samples{};
+    std::uint64_t span_ms{};
+    double std_counts{}, drift_counts_s{}, residual_counts{}, peak_to_peak_counts{};
+    double std_limit{}, drift_limit{};
+    // Bit mask: 1=warmup/unavailable, 2=noise, 4=drift, 8=filter not settled.
+    unsigned failed{1};
+};
 class Scale {
 public:
     void ingest(std::int32_t raw, std::uint64_t now_ms);
@@ -35,7 +43,12 @@ public:
     void set_tare(float grams) { tare_g_ = grams; ++display_epoch_; }
     std::uint32_t display_epoch() const { return display_epoch_; }
     bool ready() const { return connected_ && filtered_.has_value() && calibration_.has_value() && !overload_; }
+    StabilityStats stability_stats() const;
     bool stable() const;
+    std::uint64_t received() const { return received_; }
+    std::uint64_t faults() const { return faults_; }
+    std::uint64_t stable_for_ms() const { return stable_since_ ? last_ms_ - *stable_since_ : 0; }
+    std::optional<Calibration> calibration() const { return calibration_; }
     float gross() const { return calibration_ ? (filtered_.value_or(0) - calibration_->zero) / calibration_->counts_per_gram : 0; }
     float reference_gross() const { return calibration_ ? (mean() - calibration_->zero) / calibration_->counts_per_gram : 0; }
     float net() const { return gross() - tare_g_; }
@@ -54,6 +67,8 @@ private:
     unsigned count_{}, cursor_{};
     std::uint64_t last_ms_{};
     std::optional<std::int32_t> last_raw_;
+    std::optional<std::uint64_t> stable_since_;
+    std::uint64_t received_{}, faults_{};
     bool connected_{}, overload_{}, save_failed_{};
     float tare_g_{};
     std::uint32_t display_epoch_{};

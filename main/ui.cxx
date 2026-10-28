@@ -2,6 +2,7 @@
 #include "equipment_icons.hxx"
 #ifdef ESP_PLATFORM
 #include "esp_log.h"
+#include "esp_timer.h"
 #endif
 #include <algorithm>
 #include <cmath>
@@ -281,7 +282,14 @@ void View::refresh_values() {
     // Log actual visible transitions, including unavailable/recovery. Retain the
     // last text across screen redraws to avoid duplicate logs. Never log in the
     // acquisition task or while holding the HX711 clocking critical section.
-    if (controller_.live() && weight_ && weight_text != last_logged_weight_) {
+#ifdef ESP_PLATFORM
+    const auto log_ms = static_cast<std::uint64_t>(esp_timer_get_time() / 1000);
+#else
+    const auto log_ms = static_cast<std::uint64_t>(lv_tick_get());
+#endif
+    if (controller_.live() && weight_ && weight_text != last_logged_weight_ &&
+        (last_logged_weight_.empty() || log_ms - last_weight_log_ms_ >= 1000)) {
+        last_weight_log_ms_ = log_ms;
         last_logged_weight_ = weight_text;
         const auto& scale = controller_.scale();
         const auto raw = scale.last_raw() ? std::to_string(*scale.last_raw()) : "NA";
