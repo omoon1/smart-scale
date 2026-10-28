@@ -15,7 +15,9 @@ std::array<std::uint32_t, width * height> framebuffer{};
 std::array<lv_color_t, width * 40> buffer{};
 int mouse_x{}, mouse_y{};
 bool mouse_down{};
+unsigned flush_count{};
 void flush(lv_disp_drv_t* driver, const lv_area_t* area, lv_color_t* pixels) {
+    ++flush_count;
     for (int y = area->y1; y <= area->y2; ++y)
         for (int x = area->x1; x <= area->x2; ++x) {
             const auto rgb = lv_color_to32(*pixels++);
@@ -52,12 +54,7 @@ void screenshot(smart_scale::ui::View& view, const char* name) {
 void require(bool value, const char* message) {
     if (!value) { std::cerr << "UI test failed: " << message << '\n'; std::exit(1); }
 }
-lv_obj_t* find_roller(lv_obj_t* parent) {
-    if (lv_obj_check_type(parent, &lv_roller_class)) return parent;
-    for (unsigned i = 0; i < lv_obj_get_child_cnt(parent); ++i)
-        if (auto* found = find_roller(lv_obj_get_child(parent, static_cast<int>(i)))) return found;
-    return nullptr;
-}
+
 }
 int main(int argc, char** argv) {
     lv_init();
@@ -118,25 +115,41 @@ int main(int argc, char** argv) {
     click(view, 360, 100); screenshot(view, "02-objects");
     click(view, 364, 30); // Close object modal.
     click(view, 360, 200); screenshot(view, "03-dose");
-    auto* wheel = find_roller(lv_scr_act());
-    require(wheel != nullptr, "Dose card opens numeric wheel");
-    require(controller.session().dose_g && *controller.session().dose_g == 18.2F, "Opening wheel preserves dose");
-    lv_roller_set_selected(wheel, 287, LV_ANIM_OFF);
-    lv_event_send(wheel, LV_EVENT_VALUE_CHANGED, nullptr);
-    require(controller.session().dose_g && *controller.session().dose_g == 28.8F, "Wheel selection updates dose immediately");
+    require(controller.session().dose_g && *controller.session().dose_g == 18.2F, "Opening preserves dose");
+    auto* dose_screen = lv_scr_act();
+    click(view, 240, 156); // 20 g preset.
+    require(*controller.session().dose_g == 20.0F, "Preset selects exact dose");
+    click(view, 276, 216); // +0.1 g.
+    require(*controller.session().dose_g == 20.1F, "Fine adjustment adds one tenth");
+    click(view, 344, 216); // +1 g.
+    require(*controller.session().dose_g == 21.1F, "Coarse adjustment adds one gram");
+    click(view, 132, 216); // -1 g.
+    click(view, 200, 216); // -0.1 g.
+    require(*controller.session().dose_g == 20.0F, "Decrement buttons preserve precision");
+    require(lv_scr_act() == dose_screen, "Adjustments do not rebuild the screen");
+    controller.set_dose(60.0F); pump(view);
+    click(view, 344, 216); click(view, 276, 216);
+    require(*controller.session().dose_g == 60.0F, "Upper bound clamps");
+    controller.set_dose(0.1F); pump(view);
+    click(view, 132, 216); click(view, 200, 216);
+    require(*controller.session().dose_g == 0.1F, "Lower bound clamps");
+    click(view, 240, 156); pump(view, 500); pump(view, 500);
+    const auto idle_flushes = flush_count;
+    for (int i = 0; i < 10; ++i) pump(view, 100);
+    require(flush_count == idle_flushes, "Unchanged dose dialog performs no display transfers");
     click(view, 364, 30);
-    require(controller.session().dose_g && *controller.session().dose_g == 28.8F, "Closing preserves selected dose");
+    require(*controller.session().dose_g == 20.0F, "Closing preserves selected dose");
     click(view, 360, 200);
-    wheel = find_roller(lv_scr_act()); require(wheel != nullptr, "Wheel reopens");
-    require(lv_roller_get_selected(wheel) == 287, "Wheel reopens at saved selection");
+    require(*controller.session().dose_g == 20.0F, "Reopening preserves dose");
     click(view, 364, 30);
     controller.load_scenario(Scenario::known); pump(view);
     click(view, 90, 290); // Start dummy liquid stream via UI.
     for (int i = 0; i < 190; ++i) { controller.tick(0.1F); pump(view, 100); }
     require(controller.session().phase == Phase::brewing, "Run demo starts extraction");
     screenshot(view, "04-extracting");
-    click(view, 360, 70);
-    require(find_roller(lv_scr_act()) == nullptr, "Locked panel cannot open editor");
+    auto* brew_screen = lv_scr_act();
+    view.open(ui::Dialog::dose); pump(view);
+    require(lv_scr_act() == brew_screen, "Locked panel cannot open editor");
     click(view, 396, 290);
     require(controller.session().phase == Phase::result, "Finish opens results");
     screenshot(view, "05-result");
@@ -149,7 +162,9 @@ int main(int argc, char** argv) {
     view.open(ui::Dialog::dose); pump(view); // Brew must dismiss unconfirmed edits.
     controller.run_demo();
     for (int i = 0; i < 30; ++i) { controller.tick(0.1F); pump(view, 100); }
-    require(controller.session().phase == Phase::brewing && !controller.session().dose_g, "Brew discards pending dose");
+    require(controller.session().phase == Phase::brewing && !controller.session().dose_g, "Opening editor does not invent a dose");
+    click(view, 276, 216);
+    require(!controller.session().dose_g, "Brewing dismisses dose controls");
     screenshot(view, "07-unknown");
     controller.finish(); controller.load_scenario(Scenario::pour_over); pump(view);
     controller.run_demo();

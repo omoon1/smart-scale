@@ -13,7 +13,7 @@ public:
     void reset();
 private:
     enum class Action { objects, dose, toggle_mode, demo, close,
-        choose_object, choose_scenario, run, pause, finish, next,
+        dose_adjust, dose_preset, choose_object, choose_scenario, run, pause, finish, next,
         reset, remove, registration, register_next, register_back, register_save, stable };
     struct Binding { View* view{}; Action action{}; int value{}; };
     lv_obj_t* button(lv_obj_t* parent, const char* text, int x, int y, int w, int h,
@@ -25,7 +25,6 @@ private:
     void draw_registration(lv_obj_t* parent);
     void action(Action action, int value);
     static void clicked(lv_event_t* event);
-    static void dose_changed(lv_event_t* event);
     static void deferred_draw(void* context);
     void schedule_draw();
     void refresh_values();
@@ -33,7 +32,7 @@ private:
     std::array<Binding, 64> bindings_{};
     std::size_t binding_count_{};
     lv_obj_t *screen_{}, *weight_{}, *time_{}, *flow_{}, *status_{}, *object_text_{}, *dose_text_{},
-             *target_text_{}, *chart_{}, *roller_{}, *name_input_{}, *kind_input_{},
+             *target_text_{}, *chart_{}, *dose_value_{}, *name_input_{}, *kind_input_{},
              *chart_max_{}, *chart_time_{}, *current_point_{}, *object_weight_{};
     lv_chart_series_t *series_{}, *target_series_{};
     Phase rendered_phase_{Phase::ready};
