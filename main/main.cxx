@@ -73,7 +73,7 @@ extern "C" void app_main() {
                 const double units = calibration ? std::abs(factor) : 1;
                 const double hz = (scale.received() - previous_received) * 1000.0 / (now_ms - last_diagnostic_ms);
                 std::snprintf(diagnostic, sizeof(diagnostic),
-                    "ready=%d stable=%d fail=%u hold_ms=%llu n=%u span_ms=%llu drift_n=%u drift_span_ms=%llu sd=%.4f/%.4f drift=%.4f/%.4f residual=%.4f p2p=%.4f units=%s hz=%.1f age_ms=%llu max_age_ms=%llu batch=%u overflow=%u faults=%llu factor=%.4f zero=%.1f",
+                    "ready=%d stable=%d fail=%u hold_ms=%llu n=%u span_ms=%llu drift_n=%u drift_span_ms=%llu sd=%.4f/%.4f drift=%.4f/%.4f residual=%.4f p2p=%.4f units=%s hz=%.1f age_ms=%llu max_age_ms=%llu batch=%u overflow=%u faults=%llu factor=%.4f zero=%.1f profiles=%u object=%s",
                     scale.ready(), scale.stable(), stats.failed,
                     static_cast<unsigned long long>(scale.stable_for_ms()), stats.samples,
                     static_cast<unsigned long long>(stats.span_ms), stats.drift_samples,
@@ -82,7 +82,8 @@ extern "C" void app_main() {
                     stats.peak_to_peak_counts / units, calibration ? "g,g/s" : "counts,counts/s", hz,
                     static_cast<unsigned long long>(scale.last_raw() && now_ms > scale.sample_ms() ? now_ms - scale.sample_ms() : 0),
                     static_cast<unsigned long long>(max_age_ms), max_batch, acquisition.overflows(),
-                    static_cast<unsigned long long>(scale.faults()), factor, calibration ? calibration->zero : 0);
+                    static_cast<unsigned long long>(scale.faults()), factor, calibration ? calibration->zero : 0,
+                    static_cast<unsigned>(controller->equipment_count()), controller->recognition_status());
                 last_diagnostic_ms = now_ms; previous_received = scale.received(); max_age_ms = 0; max_batch = 0;
             }
             lvgl_port_unlock();

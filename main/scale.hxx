@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <optional>
+#include <utility>
 
 namespace smart_scale {
 // Calibration is independent of a temporary container tare. Counts may decrease
@@ -52,6 +53,15 @@ public:
     std::optional<Calibration> calibration() const { return calibration_; }
     float gross() const { return calibration_ ? (filtered_.value_or(0) - calibration_->zero) / calibration_->counts_per_gram : 0; }
     float reference_gross() const { return calibration_ ? (mean() - calibration_->zero) / calibration_->counts_per_gram : 0; }
+    std::optional<float> recent_gross() const {
+        if (!ready() || median_count_ < median_.size()) return std::nullopt;
+        auto sorted = median_;
+        // Three-element median without depending on the slower low-pass output.
+        if (sorted[0] > sorted[1]) std::swap(sorted[0], sorted[1]);
+        if (sorted[1] > sorted[2]) std::swap(sorted[1], sorted[2]);
+        if (sorted[0] > sorted[1]) std::swap(sorted[0], sorted[1]);
+        return (sorted[1] - calibration_->zero) / calibration_->counts_per_gram;
+    }
     float net() const { return gross() - tare_g_; }
     const char* status() const;
     std::optional<Calibration> take_pending_save();

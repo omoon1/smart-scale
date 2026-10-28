@@ -42,6 +42,7 @@ class Controller {
 public:
     explicit Controller(bool live = false);
     bool live() const { return live_; }
+    const char* recognition_status() const;
     bool object_ambiguous() const { return object_ambiguous_; }
     Scale& scale() { return scale_; }
     const Scale& scale() const { return scale_; }
@@ -76,6 +77,7 @@ private:
     void place_demo_kind(Kind kind);
     void archive(bool aborted);
     bool live_{};
+    std::optional<std::uint64_t> empty_since_;
     bool recognition_checked_{}, object_ambiguous_{}, dose_tared_{};
     Scale scale_;
     Session session_{};

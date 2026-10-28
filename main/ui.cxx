@@ -334,7 +334,7 @@ void View::refresh_values() {
     if (s.phase == Phase::ready) {
         const auto& item = s.active_object;
         if (object_text_) {
-            set_text(object_text_, item ? item->name.c_str() : controller_.object_ambiguous() ? "Choose object" : "Object ?");
+            set_text(object_text_, item ? item->name.c_str() : controller_.live() && !controller_.equipment_count() ? "Register object" : controller_.object_ambiguous() ? "Choose object" : "Object ?");
             set_text(object_weight_, number(item ? item->empty_g : std::nullopt, " g").c_str());
         }
         if (dose_text_) set_text(dose_text_, number(s.dose_g, " g").c_str());

@@ -129,5 +129,38 @@ int main() {
     assert(!detection.object_ambiguous()); near(detection.scale().net(), 175);
     assert(detection.start_brew()); place(20000);
     assert(detection.session().active_object->name == "Other cup"); // Identity locked during brewing.
+    Controller registration(true);
+    assert(registration.scale().restore({0, 100}));
+    assert(std::string(registration.recognition_status()) == "no_profiles");
+    auto readings = [&](int raw, int count) {
+        for (int i = 0; i < count; ++i) { registration.sensor_sample(raw, now += 100); registration.tick(0.1F); }
+    };
+    readings(26300, 60);
+    assert(!registration.session().active_object);
+    assert(registration.register_equipment({0, Kind::cup, "New cup", "", 263.0F, {}}, true));
+    readings(26300, 1); // Register while the already-unknown object remains on the platform.
+    assert(registration.session().active_object && registration.session().active_object->name == "New cup");
+    assert(std::string(registration.recognition_status()) == "matched");
+    assert(registration.register_equipment({0, Kind::cup, "Other", "", 400.0F, {}}, true));
+    readings(0, 1); // A single low sample cannot clear identity.
+    assert(registration.session().active_object);
+    readings(26300, 4);
+    assert(registration.session().active_object);
+    readings(0, 6); // Ordinary brief removal, much shorter than drift stability.
+    assert(!registration.session().active_object && !registration.session().loaded);
+    readings(40000, 60);
+    assert(registration.session().active_object && registration.session().active_object->name == "Other");
+    // Deleting an ambiguous candidate rearms matching without another physical lift.
+    assert(registration.register_equipment({0, Kind::cup, "Duplicate", "", 400.0F, {}}, true));
+    readings(0, 6); readings(40000, 60);
+    assert(registration.object_ambiguous());
+    const auto duplicate_id = registration.equipment()[2].id;
+    assert(registration.remove_equipment(duplicate_id)); readings(40000, 1);
+    assert(registration.session().active_object && !registration.object_ambiguous());
+    readings(0, 6); readings(26300, 3);
+    assert(!registration.scale().stable());
+    assert(registration.select_equipment(0)); // Explicit identity selection need not wait for drift stability.
+    assert(registration.session().active_object->name == "New cup");
+    assert(!registration.tare()); // Measurement operations retain the strict stability gate.
     std::cout << "HX711 calibration and live-session tests passed\n";
 }

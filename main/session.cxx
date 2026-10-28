@@ -27,9 +27,21 @@ Controller::Controller(bool live) : live_(live) {
     equipment_[2] = {3, Kind::pour_over_set, "V60 set", "Dripper + server + filter", 326.4F, 20.0F};
     load_scenario(Scenario::known);
 }
+const char* Controller::recognition_status() const {
+    if (!live_) return "demo";
+    if (session_.phase != Phase::ready) return "session_locked";
+    if (!equipment_count_) return "no_profiles";
+    if (!scale_.ready()) return "sensor_unavailable";
+    if (session_.active_object) return "matched";
+    if (object_ambiguous_) return "ambiguous";
+    if (recognition_checked_) return "no_match";
+    if (!scale_.stable()) return "waiting_stable";
+    return session_.loaded ? "pending" : "empty";
+}
 void Controller::sensor_fault() {
     if (!live_) return;
     scale_.invalidate();
+    empty_since_.reset();
     if (session_.phase == Phase::brewing) session_.uncertain = true;
 }
 void Controller::sensor_sample(std::optional<std::int32_t> raw, std::uint64_t now) {
@@ -38,9 +50,28 @@ void Controller::sensor_sample(std::optional<std::int32_t> raw, std::uint64_t no
     scale_.check_timeout(now);
     if (session_.phase == Phase::result) return; // Keep archived result immutable.
     if (!scale_.ready()) {
+        empty_since_.reset();
         if (session_.phase == Phase::brewing) session_.uncertain = true;
         return;
     }
+    // Removal needs only a persistent near-zero median, not a fresh 3.2 s drift
+    // window. Otherwise a normal lift/replacement never rearms recognition.
+    const auto recent = scale_.recent_gross();
+    if (recent && std::abs(*recent) <= 2.0F) {
+        if (!empty_since_) empty_since_ = scale_.sample_ms();
+        if (scale_.sample_ms() - *empty_since_ >= 300) {
+            session_.loaded = false;
+            if (session_.phase == Phase::brewing) session_.uncertain = true;
+            if (session_.phase == Phase::remove_load) session_.phase = Phase::ready;
+            if (session_.phase == Phase::ready) {
+                session_.active_object.reset();
+                session_.vessel.reset();
+                recognition_checked_ = object_ambiguous_ = dose_tared_ = false;
+                scale_.clear_tare();
+            }
+            return; // Do not classify residual low-pass weight from the removed object.
+        }
+    } else empty_since_.reset();
     if (scale_.stable()) {
         session_.loaded = scale_.gross() > 2.0F;
         if (!session_.loaded) {
@@ -97,7 +128,7 @@ void Controller::target() {
 bool Controller::select_equipment(std::size_t index) {
     if (session_.phase != Phase::ready || index >= equipment_count_) return false;
     if (live_) {
-        if (!scale_.ready() || !scale_.stable() || scale_.gross() <= 2.0F || !equipment_[index].empty_g) return false;
+        if (!scale_.ready() || scale_.recent_gross().value_or(0) <= 2.0F || !equipment_[index].empty_g) return false;
         recognition_checked_ = true;
         object_ambiguous_ = false;
         const auto& item = equipment_[index];
@@ -157,6 +188,9 @@ bool Controller::register_equipment(Equipment item, bool stable) {
     if (next_equipment_id_ == 0) return false;
     item.id = next_equipment_id_++;
     equipment_[equipment_count_++] = std::move(item);
+    if (live_ && !session_.active_object) {
+        recognition_checked_ = object_ambiguous_ = false;
+    }
     return true;
 }
 bool Controller::remove_equipment(std::uint32_t id) {
@@ -169,6 +203,7 @@ bool Controller::remove_equipment(std::uint32_t id) {
     equipment_[--equipment_count_] = {};
     for (auto* selected : {&session_.active_object, &session_.vessel, &session_.weighing_tool})
         if (*selected && (*selected)->id == id) selected->reset();
+    if (live_ && !session_.active_object) recognition_checked_ = object_ambiguous_ = false;
     // Deleting a profile is not a physical removal or a tare. Retain the reading.
     target();
     demo_running_ = false;
@@ -234,6 +269,7 @@ void Controller::reset() {
     demo_stage_ = 0;
     if (live_) {
         scale_.clear_tare();
+        empty_since_.reset();
         recognition_checked_ = object_ambiguous_ = dose_tared_ = false;
     }
 }

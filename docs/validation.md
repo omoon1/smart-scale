@@ -75,3 +75,10 @@ Supplied diagnostics showed `sd=0.0565–0.0760 g` below the 0.10 g limit, but s
 Drift now uses 3.2 s of history (minimum 3.0 s), separate from the unchanged 1.2 s noise/settling window. Limits and immediate failure exit are unchanged; initial stability takes approximately 3.5–4 s. A 320-sample buffer supports the longer window at 80 SPS. Diagnostics add drift-window count and duration without adding log lines.
 
 `make test`, `make preview`, and the ESP-IDF firmware build pass. Synthetic ±0.08 g oscillation tests at 10, ~11, and ~80 SPS remain stable after warmup; the same noise with sustained 0.10 g/s drift is rejected. Sudden steps still fail short-window checks. This is a synthetic regression scenario informed by the log's noise scale, not a replay of unavailable raw samples. Physical verification remains necessary.
+
+
+## Object recognition rearming
+
+Fixed two reproducible paths: registering equipment while an already-unknown object remains on the platform now retries matching, and a normal brief lift now rearms matching without waiting for the full drift window. Removal requires 300 ms of near-zero median samples; a single low sample does not reset identity. Manual identity selection is permitted while settling, without weakening tare/calibration/start checks. Empty profile lists explicitly display Register object; profiles remain RAM-only. The existing diagnostic summary includes profile count and recognition state.
+
+Native tests cover registration in place, transient lows, a 600 ms lift, replacement with a different profile, ambiguity resolved by deletion, and explicit selection while tare remains blocked. Existing session/filter suites, LVGL previews, and ESP-IDF build pass. Physical confirmation is still required; no claim is made that the user's exact cause is established without their `profiles`/`object` diagnostics.
