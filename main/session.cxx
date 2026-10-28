@@ -88,9 +88,37 @@ bool Controller::register_equipment(Equipment item, bool stable) {
     if (session_.phase != Phase::ready || !stable || equipment_count_ == equipment_.size() ||
         item.name.empty() || item.name.size() > 24 || !item.empty_g ||
         !std::isfinite(*item.empty_g) || *item.empty_g <= 0) return false;
-    item.id = static_cast<std::uint32_t>(equipment_count_ + 1);
+    if (next_equipment_id_ == 0) return false;
+    item.id = next_equipment_id_++;
     equipment_[equipment_count_++] = std::move(item);
     return true;
+}
+bool Controller::remove_equipment(std::uint32_t id) {
+    if (session_.phase != Phase::ready) return false;
+    std::size_t index = 0;
+    while (index < equipment_count_ && equipment_[index].id != id) ++index;
+    if (index == equipment_count_) return false;
+    for (std::size_t i = index + 1; i < equipment_count_; ++i)
+        equipment_[i - 1] = std::move(equipment_[i]);
+    equipment_[--equipment_count_] = {};
+    for (auto* selected : {&session_.active_object, &session_.vessel, &session_.weighing_tool})
+        if (*selected && (*selected)->id == id) selected->reset();
+    // Deleting a profile is not a physical removal or a tare. Retain the reading.
+    target();
+    demo_running_ = false;
+    return true;
+}
+void Controller::place_demo_kind(Kind kind) {
+    for (std::size_t i = 0; i < equipment_count_; ++i) {
+        if (equipment_[i].kind == kind) { place(i); return; }
+    }
+    // Demo scenarios must never reinterpret a shifted list index as another type.
+    session_.active_object.reset();
+    if (kind == Kind::portafilter) session_.weighing_tool.reset();
+    else session_.vessel.reset();
+    session_.loaded = true;
+    session_.baseline_known = false;
+    target();
 }
 void Controller::liquid(float delta, float elapsed) {
     if ((session_.phase != Phase::ready && session_.phase != Phase::brewing) ||
@@ -148,11 +176,11 @@ void Controller::load_scenario(Scenario scenario) {
     demo_stage_ = 0;
     demo_running_ = false;
     if (scenario == Scenario::known) {
-        place(0);
+        place_demo_kind(Kind::cup);
         set_dose(18.2F, DoseSource::measured);
     } else if (scenario == Scenario::pour_over) {
         set_mode(Mode::pour_over);
-        place(2);
+        place_demo_kind(Kind::pour_over_set);
         set_dose(20.0F, DoseSource::measured);
     } else if (scenario == Scenario::unknown) {
         session_.loaded = true; // No trustworthy empty baseline: show ? throughout.
@@ -166,12 +194,12 @@ void Controller::tick(float dt) {
     if (!demo_running_ || !std::isfinite(dt) || dt <= 0) return;
     demo_time_ += dt;
     if (scenario_ == Scenario::sequential && session_.phase == Phase::ready) {
-        if (demo_stage_ == 0 && demo_time_ >= 1) { place(1); ++demo_stage_; }
+        if (demo_stage_ == 0 && demo_time_ >= 1) { place_demo_kind(Kind::portafilter); ++demo_stage_; }
         if (demo_stage_ == 1 && demo_time_ >= 2) { weigh_beans(12); ++demo_stage_; }
         if (demo_stage_ == 2 && demo_time_ >= 3) { weigh_beans(19.2F); ++demo_stage_; }
         if (demo_stage_ == 3 && demo_time_ >= 4) { weigh_beans(18.2F); ++demo_stage_; }
         if (demo_stage_ == 4 && demo_time_ >= 5) { remove_object(); ++demo_stage_; }
-        if (demo_stage_ == 5 && demo_time_ >= 6) { place(0); ++demo_stage_; }
+        if (demo_stage_ == 5 && demo_time_ >= 6) { place_demo_kind(Kind::cup); ++demo_stage_; }
         if (demo_time_ < 8) return;
     }
     if (demo_time_ < 1) return;

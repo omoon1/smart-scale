@@ -74,5 +74,48 @@ int main() {
     CHECK(near(c.session().samples[c.session().sample_count - 1].grams, c.session().net_g));
     for (int i = 0; i < 12; ++i) { c.finish(); c.load_scenario(Scenario::known); c.liquid(1, 1); }
     CHECK(c.record_count() == config::max_records);
+    Controller reading;
+    reading.place(1); reading.weigh_beans(18.2F);
+    CHECK(reading.remove_equipment(2));
+    CHECK(near(reading.session().net_g, 18.2F));
+    CHECK(!reading.session().weighing_tool && !reading.session().active_object);
+    CHECK(reading.session().loaded && reading.session().baseline_known);
+    Controller removed;
+    removed.liquid(2, 1); removed.finish();
+    const auto archived_id = removed.latest_record().session.vessel->id;
+    CHECK(!removed.remove_equipment(archived_id)); // Result is locked too.
+    removed.next(); removed.remove_object(); removed.place(0);
+    const auto count = removed.equipment_count();
+    CHECK(!removed.remove_equipment(999));
+    CHECK(removed.equipment_count() == count);
+    CHECK(removed.remove_equipment(archived_id));
+    CHECK(!removed.session().active_object && !removed.session().vessel);
+    CHECK(removed.session().loaded && removed.session().baseline_known);
+    CHECK(near(removed.session().net_g, 0));
+    CHECK(removed.latest_record().session.vessel->id == archived_id);
+    CHECK(near(removed.latest_record().session.net_g, 2));
+    CHECK(removed.equipment()[0].kind == Kind::portafilter);
+    CHECK(removed.register_equipment(item, true));
+    CHECK(removed.equipment()[2].id == 4); // Never reuse compacted list IDs.
+    CHECK(removed.remove_equipment(4));
+    CHECK(removed.register_equipment(item, true));
+    CHECK(removed.equipment()[2].id == 5);
+    removed.load_scenario(Scenario::pour_over);
+    CHECK(removed.session().vessel->kind == Kind::pour_over_set);
+    removed.liquid(1, 1);
+    CHECK(!removed.remove_equipment(3)); // Brewing is locked.
+    removed.reset(); removed.remove_object();
+    while (removed.equipment_count()) CHECK(removed.remove_equipment(removed.equipment()[0].id));
+    for (const auto scenario : {Scenario::known, Scenario::pour_over, Scenario::sequential}) {
+        removed.load_scenario(scenario); removed.run_demo();
+        for (int i = 0; i < 100; ++i) removed.tick(0.1F);
+        CHECK(!removed.session().vessel && !removed.session().weighing_tool);
+        CHECK(removed.session().uncertain);
+        removed.finish();
+    }
+    removed.reset(); removed.remove_object();
+    CHECK(removed.register_equipment(item, true)); // Empty list can recover.
+    CHECK(removed.select_equipment(0));
+    CHECK(removed.equipment()[0].id == 6);
     std::cout << checks << " checks passed\n";
 }

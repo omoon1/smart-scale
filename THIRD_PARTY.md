@@ -7,3 +7,5 @@ LVGL 8.4.0 (MIT) and the Espressif components are fetched by the ESP-IDF Compone
 Application organization is inspired by the requested [farm360-ai/esp32_plc/serial_mb_slave](https://github.com/farm360-ai/esp32_plc/tree/main/serial_mb_slave) pattern. Application source was written for this project; no PLC business logic, credentials, or hardware pins were copied.
 
 `main/weight_font_72.c` is a 72 px, 4-bpp subset of DejaVu Sans (digits, decimal point, minus, question mark, space and g), generated with `lv_font_conv`. Its Bitstream Vera license and public-domain DejaVu changes notice are in `main/LICENSE.weight-font`. The bitmap is stored in flash and drawn without runtime scaling.
+
+`main/equipment_icons.c` contains original monochrome artwork generated from the vector geometry in `scripts/equipment_icons.py`. It does not use a third-party emoji font. CairoSVG and Pillow are development-only generation tools; generated 22 px and 32 px glyphs are compiled directly into firmware.

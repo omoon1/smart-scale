@@ -49,6 +49,7 @@ public:
     bool set_dose(float grams, DoseSource source = DoseSource::manual);
     bool set_mode(Mode mode);
     bool register_equipment(Equipment equipment, bool stable);
+    bool remove_equipment(std::uint32_t id);
     void remove_object();
     void place(std::size_t index);
     void weigh_beans(float grams);
@@ -63,10 +64,12 @@ public:
     [[nodiscard]] bool demo_running() const { return demo_running_; }
 private:
     void target();
+    void place_demo_kind(Kind kind);
     void archive(bool aborted);
     Session session_{};
     std::array<Equipment, config::max_equipment> equipment_{};
     std::size_t equipment_count_{3};
+    std::uint32_t next_equipment_id_{4};
     std::array<Record, config::max_records> records_{};
     std::size_t record_count_{}, next_record_{};
     bool demo_running_{};

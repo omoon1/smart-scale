@@ -27,7 +27,7 @@ The UI uses the board's existing 3.3 V power rail. The adapter only changes the 
 3. Confirm the log identifies ST7796/FT6336 and the screen is 480×320 landscape.
 4. Tap all four corners, object/dose cards, close buttons, and the dose editor. Verify touch/display alignment, color order, and readability.
 5. Run each scenario, Finish, then Next. Press BOOT during extraction and confirm the remove-load screen. The physical RESET/EN switch is a reboot, not the application Reset.
-6. Check the registration keyboard and scroll the equipment list after adding profiles. Confirm the screen remains responsive during a long extraction.
+6. Check all 20 registration icons and type-plus-icon names and scroll the equipment list after adding profiles. Confirm the screen remains responsive during a long extraction.
 
 No board was attached during implementation. Compilation and desktop rendering do not validate panel timing, touch orientation, cold-start power sequencing, battery behavior, or scale accuracy.
 
