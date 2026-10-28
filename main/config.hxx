@@ -16,6 +16,7 @@ inline constexpr float filter_tau_s = 0.3F;
 inline constexpr std::uint64_t sensor_timeout_ms = 1000;
 inline constexpr std::uint64_t stability_window_ms = 1200;
 inline constexpr std::uint64_t stability_min_ms = 1000;
+inline constexpr std::uint64_t drift_window_ms = 3200, drift_min_ms = 3000;
 inline constexpr std::uint64_t stability_hold_ms = 500;
 inline constexpr float stability_std_g = 0.10F, stability_drift_g_s = 0.05F;
 inline constexpr float display_hysteresis_g = 0.15F;

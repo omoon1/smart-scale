@@ -20,7 +20,8 @@ constexpr std::int32_t signed_hx711(std::uint32_t bits) {
 }
 struct StabilityStats {
     unsigned samples{};
-    std::uint64_t span_ms{};
+    std::uint64_t span_ms{}, drift_span_ms{};
+    unsigned drift_samples{};
     double std_counts{}, drift_counts_s{}, residual_counts{}, peak_to_peak_counts{};
     double std_limit{}, drift_limit{};
     // Bit mask: 1=warmup/unavailable, 2=noise, 4=drift, 8=filter not settled.
@@ -59,7 +60,7 @@ private:
     float mean() const;
     void clear_window();
     struct Sample { double counts{}; std::uint64_t ms{}; };
-    std::array<Sample, 128> samples_{};
+    std::array<Sample, 320> samples_{};
     std::array<std::int32_t, 3> median_{};
     unsigned median_count_{}, median_cursor_{};
     std::optional<double> filtered_;

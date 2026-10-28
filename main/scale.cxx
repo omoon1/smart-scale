@@ -72,28 +72,50 @@ bool Scale::stable() const {
 StabilityStats Scale::stability_stats() const {
     StabilityStats stats;
     if (!connected_ || overload_ || !filtered_) return stats;
-    double sx = 0, sy = 0;
+    double sy = 0;
     unsigned n = 0;
     std::uint64_t oldest = last_ms_;
     for (unsigned i = 0; i < count_; ++i) {
         const auto& s = samples_[i];
         if (last_ms_ - s.ms > config::stability_window_ms) continue;
         oldest = std::min(oldest, s.ms);
-        sx += static_cast<double>(last_ms_ - s.ms) / 1000;
         sy += s.counts;
         ++n;
     }
     stats.samples = n;
     stats.span_ms = last_ms_ - oldest;
     if (n < 8 || stats.span_ms < config::stability_min_ms) return stats;
-    const double mx = sx / n, my = sy / n;
-    double xx = 0, xy = 0, yy = 0, low = my, high = my;
+    const double my = sy / n;
+    double yy = 0, low = my, high = my;
     for (unsigned i = 0; i < count_; ++i) {
         const auto& s = samples_[i];
         if (last_ms_ - s.ms > config::stability_window_ms) continue;
-        const double x = static_cast<double>(last_ms_ - s.ms) / 1000 - mx, y = s.counts - my;
+        const double y = s.counts - my;
         low = std::min(low, s.counts); high = std::max(high, s.counts);
-        xx += x * x; xy += x * y; yy += y * y;
+        yy += y * y;
+    }
+    // Noise/settling remain responsive over 1.2 s. Estimate sustained drift over
+    // a separate 3.2 s window so small oscillations do not keep resetting the hold.
+    double dx = 0, dy = 0;
+    auto drift_oldest = last_ms_;
+    for (unsigned i = 0; i < count_; ++i) {
+        const auto& s = samples_[i];
+        if (last_ms_ - s.ms > config::drift_window_ms) continue;
+        drift_oldest = std::min(drift_oldest, s.ms);
+        dx += static_cast<double>(last_ms_ - s.ms) / 1000;
+        dy += s.counts;
+        ++stats.drift_samples;
+    }
+    stats.drift_span_ms = last_ms_ - drift_oldest;
+    double xx = 0, xy = 0;
+    if (stats.drift_samples) {
+        const double mx = dx / stats.drift_samples, mean_y = dy / stats.drift_samples;
+        for (unsigned i = 0; i < count_; ++i) {
+            const auto& s = samples_[i];
+            if (last_ms_ - s.ms > config::drift_window_ms) continue;
+            const double x = static_cast<double>(last_ms_ - s.ms) / 1000 - mx;
+            xx += x * x; xy += x * (s.counts - mean_y);
+        }
     }
     const double factor = calibration_ ? std::abs(calibration_->counts_per_gram) : 0;
     const double std_limit = calibration_ ? std::max(2.0, factor * config::stability_std_g) : 150.0;
@@ -104,7 +126,7 @@ StabilityStats Scale::stability_stats() const {
     stats.peak_to_peak_counts = high - low;
     stats.std_limit = std_limit;
     stats.drift_limit = drift_limit;
-    stats.failed = (xx <= 0 ? 1U : 0U) | (stats.std_counts > std_limit ? 2U : 0U) |
+    stats.failed = (xx <= 0 || stats.drift_span_ms < config::drift_min_ms ? 1U : 0U) | (stats.std_counts > std_limit ? 2U : 0U) |
         (std::abs(stats.drift_counts_s) > drift_limit ? 4U : 0U) |
         (stats.residual_counts > std_limit ? 8U : 0U);
     return stats;

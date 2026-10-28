@@ -73,10 +73,11 @@ extern "C" void app_main() {
                 const double units = calibration ? std::abs(factor) : 1;
                 const double hz = (scale.received() - previous_received) * 1000.0 / (now_ms - last_diagnostic_ms);
                 std::snprintf(diagnostic, sizeof(diagnostic),
-                    "ready=%d stable=%d fail=%u hold_ms=%llu n=%u span_ms=%llu sd=%.4f/%.4f drift=%.4f/%.4f residual=%.4f p2p=%.4f units=%s hz=%.1f age_ms=%llu max_age_ms=%llu batch=%u overflow=%u faults=%llu factor=%.4f zero=%.1f",
+                    "ready=%d stable=%d fail=%u hold_ms=%llu n=%u span_ms=%llu drift_n=%u drift_span_ms=%llu sd=%.4f/%.4f drift=%.4f/%.4f residual=%.4f p2p=%.4f units=%s hz=%.1f age_ms=%llu max_age_ms=%llu batch=%u overflow=%u faults=%llu factor=%.4f zero=%.1f",
                     scale.ready(), scale.stable(), stats.failed,
                     static_cast<unsigned long long>(scale.stable_for_ms()), stats.samples,
-                    static_cast<unsigned long long>(stats.span_ms), stats.std_counts / units, stats.std_limit / units,
+                    static_cast<unsigned long long>(stats.span_ms), stats.drift_samples,
+                    static_cast<unsigned long long>(stats.drift_span_ms), stats.std_counts / units, stats.std_limit / units,
                     stats.drift_counts_s / (calibration ? factor : 1), stats.drift_limit / units, stats.residual_counts / units,
                     stats.peak_to_peak_counts / units, calibration ? "g,g/s" : "counts,counts/s", hz,
                     static_cast<unsigned long long>(scale.last_raw() && now_ms > scale.sample_ms() ? now_ms - scale.sample_ms() : 0),

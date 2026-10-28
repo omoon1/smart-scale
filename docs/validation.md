@@ -66,3 +66,12 @@ Host tests cover repeated fine adjustment, no extra increment on release, stoppi
 ## Bounded diagnostics and stability confirmation
 
 Weight-change logging is capped at one line/second, plus one `hx711_diag` summary per five seconds. Summaries report stability failure bits and measured limits, calibration, sample cadence/age, batching, overflow, and fault counts. Stability entry now requires 500 ms of continuous passing checks; exit on failure remains immediate, with no relaxation of the measurement thresholds. Native tests cover pending confirmation, entry, immediate exit, drift flags, and invalidation. Firmware and LVGL checks pass; hardware diagnosis awaits logs captured under a fixed load.
+
+
+## Drift-window correction from device diagnostics
+
+Supplied diagnostics showed `sd=0.0565–0.0760 g` below the 0.10 g limit, but short-window slopes of -0.0934 and +0.0758 g/s exceeded 0.05 g/s (`fail=4`). Sporadic `fail=0 hold_ms=0` indicates checks had just passed without sustained confirmation. Overflow/fault counters were zero. These sparse logs identify a stability-gate failure but do not establish the physical source of variation.
+
+Drift now uses 3.2 s of history (minimum 3.0 s), separate from the unchanged 1.2 s noise/settling window. Limits and immediate failure exit are unchanged; initial stability takes approximately 3.5–4 s. A 320-sample buffer supports the longer window at 80 SPS. Diagnostics add drift-window count and duration without adding log lines.
+
+`make test`, `make preview`, and the ESP-IDF firmware build pass. Synthetic ±0.08 g oscillation tests at 10, ~11, and ~80 SPS remain stable after warmup; the same noise with sustained 0.10 g/s drift is rejected. Sudden steps still fail short-window checks. This is a synthetic regression scenario informed by the log's noise scale, not a replay of unavailable raw samples. Physical verification remains necessary.

@@ -7,12 +7,12 @@ void near(float a, float b, float tolerance = 0.02F) { assert(std::abs(a - b) < 
 int main() {
     Scale confirmation;
     assert(confirmation.restore({0, 1000}));
-    for (unsigned ms = 100; ms <= 1500; ms += 100) confirmation.ingest(100000, ms);
+    for (unsigned ms = 100; ms <= 3500; ms += 100) confirmation.ingest(100000, ms);
     assert(confirmation.stability_stats().failed == 0 && !confirmation.stable());
     assert(confirmation.stability_stats().samples >= 8);
-    for (unsigned ms = 1600; ms <= 1800; ms += 100) confirmation.ingest(100000, ms);
+    for (unsigned ms = 3600; ms <= 3800; ms += 100) confirmation.ingest(100000, ms);
     assert(confirmation.stable());
-    confirmation.ingest(101000, 1900); confirmation.ingest(101000, 2000);
+    confirmation.ingest(101000, 3900); confirmation.ingest(101000, 4000);
     assert(!confirmation.stable() && confirmation.stability_stats().failed != 0);
     confirmation.invalidate();
     assert(confirmation.stability_stats().failed == 1 && confirmation.faults() == 1);
@@ -21,7 +21,7 @@ int main() {
     std::uint64_t t = 0;
     for (unsigned i = 0; i < 20; ++i) s.ingest(100000, t += 13);
     assert(!s.stable()); // Many samples are not a substitute for elapsed settling time.
-    for (unsigned i = 0; i < 100; ++i) s.ingest(100000, t += 13);
+    for (unsigned i = 0; i < 300; ++i) s.ingest(100000, t += 13);
     assert(s.stable()); near(s.gross(), 100);
     s.ingest(500000, t += 13); // Isolated non-saturating spike rejected by median.
     s.ingest(100000, t += 13);
@@ -42,7 +42,7 @@ int main() {
     s.ingest(0, t += 100); assert(!s.ready());
     s.ingest(0, t += 100); assert(!s.ready());
     s.ingest(0, t += 100); near(s.gross(), 0); assert(!s.stable());
-    for (unsigned i = 0; i < 20; ++i) s.ingest(0, t += 100);
+    for (unsigned i = 0; i < 40; ++i) s.ingest(0, t += 100);
     assert(s.stable() && s.capture_zero());
     s.check_timeout(t + 1001); assert(!s.ready());
     t += 2000;
@@ -74,5 +74,30 @@ int main() {
     assert(c.session().uncertain && !c.scale().ready());
     for (unsigned i = 0; i < 40; ++i) c.sensor_sample(120000, t += 100);
     c.tick(4); assert(c.session().uncertain);
+    // Synthetic stationary oscillation matching the reported noise scale, not a
+    // replay of the sparse diagnostic logs. Test 10 SPS, ~11 SPS and ~80 SPS.
+    for (const unsigned interval : {100U, 89U, 13U}) {
+        Scale noisy;
+        assert(noisy.restore({0, 1000}));
+        unsigned stable_samples = 0, observed = 0;
+        for (unsigned ms = interval; ms <= 15000; ms += interval) {
+            const auto raw = static_cast<std::int32_t>(263000 + 80 * std::sin(ms * 0.001 * 6.283185307 / 1.4));
+            noisy.ingest(raw, ms);
+            if (ms > 5000) { ++observed; if (noisy.stable()) ++stable_samples; }
+        }
+        assert(stable_samples > observed * 9 / 10);
+        assert(noisy.stability_stats().drift_span_ms >= config::drift_min_ms);
+        // Same noise plus real 0.10 g/s drift must still be rejected.
+        for (unsigned ms = 15000 + interval; ms <= 22000; ms += interval) {
+            const auto raw = static_cast<std::int32_t>(263000 + (ms - 15000) * 0.1 +
+                80 * std::sin(ms * 0.001 * 6.283185307 / 1.4));
+            noisy.ingest(raw, ms);
+        }
+        assert(!noisy.stable());
+        assert((noisy.stability_stats().failed & 4) != 0);
+        // A sudden load change still fails the short-window checks immediately.
+        noisy.ingest(273000, 22100); noisy.ingest(273000, 22200);
+        assert(!noisy.stable() && (noisy.stability_stats().failed & (2 | 8)) != 0);
+    }
     std::cout << "Timestamp, spike rejection, drift, and recovery tests passed\n";
 }
