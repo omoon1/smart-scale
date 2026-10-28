@@ -107,7 +107,7 @@ void View::draw() {
     const auto phase = rendered_phase_;
     if (phase == Phase::ready) {
         button(screen_, controller_.session().mode == Mode::espresso ? "Espresso" : "Pour-over",
-               16, 8, 156, 44, Action::modes);
+               16, 8, 156, 44, Action::toggle_mode);
     } else label(screen_, phase == Phase::brewing ? "Extracting" : phase == Phase::result ? "Brew complete" : "Reset",
                  20, 19, 230, &lv_font_montserrat_22);
     if (phase == Phase::ready) label(screen_, "SMART SCALE", 188, 22, 114, &lv_font_montserrat_14, muted);
@@ -296,11 +296,6 @@ void View::draw_dialog(lv_obj_t* root) {
         lv_roller_set_selected(roller_, static_cast<uint16_t>(std::clamp(selected, 0, 599)), LV_ANIM_OFF);
         label(box, "Swipe vertically / 0.1 g steps", 36, 235, 260, &lv_font_montserrat_14, muted);
         button(box, "Apply dose", 14, 254, 276, 44, Action::apply_dose, 0, true);
-    } else if (dialog_ == Dialog::modes) {
-        label(box, "Brew mode", 18, 16, 220, &lv_font_montserrat_22);
-        button(box, "Espresso", 16, 76, 270, 60, Action::choose_mode, 0, true);
-        button(box, "Pour-over", 16, 148, 270, 60, Action::choose_mode, 1);
-        label(box, "Cup-only pour-over has no\ninput-water target.", 20, 234, 260, &lv_font_montserrat_14, muted);
     } else if (dialog_ == Dialog::demo) {
         label(box, "Dummy scenarios", 16, 18, 230, &lv_font_montserrat_22);
         const char* names[] = {"Cup + 18.2 g dose", "Unknown object / no baseline", "Portafilter > beans > cup", "V60 / bloom + pours"};
@@ -352,7 +347,9 @@ void View::action(Action a, int value) {
     switch (a) {
     case Action::objects: open(Dialog::objects); return;
     case Action::dose: open(Dialog::dose); return;
-    case Action::modes: open(Dialog::modes); return;
+    case Action::toggle_mode:
+        controller_.set_mode(controller_.session().mode == Mode::espresso ? Mode::pour_over : Mode::espresso);
+        break;
     case Action::demo: open(Dialog::demo); return;
     case Action::registration: open(Dialog::registration); return;
     case Action::close: dialog_ = Dialog::none; break;
@@ -360,7 +357,6 @@ void View::action(Action a, int value) {
         if (roller_) controller_.set_dose(static_cast<float>(lv_roller_get_selected(roller_) + 1) / 10);
         dialog_ = Dialog::none; break;
     case Action::choose_object: controller_.select_equipment(static_cast<std::size_t>(value)); dialog_ = Dialog::none; break;
-    case Action::choose_mode: controller_.set_mode(static_cast<Mode>(value)); dialog_ = Dialog::none; break;
     case Action::choose_scenario: controller_.load_scenario(static_cast<Scenario>(value)); dialog_ = Dialog::none; break;
     case Action::run: controller_.run_demo(); break;
     case Action::pause: controller_.pause_demo(); break;
