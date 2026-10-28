@@ -20,3 +20,9 @@ The unmodified vendor FT6336 driver emits one unused static-function warning. Ap
 Passing host tests does not establish sensor accuracy or the physical ≤2-second detection requirement. There is no attached load cell or physical board in this environment. Follow `hardware.md` to verify cold boot, LCD colors/orientation, touch alignment, BOOT debounce, SPI stability, free DMA memory, readability, and USB/battery behavior.
 
 Power-loss recovery, durable local records, equipment/history persistence, cloud synchronization, recognition learning, and calibration remain outside this UX milestone. The UI explicitly labels simulated data and RAM-only results. No firmware was flashed to a device.
+
+## Dose responsiveness regression checks
+
+`make preview` exercises presets, coarse/fine increments, both dose bounds, close/reopen persistence, and brew-time editor dismissal. It also asserts that adjustments retain the current screen and that an unchanged dose dialog produces zero flush callbacks across ten 100 ms updates after button transitions settle. `make test` covers the controller state machine.
+
+On device, compare touch-to-visible latency and energy per dose-selection task at the same brightness. Verify 0.1 and 60.0 g limits and extraction transitions. Desktop flush counts verify removal of redundant rendering, not physical frame rate or battery-life improvement.

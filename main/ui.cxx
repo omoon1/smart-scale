@@ -2,7 +2,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <string>
+
+LV_FONT_DECLARE(weight_font_72);
 
 namespace smart_scale::ui {
 namespace {
@@ -15,10 +18,14 @@ std::string number(std::optional<float> value, const char* suffix = "") {
     std::snprintf(buffer, sizeof(buffer), "%.1f%s", static_cast<double>(*value), suffix);
     return buffer;
 }
+// LVGL 8 invalidates labels even when the supplied text is unchanged.
+void set_text(lv_obj_t* obj, const char* text) {
+    if (std::strcmp(lv_label_get_text(obj), text) != 0) lv_label_set_text(obj, text);
+}
 lv_obj_t* label(lv_obj_t* p, const char* text, int x, int y, int width,
                 const lv_font_t* font = &lv_font_montserrat_14, unsigned rgb = ink) {
     auto* obj = lv_label_create(p);
-    lv_label_set_text(obj, text);
+    set_text(obj, text);
     lv_obj_set_pos(obj, x, y);
     lv_obj_set_width(obj, width);
     lv_obj_set_style_text_font(obj, font, 0);
@@ -64,12 +71,6 @@ void View::clicked(lv_event_t* e) {
     const auto binding = *static_cast<Binding*>(lv_event_get_user_data(e));
     binding.view->action(binding.action, binding.value);
 }
-void View::dose_changed(lv_event_t* event) {
-    auto& self = *static_cast<View*>(lv_event_get_user_data(event));
-    const auto selected = lv_roller_get_selected(lv_event_get_target(event));
-    self.controller_.set_dose(static_cast<float>(selected + config::dose_min_tenths) / 10);
-    self.refresh_values();
-}
 void View::schedule_draw() {
     if (!pending_draw_) { pending_draw_ = true; lv_async_call(deferred_draw, this); }
 }
@@ -107,7 +108,7 @@ void View::draw() {
     lv_obj_set_style_border_width(screen_, 0, 0);
     binding_count_ = 0;
     weight_ = time_ = flow_ = status_ = object_text_ = dose_text_ = target_text_ = chart_ = nullptr;
-    roller_ = name_input_ = kind_input_ = chart_max_ = chart_time_ = current_point_ = object_weight_ = nullptr;
+    dose_value_ = name_input_ = kind_input_ = chart_max_ = chart_time_ = current_point_ = object_weight_ = nullptr;
     series_ = target_series_ = nullptr;
     rendered_phase_ = controller_.session().phase;
     const auto phase = rendered_phase_;
@@ -132,10 +133,8 @@ void View::draw() {
     refresh_values();
 }
 void View::draw_ready(lv_obj_t* root) {
-    label(root, "CURRENT NET WEIGHT", 24, 86, 244, &lv_font_montserrat_14, muted);
-    weight_ = label(root, "0.0 g", 22, 116, 250, &lv_font_montserrat_48);
-    status_ = label(root, "Ready when you are", 24, 184, 244, &lv_font_montserrat_18, mint);
-    label(root, "Place an object. Then brew.", 24, 222, 250, &lv_font_montserrat_14, muted);
+    weight_ = label(root, "0.0 g", 22, 108, 250, &weight_font_72);
+    label(root, "Place to weigh.", 24, 222, 250, &lv_font_montserrat_14, muted);
     auto* object = button(root, "", 280, 66, 184, 84, Action::objects);
     object_text_ = label(object, "", 12, 10, 160, &lv_font_montserrat_18);
     lv_label_set_long_mode(object_text_, LV_LABEL_LONG_DOT);
@@ -210,42 +209,54 @@ void View::draw_brew(lv_obj_t* root, bool result) {
 }
 void View::refresh_values() {
     const auto& s = controller_.session();
-    if (weight_) lv_obj_set_style_text_font(weight_, s.phase != Phase::ready && s.net_g >= 100.0F ?
-        &lv_font_montserrat_32 : &lv_font_montserrat_48, 0);
-    if (weight_) lv_label_set_text(weight_, (s.phase == Phase::ready || (s.baseline_known && !s.uncertain))
-        ? number(s.net_g, " g").c_str() : "? g");
+    const auto weight_text = (s.phase == Phase::ready || (s.baseline_known && !s.uncertain))
+        ? number(s.net_g, " g") : "? g";
+    const lv_font_t* weight_font = s.phase != Phase::ready && s.net_g >= 100.0F ?
+        &lv_font_montserrat_32 : &lv_font_montserrat_48;
     if (s.phase == Phase::ready) {
-        if (status_) lv_label_set_text(status_, s.baseline_known ? "Auto tare complete" : "Waiting for a baseline");
+        // Pre-rendered large digits avoid runtime scaling; fit longer readings.
+        weight_font = &weight_font_72;
+        lv_point_t text_size{};
+        lv_txt_get_size(&text_size, weight_text.c_str(), weight_font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+        if (text_size.x > 250) weight_font = &lv_font_montserrat_48;
+        lv_txt_get_size(&text_size, weight_text.c_str(), weight_font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+        if (text_size.x > 250) weight_font = &lv_font_montserrat_32;
+    }
+    if (weight_ && lv_obj_get_style_text_font(weight_, 0) != weight_font)
+        lv_obj_set_style_text_font(weight_, weight_font, 0);
+    if (dose_value_) set_text(dose_value_, number(s.dose_g, " g").c_str());
+    if (weight_) set_text(weight_, weight_text.c_str());
+    if (s.phase == Phase::ready) {
         const auto& item = s.active_object;
         if (object_text_) {
-            lv_label_set_text(object_text_, item ? item->name.c_str() : "Object");
-            lv_label_set_text(object_weight_, number(item ? item->empty_g : std::nullopt, " g").c_str());
+            set_text(object_text_, item ? item->name.c_str() : "Object");
+            set_text(object_weight_, number(item ? item->empty_g : std::nullopt, " g").c_str());
         }
-        if (dose_text_) lv_label_set_text(dose_text_, number(s.dose_g, " g").c_str());
+        if (dose_text_) set_text(dose_text_, number(s.dose_g, " g").c_str());
         return;
     }
     if (s.phase != Phase::brewing && s.phase != Phase::result) return;
-    if (object_text_) lv_label_set_text(object_text_,
+    if (object_text_) set_text(object_text_,
         s.vessel ? s.vessel->name.c_str() : "Object ?");
     char clock[32];
     const auto secs = static_cast<unsigned>(s.seconds);
     std::snprintf(clock, sizeof(clock), "%02u:%02u", secs / 60, secs % 60);
-    lv_label_set_text(time_, clock);
+    set_text(time_, clock);
     // Demo volume estimate: assume liquid density of 1.0 g/ml.
     constexpr float demo_density_g_ml = 1.0F;
     const float flow_ml_s = s.flow_g_s / demo_density_g_ml;
-    lv_label_set_text(flow_, s.phase == Phase::result ? ("Ratio " + (s.ratio() ? "1:" + number(s.ratio()) : "?")).c_str()
+    set_text(flow_, s.phase == Phase::result ? ("Ratio " + (s.ratio() ? "1:" + number(s.ratio()) : "?")).c_str()
         : s.uncertain ? "Flow unavailable" : number(flow_ml_s, " ml/s").c_str());
     std::string status;
     if (s.uncertain) status = "Baseline uncertain - weight unavailable";
     else if (s.target_g && s.net_g >= *s.target_g) status = "Target reached  +" + number(s.net_g - *s.target_g, " g");
     else if (s.flow_g_s == 0 && s.phase == Phase::brewing) status = "Flow paused - timer continues";
     else status = s.mode == Mode::pour_over && s.vessel && s.vessel->kind == Kind::pour_over_set ? "Set mass increase / water added" : "Beverage collected in cup";
-    lv_label_set_text(status_, status.c_str());
+    set_text(status_, status.c_str());
     const auto target_text = "Dose " + number(s.dose_g, " g") + "    Target " + number(s.target_g, " g") +
         "    " + (s.phase == Phase::result ? "Delta " : "Left ") +
         number(s.target_g && !s.uncertain ? std::optional<float>{s.phase == Phase::result ? s.net_g - *s.target_g : std::max(0.0F, *s.target_g - s.net_g)} : std::nullopt, " g");
-    lv_label_set_text(target_text_, target_text.c_str());
+    set_text(target_text_, target_text.c_str());
     const float max_t = std::max(30.0F, s.seconds);
     const float max_g = std::max(s.mode == Mode::espresso ? 60.0F : 350.0F,
                                std::max(s.net_g, s.target_g.value_or(0)) * 1.15F);
@@ -253,9 +264,9 @@ void View::refresh_values() {
     lv_chart_set_range(chart_, LV_CHART_AXIS_PRIMARY_Y, 0, static_cast<int>(max_g * 10));
     char axis[24];
     std::snprintf(axis, sizeof(axis), "%.0f g", static_cast<double>(max_g));
-    lv_label_set_text(chart_max_, axis);
+    set_text(chart_max_, axis);
     std::snprintf(axis, sizeof(axis), "0 - %.0f", static_cast<double>(max_t));
-    lv_label_set_text(chart_time_, axis);
+    set_text(chart_time_, axis);
     if (s.sample_count && !s.uncertain) {
         lv_obj_clear_flag(current_point_, LV_OBJ_FLAG_HIDDEN);
         lv_obj_set_pos(current_point_, 32 + static_cast<int>(218 * s.seconds / max_t) - 3,
@@ -300,27 +311,18 @@ void View::draw_dialog(lv_obj_t* root) {
                    Action::choose_object, static_cast<int>(i));
         button(box, "+ Register equipment", 12, 246, 280, 46, Action::registration, 0, true);
     } else if (dialog_ == Dialog::dose) {
-        roller_ = lv_roller_create(box);
-        std::string values;
-        for (int i = config::dose_min_tenths; i <= config::dose_max_tenths; ++i) {
-            if (!values.empty()) values += '\n';
-            values += number(static_cast<float>(i) / 10, " g");
-        }
-        lv_roller_set_options(roller_, values.c_str(), LV_ROLLER_MODE_NORMAL);
-        lv_obj_set_style_text_font(roller_, &lv_font_montserrat_22, 0);
-        lv_obj_set_style_text_font(roller_, &lv_font_montserrat_22, LV_PART_SELECTED);
-        lv_roller_set_visible_row_count(roller_, 5);
-        lv_obj_set_size(roller_, 220, 176);
-        lv_obj_set_pos(roller_, 20, 64);
-        lv_obj_set_style_bg_color(roller_, color(bg), 0);
-        lv_obj_set_style_text_color(roller_, color(muted), 0);
-        lv_obj_set_style_bg_color(roller_, color(mint), LV_PART_SELECTED);
-        lv_obj_set_style_text_color(roller_, color(bg), LV_PART_SELECTED);
-        const auto selected = static_cast<int>(std::lround(controller_.session().dose_g.value_or(18.0F) * 10)) - 1;
-        lv_roller_set_selected(roller_, static_cast<uint16_t>(std::clamp(selected, 0, 599)), LV_ANIM_OFF);
-        lv_obj_add_event_cb(roller_, dose_changed, LV_EVENT_VALUE_CHANGED, this);
-        label(box, LV_SYMBOL_UP, 258, 112, 28, &lv_font_montserrat_22, muted);
-        label(box, LV_SYMBOL_DOWN, 258, 188, 28, &lv_font_montserrat_22, muted);
+        label(box, "Coffee dose", 16, 16, 200, &lv_font_montserrat_22);
+        dose_value_ = label(box, "", 16, 62, 272, &lv_font_montserrat_48);
+        lv_obj_set_style_text_align(dose_value_, LV_TEXT_ALIGN_CENTER, 0);
+        button(box, "18 g", 16, 126, 84, 44, Action::dose_preset, 180);
+        button(box, "20 g", 110, 126, 84, 44, Action::dose_preset, 200);
+        button(box, "22 g", 204, 126, 84, 44, Action::dose_preset, 220);
+        button(box, "-1 g", 16, 184, 60, 48, Action::dose_adjust, -10);
+        button(box, "-0.1", 84, 184, 64, 48, Action::dose_adjust, -1);
+        button(box, "+0.1", 156, 184, 64, 48, Action::dose_adjust, 1);
+        button(box, "+1 g", 228, 184, 60, 48, Action::dose_adjust, 10);
+        label(box, "0.1 - 60.0 g  |  Saved immediately", 16, 258, 272,
+              &lv_font_montserrat_14, muted);
     } else if (dialog_ == Dialog::demo) {
         label(box, "Dummy scenarios", 16, 18, 230, &lv_font_montserrat_22);
         const char* names[] = {"Cup + 18.2 g dose", "Unknown object / no baseline", "Portafilter > beans > cup", "V60 / bloom + pours"};
@@ -370,6 +372,16 @@ void View::draw_registration(lv_obj_t* box) {
 }
 void View::action(Action a, int value) {
     switch (a) {
+    case Action::dose_adjust:
+    case Action::dose_preset: {
+        if (dialog_ != Dialog::dose || controller_.session().phase != Phase::ready) return;
+        const int current = static_cast<int>(std::lround(controller_.session().dose_g.value_or(18.0F) * 10));
+        const int tenths = std::clamp(a == Action::dose_preset ? value : current + value,
+                                     config::dose_min_tenths, config::dose_max_tenths);
+        controller_.set_dose(static_cast<float>(tenths) / 10.0F);
+        refresh_values();
+        return; // Keep the existing dialog and redraw only changed values.
+    }
     case Action::objects: open(Dialog::objects); return;
     case Action::dose: open(Dialog::dose); return;
     case Action::toggle_mode:

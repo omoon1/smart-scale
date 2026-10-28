@@ -50,7 +50,7 @@ Recipe assumptions are 1:2 for espresso and 1:15 for a whole pour-over set. They
 | Requirements | Prototype behavior / boundary |
 | --- | --- |
 | UX-01–04, OBJ-01–03 | Ready screen, full-card touch targets, separate net/tare/dose, unknown marker, extraction lock; placement/tare are simulated |
-| MODE-01, DOSE-01–03 | Direct mode toggle, vertical dose wheel with immediate updates, measured/manual source, no ratio without valid dose |
+| MODE-01, DOSE-01–03 | Direct mode toggle, dose presets and coarse/fine buttons with immediate updates, measured/manual source, no ratio without valid dose |
 | REC-03/04/05/06/07 | Tested pure recognition helper with inclusive ±3 g, actual difference, separate empty tolerance, ambiguity, immutable empty reference |
 | REC-01/02 | History-driven ranking and learning deferred; fixture usual-dose values only |
 | SEQ-01–05, STATE-01–04 | Sequenced dummy events, split additions/removal, separate roles, session lifetime, value snapshots; long-term storage deferred |
