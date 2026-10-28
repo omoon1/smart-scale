@@ -1,0 +1,165 @@
+#include "ui.hxx"
+#include <algorithm>
+#include <array>
+#include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <iostream>
+#include <string>
+#ifdef SMART_SCALE_SDL
+#include <SDL.h>
+#endif
+namespace {
+constexpr int width = 480, height = 320;
+std::array<std::uint32_t, width * height> framebuffer{};
+std::array<lv_color_t, width * 40> buffer{};
+int mouse_x{}, mouse_y{};
+bool mouse_down{};
+void flush(lv_disp_drv_t* driver, const lv_area_t* area, lv_color_t* pixels) {
+    for (int y = area->y1; y <= area->y2; ++y)
+        for (int x = area->x1; x <= area->x2; ++x) {
+            const auto rgb = lv_color_to32(*pixels++);
+            if (x >= 0 && x < width && y >= 0 && y < height) framebuffer[y * width + x] = rgb;
+        }
+    lv_disp_flush_ready(driver);
+}
+void input(lv_indev_drv_t*, lv_indev_data_t* data) {
+    data->point.x = static_cast<lv_coord_t>(mouse_x);
+    data->point.y = static_cast<lv_coord_t>(mouse_y);
+    data->state = mouse_down ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+}
+void pump(smart_scale::ui::View& view, unsigned ms = 40) {
+    lv_tick_inc(ms); view.update(); lv_timer_handler(); lv_refr_now(nullptr);
+}
+void click(smart_scale::ui::View& view, int x, int y) {
+    mouse_x = x; mouse_y = y; mouse_down = true; pump(view);
+    mouse_down = false; pump(view); pump(view);
+}
+void screenshot(smart_scale::ui::View& view, const char* name) {
+    pump(view); pump(view);
+    const auto path = std::filesystem::path("build-host/screens") / (std::string(name) + ".ppm");
+    auto* file = std::fopen(path.c_str(), "wb");
+    if (!file) std::exit(1);
+    std::fprintf(file, "P6\n%d %d\n255\n", width, height);
+    for (auto pixel : framebuffer) {
+        const unsigned char bytes[] = {static_cast<unsigned char>(pixel >> 16),
+            static_cast<unsigned char>(pixel >> 8), static_cast<unsigned char>(pixel)};
+        std::fwrite(bytes, 1, 3, file);
+    }
+    std::fclose(file);
+    std::cout << path.string() << '\n';
+}
+void require(bool value, const char* message) {
+    if (!value) { std::cerr << "UI test failed: " << message << '\n'; std::exit(1); }
+}
+lv_obj_t* find_roller(lv_obj_t* parent) {
+    if (lv_obj_check_type(parent, &lv_roller_class)) return parent;
+    for (unsigned i = 0; i < lv_obj_get_child_cnt(parent); ++i)
+        if (auto* found = find_roller(lv_obj_get_child(parent, static_cast<int>(i)))) return found;
+    return nullptr;
+}
+}
+int main(int argc, char** argv) {
+    lv_init();
+    static lv_disp_draw_buf_t draw_buffer;
+    lv_disp_draw_buf_init(&draw_buffer, buffer.data(), nullptr, buffer.size());
+    static lv_disp_drv_t display;
+    lv_disp_drv_init(&display);
+    display.hor_res = width; display.ver_res = height;
+    display.draw_buf = &draw_buffer; display.flush_cb = flush;
+    lv_disp_drv_register(&display);
+    static lv_indev_drv_t pointer;
+    lv_indev_drv_init(&pointer); pointer.type = LV_INDEV_TYPE_POINTER; pointer.read_cb = input;
+    lv_indev_drv_register(&pointer);
+    smart_scale::Controller controller;
+    smart_scale::ui::View view(controller);
+    view.init();
+    const bool smoke = argc > 1 && std::string(argv[1]) == "--interactive-smoke";
+    if (argc > 1 && (std::string(argv[1]) == "--interactive" || smoke)) {
+#ifdef SMART_SCALE_SDL
+        if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) { std::cerr << SDL_GetError(); return 1; }
+        auto* window = SDL_CreateWindow("Smart Scale | dummy data | R = Reset", SDL_WINDOWPOS_CENTERED,
+            SDL_WINDOWPOS_CENTERED, 960, 640, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
+        auto* renderer = SDL_CreateRenderer(window, -1, 0);
+        if (!window || !renderer) { std::cerr << SDL_GetError(); return 1; }
+        SDL_RenderSetLogicalSize(renderer, width, height);
+        auto* texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, width, height);
+        if (!texture) { std::cerr << SDL_GetError(); return 1; }
+        bool running = true;
+        unsigned frames = 0;
+        auto previous = SDL_GetTicks();
+        while (running) {
+            SDL_Event event;
+            while (SDL_PollEvent(&event)) {
+                if (event.type == SDL_QUIT) running = false;
+                if (event.type == SDL_MOUSEMOTION) { mouse_x = event.motion.x; mouse_y = event.motion.y; }
+                if (event.type == SDL_MOUSEBUTTONDOWN) mouse_down = true;
+                if (event.type == SDL_MOUSEBUTTONUP) mouse_down = false;
+                if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_r) view.reset();
+            }
+            const auto now = SDL_GetTicks(); const auto elapsed = now - previous; previous = now;
+            controller.tick(static_cast<float>(elapsed) / 1000); pump(view, elapsed);
+            SDL_UpdateTexture(texture, nullptr, framebuffer.data(), width * sizeof(std::uint32_t));
+            SDL_RenderClear(renderer); SDL_RenderCopy(renderer, texture, nullptr, nullptr); SDL_RenderPresent(renderer);
+            SDL_Delay(5);
+            if (smoke && ++frames == 20) running = false;
+        }
+        SDL_DestroyTexture(texture); SDL_DestroyRenderer(renderer); SDL_DestroyWindow(window); SDL_Quit();
+        if (smoke) std::cout << "SDL display smoke check passed\n";
+#else
+        std::cerr << "SDL2 development package required. macOS: brew install sdl2; Ubuntu: sudo apt install libsdl2-dev\n";
+        return 2;
+#endif
+        return 0;
+    }
+    using namespace smart_scale;
+    std::filesystem::create_directories("build-host/screens");
+    screenshot(view, "01-ready");
+    click(view, 360, 100); screenshot(view, "02-objects");
+    click(view, 364, 30); // Close object modal.
+    click(view, 360, 200); screenshot(view, "03-dose");
+    auto* wheel = find_roller(lv_scr_act());
+    require(wheel != nullptr, "Dose card opens numeric wheel");
+    lv_roller_set_selected(wheel, 287, LV_ANIM_OFF);
+    click(view, 364, 30);
+    require(controller.session().dose_g && *controller.session().dose_g == 18.2F, "Cancel preserves dose");
+    click(view, 360, 200);
+    wheel = find_roller(lv_scr_act()); require(wheel != nullptr, "Wheel reopens");
+    lv_roller_set_selected(wheel, 287, LV_ANIM_OFF);
+    click(view, 240, 284);
+    require(controller.session().dose_g && *controller.session().dose_g == 28.8F, "Apply maps roller index to 0.1 g value");
+    controller.load_scenario(Scenario::known); pump(view);
+    click(view, 90, 290); // Start dummy liquid stream via UI.
+    for (int i = 0; i < 190; ++i) { controller.tick(0.1F); pump(view, 100); }
+    require(controller.session().phase == Phase::brewing, "Run demo starts extraction");
+    screenshot(view, "04-extracting");
+    click(view, 360, 70);
+    require(find_roller(lv_scr_act()) == nullptr, "Locked panel cannot open editor");
+    click(view, 396, 290);
+    require(controller.session().phase == Phase::result, "Finish opens results");
+    screenshot(view, "05-result");
+    click(view, 396, 290);
+    require(controller.session().phase == Phase::remove_load, "Next requires load removal");
+    screenshot(view, "06-remove-load");
+    click(view, 240, 286);
+    require(controller.session().phase == Phase::ready, "Removal returns to ready");
+    controller.load_scenario(Scenario::unknown);
+    view.open(ui::Dialog::dose); pump(view); // Brew must dismiss unconfirmed edits.
+    controller.run_demo();
+    for (int i = 0; i < 30; ++i) { controller.tick(0.1F); pump(view, 100); }
+    require(controller.session().phase == Phase::brewing && !controller.session().dose_g, "Brew discards pending dose");
+    screenshot(view, "07-unknown");
+    controller.finish(); controller.load_scenario(Scenario::pour_over); pump(view);
+    controller.run_demo();
+    for (int i = 0; i < 130; ++i) { controller.tick(0.1F); pump(view, 100); }
+    screenshot(view, "08-pour-over");
+    controller.finish(); controller.load_scenario(Scenario::known); pump(view);
+    view.open(ui::Dialog::registration); screenshot(view, "09-register-type");
+    click(view, 370, 284); screenshot(view, "10-register-configuration");
+    click(view, 370, 284); screenshot(view, "11-register-weight");
+    click(view, 370, 284); screenshot(view, "12-register-name");
+    click(view, 370, 132);
+    require(controller.equipment_count() == 4, "Registration saves profile");
+    screenshot(view, "13-registered");
+    std::cout << "UI interaction checks passed\n";
+}
