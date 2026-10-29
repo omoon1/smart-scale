@@ -136,7 +136,7 @@ void Device::init() {
     button.pull_up_en = GPIO_PULLUP_ENABLE;
     ESP_ERROR_CHECK(gpio_config(&button));
     initialized_ = true;
-    ESP_LOGI("smart-scale", "Waveshare ST7796/FT6336: 480x320 landscape, dummy data");
+    ESP_LOGI("smart-scale", "Waveshare ST7796/FT6336: 480x320 landscape");
 }
 esp_err_t Device::show() {
     if (!initialized_) return ESP_ERR_INVALID_STATE;

@@ -62,6 +62,8 @@ test:
 	@./build-host/auto_brew_tests
 	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main main/session.cxx main/scale.cxx tests/coffee_registration_test.cxx -o build-host/coffee_registration_tests
 	@./build-host/coffee_registration_tests
+	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main main/scale.cxx tests/diagnostics_test.cxx -o build-host/diagnostics_tests
+	@./build-host/diagnostics_tests
 preview:
 	@./scripts/host.sh --screenshots
 	@./scripts/host.sh --live-screenshots

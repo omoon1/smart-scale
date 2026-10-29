@@ -3,6 +3,7 @@
 #ifdef ESP_PLATFORM
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "diagnostic_logger.hxx"
 #endif
 #include <algorithm>
 #include <cmath>
@@ -337,13 +338,14 @@ void View::refresh_values() {
                             s.brew_error == BrewError::sensor_fault ? "sensor_fault" : "none";
         char line[384];
         std::snprintf(line, sizeof(line),
-            "display=%s g raw=%s sample_ms=%llu gross=%s net=%.4f g stable=%d ready=%d status=%s brew_error=%s removal_below=%.4f g",
+            "now_ms=%llu seq=%llu display=%s g raw=%s sample_ms=%llu gross=%s net=%.4f g stable=%d ready=%d status=%s brew_error=%s removal_below=%.4f g",
+            static_cast<unsigned long long>(log_ms), static_cast<unsigned long long>(scale.received()),
             weight_text.c_str(), raw.c_str(), static_cast<unsigned long long>(scale.sample_ms()),
             gross.c_str(), static_cast<double>(scale.ready() ? scale.net() : NAN),
             scale.stable(), scale.ready(), scale.status(), error,
             static_cast<double>(s.removal_threshold_g.value_or(NAN)));
 #ifdef ESP_PLATFORM
-        ESP_LOGI("weight", "%s", line);
+        device::DiagnosticLogger::instance().text("weight", line);
 #else
         std::printf("weight: %s\n", line);
 #endif
