@@ -1,6 +1,6 @@
 # 3.49-inch wide-panel UX
 
-The Waveshare ESP32-S3-Touch-LCD-3.49 has a native **172 × 640** panel. This UI uses it horizontally as **640 × 172 logical pixels**. The view selects this layout from LVGL's registered resolution; the existing 480 × 320 UI remains the default on the current board.
+The Waveshare ESP32-S3-Touch-LCD-3.49 has a native **172 × 640** panel. This UI uses it horizontally as **640 × 172 logical pixels**. The view selects this layout from LVGL's registered resolution; the existing 480 × 320 UI remains available for host regression tests. Rev1.1 firmware uses the wide layout by default.
 
 ![Actual LVGL renders](screens/wide/overview.png)
 
@@ -26,10 +26,8 @@ make simulator-wide            # interactive 1280x344 window; requires SDL2
 
 `make preview-wide` produces 23 actual LVGL framebuffer captures in `build-host/screens/wide-*.ppm`. The interaction suites exercise dose presets/hold/release, all icon hit areas, registration stability gating, removal cancel/confirm, calibration with synthetic HX711 counts, measured coffee registration, manual editing, automatic brew start, sensor-fault countdown and return-home recovery. Existing state and legacy UI suites are also checked.
 
-## Hardware boundary
+## Rev1.1 hardware port
 
-This is a **UX adaptation, not a completed new-board firmware port**. `make build` still targets the existing ST7796/FT6336 board and its pin assignments. Changing `config::screen_width/height` alone is not sufficient and is intentionally avoided.
+The firmware now targets the AXS15231B board with separate expander/touch buses, QSPI full-frame transfers, matching landscape touch mapping, EXIO5 reset and EXIO1/GPIO42 backlight control. The old PMU read and ST7796/FT6336 drivers have been removed. See [hardware configuration and bring-up](hardware.md).
 
-The new board requires an AXS15231B QSPI display and I2C touch BSP. That BSP must register 640 × 172 logical dimensions and apply matching display/touch rotation. Confirm the PCB revision before configuring pins: Waveshare documents V1/V2 swaps for LCD reset/TE and backlight/expander interrupt. Recheck HX711 pin availability on that board. Hardware bring-up must verify touch at all four corners, backlight startup, refresh behavior and HX711 operation; those checks cannot be established by the host renderer.
-
-Sources: [product specifications](https://www.waveshare.com/esp32-s3-touch-lcd-3.49.htm), [revision compatibility and reference examples](https://docs.waveshare.com/ESP32-S3-Touch-LCD-3.49/Resources-And-Documents).
+**HX711 wiring changes to DOUT IO44 / SCK IO43.** The old GPIO17/18 pair is used by touch on this board. Physical validation of display, touch, cold-start backlight and sensor operation is still required; host rendering cannot establish those properties.

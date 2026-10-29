@@ -44,6 +44,8 @@ idf:
 	@./scripts/idf.sh $(ARGS)
 test:
 	@mkdir -p build-host
+	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main tests/board349_test.cxx -o build-host/board349_tests
+	@./build-host/board349_tests
 	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main main/session.cxx main/scale.cxx tests/session_test.cxx -o build-host/session_tests
 	@./build-host/session_tests
 	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main main/session.cxx main/scale.cxx tests/scale_test.cxx -o build-host/scale_tests

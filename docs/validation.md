@@ -1,5 +1,20 @@
 # Validation and remaining hardware checks
 
+## Current target: 3.49-inch V2 / Rev1.1
+
+The firmware now uses the AXS15231B BSP, 640×172 logical display, separate expander/touch I²C buses and HX711 on IO44/43. Older sections below describe previous 480×320/ST7796 milestones and remain historical.
+
+Validated for this port:
+- ESP-IDF 5.5.2 firmware build completed, including bootloader, partition table and application. Application sources compiled without warnings. The transitive `esp_lvgl_port` generic touch adapter emits a deprecation warning with touch-base 1.2.1; the Rev1.1 BSP uses its own input callback.
+- `make test` passed, including an exhaustive frame-rotation/strip-seam check and touch corner, multi-touch, malformed-packet and out-of-range tests.
+- `make preview-wide` and `make preview` passed: wide and legacy UI workflows remain intact.
+- `git diff --check` passed.
+
+The development container required a local component-manager process-ID fallback because its `/proc` process lookup failed. That environment-only workaround is not part of the firmware or repository changes.
+
+Physical display timing, cold-boot backlight, touch orientation and HX711 sampling while the display refreshes remain to be checked on Rev1.1 hardware. See [bring-up procedure](hardware.md).
+
+
 ## Completed checks
 
 - `make install`: installed and reran the ESP-IDF v5.5.2 bootstrap using the repository-local `.tools/` paths. CMake 3.30.5 and Ninja 1.11.1.3 are installed in a local bootstrap venv.

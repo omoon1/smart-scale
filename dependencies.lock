@@ -1,4 +1,14 @@
 dependencies:
+  espressif/cmake_utilities:
+    component_hash: 351350613ceafba240b761b4ea991e0f231ac7a9f59a9ee901f751bddc0bb18f
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.1'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 0.5.3
   espressif/esp_io_expander:
     component_hash: 7b7f91270172e46ca4597e3874f48d8412e280e8c295559f5922ec38656e3e5f
     dependencies:
@@ -10,7 +20,7 @@ dependencies:
       type: service
     version: 1.2.1
   espressif/esp_io_expander_tca9554:
-    component_hash: 8a9e3a7dbef589a54f814ff22e9121da86bce19d0e1ccffa53f5df6bb346a140
+    component_hash: e725a7d5f17e4165e7fa3db0da0c29cc7a84e04fd33e1c786105076239828ea5
     dependencies:
     - name: espressif/esp_io_expander
       registry_url: https://components.espressif.com
@@ -22,17 +32,35 @@ dependencies:
     source:
       registry_url: https://components.espressif.com/
       type: service
-    version: 2.0.0
+    version: 2.0.1
+  espressif/esp_lcd_axs15231b:
+    component_hash: e614bd75827e95800e39df1ba9474166060ab26c3807d06df9cc312a27021cda
+    dependencies:
+    - name: espressif/cmake_utilities
+      registry_url: https://components.espressif.com
+      require: private
+      version: 0.*
+    - name: espressif/esp_lcd_touch
+      registry_url: https://components.espressif.com
+      require: public
+      version: ^1
+    - name: idf
+      require: private
+      version: '>5.0.4,!=5.1.1'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.0.1~1
   espressif/esp_lcd_touch:
-    component_hash: 779b4ba2464a3ae85681e4b860caa5fdc35801458c23f3039ee761bae7f442a4
+    component_hash: 3f85a7d95af876f1a6ecca8eb90a81614890d0f03a038390804e5a77e2caf862
     dependencies:
     - name: idf
       require: private
       version: '>=4.4.2'
     source:
-      registry_url: https://components.espressif.com/
+      registry_url: https://components.espressif.com
       type: service
-    version: 1.1.2
+    version: 1.2.1
   espressif/esp_lvgl_port:
     component_hash: bb938deffba7d80b2ce582a796c053681b0439e0a7033666688e0f1f5b921125
     dependencies:
@@ -60,10 +88,10 @@ dependencies:
     version: 8.4.0
 direct_dependencies:
 - espressif/esp_io_expander_tca9554
-- espressif/esp_lcd_touch
+- espressif/esp_lcd_axs15231b
 - espressif/esp_lvgl_port
 - idf
 - lvgl/lvgl
-manifest_hash: 4d7e13a19d42589311b33ab247c48974aafe09e4367145f3254f83d469fdd54a
+manifest_hash: 3e9174f46d4a6b60e7740a25d403f098c0f7d8eae2237fccc2655c3dbdab6a9c
 target: esp32s3
 version: 2.0.0
