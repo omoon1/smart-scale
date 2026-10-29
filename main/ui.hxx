@@ -3,6 +3,7 @@
 #include "weight_display.hxx"
 #include "registration_measurement.hxx"
 #include "lvgl.h"
+#include <string>
 
 namespace smart_scale::ui {
 enum class Dialog { none, calibration, objects, dose, demo, registration, remove_equipment };
@@ -48,15 +49,16 @@ private:
     Phase rendered_phase_{Phase::ready};
     Dialog dialog_{Dialog::none};
     bool pending_draw_{};
-    std::uint32_t remove_equipment_id_{};
+    std::uint32_t remove_equipment_key_{};
     int registration_step_{};
-    Kind registration_kind_{Kind::cup};
+    Kind registration_kind_{Kind::other};
     bool registration_stable_{true};
     RegistrationMeasurement registration_measurement_;
     unsigned registration_icon_{};
     std::array<lv_obj_t*, 20> icon_buttons_{};
     std::string registration_error_;
     float registration_weight_{156.8F};
+    lv_obj_t *equipment_storage_status_{};
     lv_obj_t *start_button_{}, *tare_button_{};
     lv_obj_t *sensor_status_{}, *calibration_message_{}, *calibration_weight_label_{}, *registration_weight_label_{}, *registration_status_{}, *registration_next_{};
     std::string calibration_message_text_;

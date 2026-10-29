@@ -95,3 +95,12 @@ On-device acceptance:
 - Repeat cold power-on, EN reset, and software restart; the panel should remain dark until the complete initial UI appears, without noise or partially painted areas.
 - Confirm touch, BOOT-button reset, and normal screen updates still work at the original brightness.
 - Check the interval before `app_main()` separately: firmware cannot guarantee backlight-off during ROM/bootloader execution. If noise remains there, verify the board's backlight enable bias and consider a hardware default-off circuit.
+
+
+## Equipment NVS and composite identity
+
+`make test` covers codec round trips, empty lists, duplicate rejection, same icon across different kinds, atomic restore validation, malformed lengths/IDs/kinds/flags/weights, deterministic list order, deletion and reuse, and save revision acknowledgement. Existing recognition, tare, and brew tests use composite identities. `make preview` tests that occupied icons are disabled, injected duplicate events are rejected, and the same icon is enabled for another kind, alongside existing live-sensor UI tests.
+
+`make test` (nine suites), `make preview` (normal and live UI), and `make build` (ESP-IDF v5.5.2, ESP32-S3) passed. The local SDK component manager needed its Linux parent-PID fallback because this container exposes a different PID namespace through procfs; no project dependency version or lock-file change is included.
+
+Device acceptance: register multiple kinds sharing an icon, reboot and verify weights/icons/kinds and disabled choices; delete one pair and verify the other survives reboot; delete the final pair and reboot to an empty list; verify calibration survives every operation. Interrupt power during save, check recovery/logging, and test full/unreadable NVS without erasing calibration. A mutation is only durable after `nvs_commit` succeeds; power removal before the next main-loop save can lose the latest change. Native tests do not exercise physical flash or electrical power loss.
