@@ -13,6 +13,8 @@ public:
     Device(const Device&) = delete;
     Device& operator=(const Device&) = delete;
     void init();
+    // Call with the LVGL port lock held, after constructing the initial UI.
+    esp_err_t show();
     bool reset_pressed();
 private:
     i2c_master_bus_handle_t bus_{};

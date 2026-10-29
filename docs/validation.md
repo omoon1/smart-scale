@@ -82,3 +82,16 @@ Drift now uses 3.2 s of history (minimum 3.0 s), separate from the unchanged 1.2
 Fixed two reproducible paths: registering equipment while an already-unknown object remains on the platform now retries matching, and a normal brief lift now rearms matching without waiting for the full drift window. Removal requires 300 ms of near-zero median samples; a single low sample does not reset identity. Manual identity selection is permitted while settling, without weakening tare/calibration/start checks. Empty profile lists explicitly display Register object; profiles remain RAM-only. The existing diagnostic summary includes profile count and recognition state.
 
 Native tests cover registration in place, transient lows, a 600 ms lift, replacement with a different profile, ambiguity resolved by deletion, and explicit selection while tare remains blocked. Existing session/filter suites, LVGL previews, and ESP-IDF build pass. Physical confirmation is still required; no claim is made that the user's exact cause is established without their `profiles`/`object` diagnostics.
+
+
+## Dark display during boot
+
+The display driver drives the active-high backlight GPIO low before I2C, panel reset, and LVGL initialization. PWM starts at zero duty. After `View::init()`, `Device::show()` runs with the LVGL lock held, invalidates the whole screen, forces a complete refresh, and waits for the final SPI transfer to complete before restoring the existing 818/1023 brightness. There is no fixed boot delay. If the final transfer does not complete within one second after refresh returns, startup fails with the backlight still off.
+
+Validation for this change: `make test` and `git diff --check` pass. Local firmware compilation is unavailable because the ESP-IDF toolchain is not installed; the existing firmware CI job must confirm the target build. Native tests do not exercise GPIO, PWM, or SPI DMA.
+
+On-device acceptance:
+
+- Repeat cold power-on, EN reset, and software restart; the panel should remain dark until the complete initial UI appears, without noise or partially painted areas.
+- Confirm touch, BOOT-button reset, and normal screen updates still work at the original brightness.
+- Check the interval before `app_main()` separately: firmware cannot guarantee backlight-off during ROM/bootloader execution. If noise remains there, verify the board's backlight enable bias and consider a hardware default-off circuit.
