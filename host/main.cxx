@@ -141,11 +141,11 @@ int main(int argc, char** argv) {
             controller.sensor_sample(8707 + (i % 2 ? 121 : -121), now += 100);
             controller.tick(0.1F); pump(view);
         }
-        require(!controller.scale().stable(), "registration scenario reproduces strict stability chatter");
+        require(controller.scale().stable(), "minor registration noise keeps Stable latched");
         require(has_label(lv_scr_act(), "Stable - ready to continue"), "registration status stays actionable during brief noise");
         screenshot(view, "23-hx711-registration-stabilized");
         click(view, 370, 284); // Capture the recent qualified mean, not the label.
-        require(has_label(lv_scr_act(), "Icon 3/3"), "Continue consumes snapshot while strict stable is false");
+        require(has_label(lv_scr_act(), "Icon 3/3"), "Continue consumes snapshot despite minor noise");
         click(view, 370, 284); // Save default icon.
         require(controller.equipment_count() == 1 &&
                 std::abs(*controller.equipment()[0].empty_g - reference) < 0.03F &&
@@ -182,6 +182,30 @@ int main(int argc, char** argv) {
         require(controller.session().phase == smart_scale::Phase::ready, "error returns directly to main after three minutes");
         require(has_label(lv_scr_act(), "Espresso"), "main screen is rendered after error timeout");
         screenshot(view, "24-hx711-error-home");
+        feed(-78000); feed(8600); // Rearm cup recognition after removal.
+        require(has_label(lv_scr_act(), "0.0"), "recognized vessel displays zero after automatic tare");
+        screenshot(view, "28-hx711-vessel-zero");
+        view.open(smart_scale::ui::Dialog::calibration); pump(view);
+        for (unsigned i = 1; i <= 18; ++i) {
+            controller.sensor_sample(8600 + 173 * i, now += 100);
+            controller.tick(.1F); pump(view);
+        }
+        require(controller.session().phase == smart_scale::Phase::ready,
+                "calibration dialog blocks automatic brew");
+        click(view, 366, 32); feed(8600);
+        require(!controller.session().brew_prepared, "vessel without coffee dose is not brew prepared");
+        require(controller.set_dose(18) && controller.session().brew_prepared,
+                "registered vessel and coffee dose enter internal brew preparation");
+        for (unsigned i = 1; i <= 20; ++i) {
+            controller.sensor_sample(8600 + 173 * i, now += 100);
+            controller.tick(.1F); pump(view);
+            if (controller.session().phase == smart_scale::Phase::brewing) break;
+        }
+        pump(view); pump(view);
+        require(controller.session().phase == smart_scale::Phase::brewing &&
+                controller.session().net_g > 1 && has_label(lv_scr_act(), "Running"),
+                "sustained flow opens Running automatically and retains liquid");
+        screenshot(view, "27-hx711-auto-brew");
         std::cout << "Live HX711 UI checks passed\n";
         return 0;
     }

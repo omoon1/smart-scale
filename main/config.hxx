@@ -22,11 +22,9 @@ inline constexpr std::uint64_t display_confirm_ms = 300;
 inline constexpr std::uint64_t display_quiet_confirm_ms = 1000;
 inline constexpr float display_average_tau_s = 0.25F;
 inline constexpr float display_noise_decay_s = 2.0F, display_noise_multiplier = 3.0F;
-// A registration may consume a recent strictly qualified mean despite brief
-// quality chatter. Never relax calibration/tare stability or hold across motion.
+// Registration uses the same noise-tolerant stability state as other screens.
 inline constexpr std::uint64_t registration_snapshot_ms = 2000, registration_exit_ms = 300;
-inline constexpr float registration_exit_ratio = 1.5F;
-inline constexpr float registration_movement_g = 0.30F, registration_mean_shift_g = 0.10F;
+inline constexpr float registration_movement_g = 0.50F, registration_mean_shift_g = 0.50F;
 // Removal is a physical loss of load, not a sub-gram beverage fluctuation.
 inline constexpr float brew_removal_margin_g = 1.0F;
 inline constexpr std::uint64_t brew_removal_hold_ms = 300;
@@ -35,8 +33,17 @@ inline constexpr std::uint64_t sensor_timeout_ms = 1000;
 inline constexpr std::uint64_t stability_window_ms = 1200;
 inline constexpr std::uint64_t stability_min_ms = 1000;
 inline constexpr std::uint64_t drift_window_ms = 3200, drift_min_ms = 3000;
-inline constexpr std::uint64_t stability_hold_ms = 500;
 inline constexpr float stability_std_g = 0.10F, stability_drift_g_s = 0.05F;
+// Operational stability: short averaged window, separate enter/exit limits.
+inline constexpr std::uint64_t stable_window_ms = 600, stable_min_ms = 400;
+inline constexpr unsigned stable_min_samples = 5;
+inline constexpr std::uint64_t stable_enter_ms = 200, stable_exit_ms = 300;
+inline constexpr float stable_noise_enter_g = 0.25F, stable_noise_exit_g = 0.40F;
+inline constexpr float stable_half_shift_g = 0.20F, stable_anchor_shift_g = 0.50F;
+inline constexpr float stable_hard_shift_g = 0.75F;
+inline constexpr std::uint64_t auto_flow_bucket_ms = 200, auto_flow_confirm_ms = 1000;
+inline constexpr float auto_flow_gain_g = 0.60F, auto_flow_step_g = 0.025F;
+inline constexpr float auto_flow_backstep_g = 0.20F, auto_flow_jump_g = 3.0F;
 inline constexpr float display_hysteresis_g = 0.15F;
 inline constexpr float display_zero_deadband_g = 0.15F;
 inline constexpr int lcd_mosi = 1, lcd_clock = 5, lcd_dc = 3, lcd_backlight = 6;

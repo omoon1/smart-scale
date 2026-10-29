@@ -3,12 +3,11 @@
 
 namespace smart_scale {
 struct RegistrationSnapshot {
-    float grams{}; // Unrounded mean of a strictly stable measurement window.
+    float grams{}; // Unrounded mean of a qualified short measurement window.
     std::uint64_t ms{};
 };
 
-// Registration-only qualification. Calibration, tare and brew gates retain
-// Scale::stable(). Both the button and its handler use this same snapshot.
+// Both the button and its handler use the same qualified snapshot.
 class RegistrationMeasurement {
 public:
     void reset() { *this = {}; }
@@ -18,7 +17,6 @@ public:
             (faults_ && *faults_ != scale.faults()) || (last_ms_ && now < *last_ms_)) reset();
         epoch_ = scale.display_epoch(); faults_ = scale.faults(); last_ms_ = now;
         if (!scale.ready()) { snapshot_.reset(); bad_since_.reset(); return std::nullopt; }
-        const auto stats = scale.stability_stats();
         const auto recent = scale.recent_gross();
         const float mean = scale.reference_gross();
         if (snapshot_) {
@@ -30,10 +28,9 @@ public:
                 invalidate(now);
                 return std::nullopt;
             }
-            const bool severe = (stats.failed & 1U) ||
-                stats.std_counts > stats.std_limit * config::registration_exit_ratio ||
-                std::abs(stats.drift_counts_s) > stats.drift_limit * config::registration_exit_ratio ||
-                stats.residual_counts > stats.std_limit * config::registration_exit_ratio;
+            // Use the shared hysteretic state, not the old strict diagnostic
+            // flags: ordinary +/-0.2 g noise must not disable Continue.
+            const bool severe = !scale.stable();
             if (severe) {
                 if (!bad_since_) bad_since_ = now;
                 if (now - *bad_since_ >= config::registration_exit_ms) {
@@ -53,7 +50,7 @@ private:
     void invalidate(std::uint64_t now) {
         snapshot_.reset(); bad_since_.reset();
         // Require a fresh measurement window before accepting another load.
-        blocked_until_ = now + config::stability_window_ms;
+        blocked_until_ = now + config::stable_window_ms;
     }
     std::optional<RegistrationSnapshot> snapshot_;
     std::optional<std::uint32_t> epoch_;

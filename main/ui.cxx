@@ -113,6 +113,7 @@ void View::init() { draw(); }
 void View::open(Dialog dialog) {
     if (controller_.session().phase == Phase::brewing || controller_.session().phase == Phase::result) return;
     dialog_ = dialog;
+    controller_.set_auto_brew_enabled(dialog == Dialog::none);
     if (dialog == Dialog::registration) {
         registration_measurement_.reset();
         registration_step_ = 0;
@@ -125,6 +126,7 @@ void View::open(Dialog dialog) {
 }
 void View::reset() { controller_.scale().cancel_calibration(); controller_.reset(); dialog_ = Dialog::none; schedule_draw(); }
 void View::update() {
+    controller_.set_auto_brew_enabled(dialog_ == Dialog::none);
     if (rendered_phase_ != controller_.session().phase) {
         dialog_ = Dialog::none; // Cancel unconfirmed edits when extraction starts.
         schedule_draw();
@@ -634,6 +636,7 @@ void View::action(Action a, int value) {
         break;
     }
     }
+    controller_.set_auto_brew_enabled(dialog_ == Dialog::none);
     schedule_draw();
 }
 }

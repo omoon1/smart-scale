@@ -110,7 +110,7 @@ int main() {
     };
     place(0); place(11000); // Inclusive lower boundary.
     assert(detection.session().active_object && detection.session().active_object->name == "Cup");
-    near(detection.scale().net(), 110); // Identity never tares an object automatically.
+    near(detection.scale().net(), 0); // Recognized vessel automatically tares once.
     place(19000); assert(detection.session().active_object->name == "Cup");
     place(0); place(19000); // Inclusive upper boundary.
     assert(detection.session().active_object->name == "Cup");
@@ -126,7 +126,7 @@ int main() {
     assert(!detection.session().active_object && detection.object_ambiguous());
     assert(!detection.session().vessel);
     assert(detection.select_equipment(2));
-    assert(!detection.object_ambiguous()); near(detection.scale().net(), 175);
+    assert(!detection.object_ambiguous()); near(detection.scale().net(), 0);
     assert(detection.start_brew()); place(20000);
     assert(detection.session().active_object->name == "Other cup"); // Identity locked during brewing.
     Controller registration(true);

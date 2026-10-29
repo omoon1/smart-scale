@@ -8,6 +8,9 @@ void Scale::clear_window() {
     adaptive_.reset();
     flow_filtered_.reset();
     stable_since_.reset();
+    unstable_since_.reset();
+    stable_latched_ = false;
+    stability_motion_ms_ = 0;
     flow_g_s_ = 0;
     ++display_epoch_;
 }
@@ -21,7 +24,7 @@ float Scale::mean() const {
     double sum = 0;
     unsigned n = 0;
     for (unsigned i = 0; i < count_; ++i) {
-        if (last_ms_ - samples_[i].ms <= config::stability_window_ms) { sum += samples_[i].counts; ++n; }
+        if (last_ms_ - samples_[i].ms <= config::stable_window_ms) { sum += samples_[i].counts; ++n; }
     }
     return n ? static_cast<float>(sum / n) : 0;
 }
@@ -63,15 +66,66 @@ void Scale::ingest(std::int32_t raw, std::uint64_t now) {
         captured_zero_.reset();
         ++faults_;
     }
-    if (stability_stats().failed == 0) {
-        if (!stable_since_) stable_since_ = now;
-    } else stable_since_.reset();
+    update_stability(value, now);
 }
 void Scale::check_timeout(std::uint64_t now) {
     if (connected_ && now > last_ms_ && now - last_ms_ > config::sensor_timeout_ms) invalidate();
 }
 bool Scale::stable() const {
-    return stable_since_ && stable_for_ms() >= config::stability_hold_ms && stability_stats().failed == 0;
+    return connected_ && filtered_ && !overload_ && stable_latched_;
+}
+void Scale::update_stability(double recent, std::uint64_t now) {
+    if (!connected_ || overload_ || !filtered_) return;
+    const double factor = calibration_ ? std::abs(calibration_->counts_per_gram) : 0;
+    const auto units = [factor](double grams, double counts) {
+        return factor > 0 ? std::max(2.0, factor * grams) : counts;
+    };
+    double sum = 0, squares = 0, older = 0, newer = 0;
+    unsigned n = 0, old_n = 0, new_n = 0;
+    auto oldest = now;
+    for (unsigned i = 0; i < count_; ++i) {
+        const auto& sample = samples_[i];
+        const auto age = now - sample.ms;
+        if (age > config::stable_window_ms) continue;
+        oldest = std::min(oldest, sample.ms);
+        sum += sample.counts; squares += sample.counts * sample.counts; ++n;
+        if (age > config::stable_window_ms / 2) { older += sample.counts; ++old_n; }
+        else { newer += sample.counts; ++new_n; }
+    }
+    if (n < config::stable_min_samples || now - oldest < config::stable_min_ms || !old_n || !new_n) {
+        stable_since_.reset(); stable_latched_ = false; unstable_since_.reset(); return;
+    }
+    const double average = sum / n;
+    const double noise = std::sqrt(std::max(0.0, squares / n - average * average));
+    const double shift = std::abs(newer / new_n - older / old_n);
+    const auto stats = stability_stats();
+    // Long-window drift remains a guard once available, never a startup wait.
+    const bool drift = now - stability_motion_ms_ >= config::drift_window_ms &&
+                       stats.drift_span_ms >= config::drift_min_ms &&
+                       std::abs(stats.drift_counts_s) > stats.drift_limit;
+    if (stable_latched_) {
+        // A median-confirmed large load change exits immediately. Ordinary
+        // jitter needs a persistent, wider threshold to release the latch.
+        const bool hard = std::abs(recent - stable_anchor_) > units(config::stable_hard_shift_g, 2250);
+        const bool bad = noise > units(config::stable_noise_exit_g, 1200) ||
+                         std::abs(average - stable_anchor_) > units(config::stable_anchor_shift_g, 1500);
+        if (bad && !unstable_since_) unstable_since_ = now;
+        if (!bad) unstable_since_.reset();
+        if (hard || (unstable_since_ && now - *unstable_since_ >= config::stable_exit_ms)) {
+            if (hard) stability_motion_ms_ = now;
+            stable_latched_ = false; stable_since_.reset(); unstable_since_.reset();
+        }
+    } else {
+        const bool qualifies = noise <= units(config::stable_noise_enter_g, 750) &&
+                               shift <= units(config::stable_half_shift_g, 600) && !drift;
+        if (!qualifies) stable_since_.reset();
+        else {
+            if (!stable_since_) stable_since_ = now;
+            if (now - *stable_since_ >= config::stable_enter_ms) {
+                stable_latched_ = true; stable_anchor_ = average;
+            }
+        }
+    }
 }
 StabilityStats Scale::stability_stats() const {
     StabilityStats stats;
@@ -139,7 +193,7 @@ bool Scale::restore(Calibration c) {
     if (!valid_calibration(c)) return false;
     calibration_ = c;
     // Restart motion thresholds in the new calibration units, retaining the
-    // count history used by the strict calibration/stability checks.
+    // count history used by the measurement averages and diagnostics.
     adaptive_.reset();
     tare_g_ = 0;
     flow_g_s_ = 0;
@@ -163,6 +217,12 @@ bool Scale::calibrate(float grams) {
 }
 bool Scale::tare() {
     if (!ready() || !stable()) return false;
+    // Fast Stable may precede low-pass convergence after placing a vessel.
+    // Tare the qualified median mean and align filter state to prevent the
+    // unchanged vessel from drifting upward as the old filter catches up.
+    filtered_ = mean();
+    adaptive_.reset();
+    flow_filtered_ = filtered_;
     tare_g_ = gross();
     flow_g_s_ = 0;
     ++display_epoch_;

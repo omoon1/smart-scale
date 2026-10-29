@@ -49,6 +49,8 @@ void Controller::mark_brew_error(BrewError error) {
 void Controller::sensor_fault() {
     if (!live_) return;
     scale_.invalidate();
+    session_.brew_prepared = false;
+    flow_start_.reset();
     empty_since_.reset();
     below_object_since_.reset();
     mark_brew_error(BrewError::sensor_fault);
@@ -57,8 +59,12 @@ void Controller::sensor_sample(std::optional<std::int32_t> raw, std::uint64_t no
     if (!live_) return;
     if (raw) scale_.ingest(*raw, now);
     scale_.check_timeout(now);
+    if (auto_brew_epoch_ != scale_.display_epoch()) flow_start_.reset();
+    auto_brew_epoch_ = scale_.display_epoch();
     if (session_.phase == Phase::result) return; // Keep archived result immutable.
     if (!scale_.ready()) {
+        session_.brew_prepared = false;
+        flow_start_.reset();
         empty_since_.reset();
         below_object_since_.reset();
         mark_brew_error(BrewError::sensor_fault);
@@ -81,6 +87,7 @@ void Controller::sensor_sample(std::optional<std::int32_t> raw, std::uint64_t no
         if (!empty_since_) empty_since_ = scale_.sample_ms();
         if (scale_.sample_ms() - *empty_since_ >= 300) {
             session_.loaded = false;
+            flow_start_.reset();
             mark_brew_error(BrewError::object_removed);
             if (session_.phase == Phase::remove_load) session_.phase = Phase::ready;
             if (session_.phase == Phase::ready) {
@@ -88,6 +95,8 @@ void Controller::sensor_sample(std::optional<std::int32_t> raw, std::uint64_t no
                 session_.vessel.reset();
                 recognition_checked_ = object_ambiguous_ = dose_tared_ = false;
                 scale_.clear_tare();
+                tared_vessel_id_.reset(); vessel_baseline_g_.reset();
+                session_.brew_prepared = false;
             }
             return; // Do not classify residual low-pass weight from the removed object.
         }
@@ -114,16 +123,69 @@ void Controller::sensor_sample(std::optional<std::int32_t> raw, std::uint64_t no
             target();
         }
     }
+    update_brew_preparation();
+    const bool eligible = auto_brew_enabled_ && session_.brew_prepared;
+    if (!eligible) flow_start_.reset();
+    else if (raw && recent) {
+        if (auto flow = flow_start_.update(*recent, scale_.reference_gross(), scale_.sample_ms(), scale_.stable())) {
+            // Keep the tare taken at vessel recognition, including all liquid
+            // added while waiting for flow confirmation or coffee dose entry.
+            scale_.set_tare(*vessel_baseline_g_);
+            begin_brew(static_cast<float>(scale_.sample_ms() - flow->started_ms) / 1000);
+            auto_brew_origin_ms_ = flow->started_ms;
+        }
+    }
+}
+void Controller::update_brew_preparation() {
+    if (!live_) return;
+    session_.brew_prepared = false;
+    const auto& object = session_.active_object;
+    if (session_.phase != Phase::ready) return;
+    const bool vessel = session_.loaded && object && object->kind != Kind::portafilter &&
+                        object->empty_g && std::isfinite(*object->empty_g) && *object->empty_g > 0 &&
+                        !object_ambiguous_;
+    if (!vessel) {
+        tared_vessel_id_.reset(); vessel_baseline_g_.reset(); flow_start_.reset(); return;
+    }
+    const auto calibration = scale_.calibration();
+    if (vessel_calibration_ && calibration &&
+        (vessel_calibration_->zero != calibration->zero ||
+         vessel_calibration_->counts_per_gram != calibration->counts_per_gram)) {
+        tared_vessel_id_.reset(); vessel_baseline_g_.reset(); flow_start_.reset();
+    }
+    if (!tared_vessel_id_ || *tared_vessel_id_ != object->id) {
+        flow_start_.reset();
+        if (!scale_.tare()) return;
+        tared_vessel_id_ = object->id;
+        vessel_baseline_g_ = scale_.gross();
+        vessel_calibration_ = calibration;
+        session_.net_g = 0;
+        session_.baseline_known = true;
+    }
+    session_.brew_prepared = scale_.ready() && session_.dose_g &&
+        std::isfinite(*session_.dose_g) && *session_.dose_g >= .1F && *session_.dose_g <= 60 &&
+        session_.dose_source != DoseSource::unknown;
+    if (!session_.brew_prepared) flow_start_.reset();
 }
 bool Controller::tare() {
     if (!live_ || session_.phase != Phase::ready || !scale_.tare()) return false;
     session_.net_g = 0;
     dose_tared_ = true;
     session_.baseline_known = true;
+    flow_start_.reset();
+    if (tared_vessel_id_) vessel_baseline_g_ = scale_.gross();
+    update_brew_preparation();
     return true;
 }
 bool Controller::start_brew() {
     if (!live_ || session_.phase != Phase::ready || !session_.loaded || scale_.gross() <= 2.0F || !scale_.tare()) return false;
+    begin_brew();
+    return true;
+}
+void Controller::begin_brew(float elapsed_s) {
+    session_.brew_prepared = false;
+    flow_start_.reset();
+    auto_brew_origin_ms_.reset();
     session_.phase = Phase::brewing;
     session_.baseline_known = true;
     session_.uncertain = false;
@@ -141,7 +203,13 @@ bool Controller::start_brew() {
     session_.net_g = session_.seconds = session_.flow_g_s = 0;
     session_.samples[0] = {0, 0};
     session_.sample_count = 1;
-    return true;
+    if (elapsed_s > 0) {
+        session_.seconds = elapsed_s;
+        session_.net_g = scale_.net();
+        session_.flow_g_s = scale_.flow();
+        session_.samples[1] = {elapsed_s, session_.net_g};
+        session_.sample_count = 2;
+    }
 }
 const Record& Controller::latest_record() const {
     return records_[(next_record_ + records_.size() - 1) % records_.size()];
@@ -165,7 +233,8 @@ bool Controller::select_equipment(std::size_t index) {
         if (item.kind == Kind::portafilter) session_.weighing_tool = item;
         else session_.vessel = item;
         target();
-        return true; // Identity selection must not change an actual measurement/tare.
+        update_brew_preparation();
+        return true;
     }
     place(index);
     return true;
@@ -183,6 +252,8 @@ void Controller::place(std::size_t index) {
 }
 void Controller::remove_object() {
     session_.loaded = false;
+    session_.brew_prepared = false;
+    flow_start_.reset(); tared_vessel_id_.reset(); vessel_baseline_g_.reset();
     if (session_.phase == Phase::remove_load) session_.phase = Phase::ready;
     mark_brew_error(BrewError::object_removed);
     // Session identity, dose and last valid weight survive removal.
@@ -192,7 +263,9 @@ bool Controller::set_dose(float grams, DoseSource source) {
         grams < 0.1F || grams > 60.0F) return false;
     session_.dose_g = grams;
     session_.dose_source = source;
+    flow_start_.reset();
     target();
+    update_brew_preparation();
     return true;
 }
 void Controller::weigh_beans(float grams) {
@@ -235,6 +308,7 @@ bool Controller::remove_equipment(std::uint32_t id) {
     // Deleting a profile is not a physical removal or a tare. Retain the reading.
     target();
     demo_running_ = false;
+    update_brew_preparation();
     return true;
 }
 void Controller::place_demo_kind(Kind kind) {
@@ -285,6 +359,8 @@ void Controller::finish() {
     archive(false);
 }
 void Controller::reset() {
+    tared_vessel_id_.reset(); vessel_baseline_g_.reset();
+    flow_start_.reset(); auto_brew_origin_ms_.reset();
     if (session_.phase == Phase::brewing) archive(true);
     const bool loaded = session_.loaded;
     const auto mode = session_.mode;
@@ -333,7 +409,10 @@ void Controller::tick(float dt) {
         if (!std::isfinite(dt) || dt <= 0) return;
         const bool valid = scale_.ready();
         if (session_.phase == Phase::brewing) {
-            session_.seconds += dt;
+            if (auto_brew_origin_ms_) {
+                session_.seconds = static_cast<float>(scale_.sample_ms() - *auto_brew_origin_ms_) / 1000;
+                auto_brew_origin_ms_.reset();
+            } else session_.seconds += dt;
             if (!valid) mark_brew_error(BrewError::sensor_fault);
             else if (!session_.loaded) mark_brew_error(BrewError::object_removed);
             if (!session_.uncertain) {

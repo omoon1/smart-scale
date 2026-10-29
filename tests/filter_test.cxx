@@ -5,14 +5,37 @@
 using namespace smart_scale;
 void near(float a, float b, float tolerance = 0.02F) { assert(std::abs(a - b) < tolerance); }
 int main() {
+    for (const unsigned interval : {100U, 13U}) {
+        for (const float polarity : {1.0F, -1.0F}) {
+            for (const double period : {1.4, 5.0, 20.0}) {
+                Scale fast; assert(fast.restore({0, polarity * 1000}));
+                unsigned first_stable = 0;
+                for (unsigned ms = interval; ms <= 15000; ms += interval) {
+                    const auto raw = static_cast<int>(polarity * (100000 + 200 * std::sin(ms * .001 * 6.283185307 / period)));
+                    fast.ingest(raw, ms);
+                    if (!first_stable && fast.stable()) first_stable = ms;
+                    if (first_stable) assert(fast.stable());
+                }
+                assert(first_stable && first_stable <= 1000);
+                auto now = fast.sample_ms();
+                fast.ingest(static_cast<int>(polarity * 110000), now += interval);
+                fast.ingest(static_cast<int>(polarity * 110000), now += interval);
+                assert(!fast.stable()); // Two samples establish a real step.
+                const auto moved = now;
+                while (now - moved < 1000) fast.ingest(static_cast<int>(polarity * 110000), now += interval);
+                assert(fast.stable());
+                assert(std::abs(fast.reference_gross() - 110) < .001F);
+                fast.check_timeout(now + 1001); assert(!fast.stable());
+            }
+        }
+    }
     Scale confirmation;
     assert(confirmation.restore({0, 1000}));
-    for (unsigned ms = 100; ms <= 3500; ms += 100) confirmation.ingest(100000, ms);
-    assert(confirmation.stability_stats().failed == 0 && !confirmation.stable());
-    assert(confirmation.stability_stats().samples >= 8);
-    for (unsigned ms = 3600; ms <= 3800; ms += 100) confirmation.ingest(100000, ms);
+    for (unsigned ms = 100; ms <= 800; ms += 100) confirmation.ingest(100000, ms);
+    assert(!confirmation.stable());
+    confirmation.ingest(100000, 900);
     assert(confirmation.stable());
-    confirmation.ingest(101000, 3900); confirmation.ingest(101000, 4000);
+    confirmation.ingest(101000, 1000); confirmation.ingest(101000, 1100);
     assert(!confirmation.stable() && confirmation.stability_stats().failed != 0);
     confirmation.invalidate();
     assert(confirmation.stability_stats().failed == 1 && confirmation.faults() == 1);

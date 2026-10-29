@@ -58,6 +58,8 @@ test:
 	@./build-host/registration_tests
 	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main main/session.cxx main/scale.cxx tests/brew_error_test.cxx -o build-host/brew_error_tests
 	@./build-host/brew_error_tests
+	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main main/session.cxx main/scale.cxx tests/auto_brew_test.cxx -o build-host/auto_brew_tests
+	@./build-host/auto_brew_tests
 preview:
 	@./scripts/host.sh --screenshots
 	@./scripts/host.sh --live-screenshots

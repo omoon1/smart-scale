@@ -74,6 +74,7 @@ public:
 private:
     float mean() const;
     void clear_window();
+    void update_stability(double recent, std::uint64_t now);
     struct Sample { double counts{}; std::uint64_t ms{}; };
     std::array<Sample, 320> samples_{};
     std::array<std::int32_t, 3> median_{};
@@ -86,6 +87,10 @@ private:
     std::uint64_t last_ms_{};
     std::optional<std::int32_t> last_raw_;
     std::optional<std::uint64_t> stable_since_;
+    std::optional<std::uint64_t> unstable_since_;
+    bool stable_latched_{};
+    double stable_anchor_{};
+    std::uint64_t stability_motion_ms_{};
     std::uint64_t received_{}, faults_{};
     bool connected_{}, overload_{}, save_failed_{};
     float tare_g_{};

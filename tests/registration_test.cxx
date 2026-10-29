@@ -18,20 +18,15 @@ int main() {
         assert(snapshot && std::abs(snapshot->grams - 100.123F) < 0.001F);
         // Mild noise exceeds the entry stddev threshold, but is below the exit
         // threshold. Keep the button usable with a recent qualified mean.
-        bool used_while_unstable = false;
         for (unsigned i = 0; i < 1200 / interval; ++i) {
-            snapshot = feed(100123 + (i % 2 ? 140 : -140));
+            snapshot = feed(100123 + (i % 2 ? 200 : -200));
             assert(snapshot);
             assert(std::abs(snapshot->grams - 100.123F) < 0.03F);
-            if (!scale.stable()) {
-                used_while_unstable = true;
-                assert(!scale.capture_zero() && !scale.tare()); // Strict gates unchanged.
-            }
+            assert(scale.stable());
         }
-        assert(used_while_unstable);
-        // No stable history may be kept indefinitely during continuous noise.
-        for (unsigned i = 0; i < 3000 / interval; ++i) snapshot = feed(100123 + (i % 2 ? 140 : -140));
-        assert(!snapshot);
+        // Persistent minor noise stays actionable and refreshes the snapshot.
+        for (unsigned i = 0; i < 3000 / interval; ++i) snapshot = feed(100123 + (i % 2 ? 200 : -200));
+        assert(snapshot && scale.stable());
         for (; !scale.stable();) feed(100123);
         assert(reading.update(scale));
         // Sustained severe noise invalidates before the age timeout even when
@@ -39,7 +34,7 @@ int main() {
         const auto severe_start = now;
         bool rejected_severe = false;
         for (unsigned i = 0; i < 1500 / interval; ++i) {
-            if (!feed(100123 + (i % 2 ? 250 : -250))) { rejected_severe = true; break; }
+            if (!feed(100123 + (i % 2 ? 500 : -500))) { rejected_severe = true; break; }
         }
         assert(rejected_severe && now - severe_start < config::registration_snapshot_ms);
         for (unsigned i = 0; i < 6000 / interval; ++i) feed(100123);
@@ -71,7 +66,7 @@ int main() {
     Scale noisy; assert(noisy.restore({0, 1000}));
     RegistrationMeasurement unqualified;
     for (unsigned ms = 100; ms <= 6000; ms += 100) {
-        noisy.ingest(100000 + (ms % 200 ? 140 : -140), ms);
+        noisy.ingest(100000 + (ms % 200 ? 500 : -500), ms);
         assert(!unqualified.update(noisy));
     }
 }
