@@ -15,7 +15,7 @@ int main() {
         CHECK(r.equipment.has_value()); CHECK(!r.ambiguous);
     }
     for (float offset : {-40.1F, 40.1F}) CHECK(!recognize(482.3F + offset, &pf, 1).equipment);
-    auto duplicate = pf; duplicate.id = 99;
+    auto duplicate = pf; duplicate.id = 5;
     const Equipment ambiguous[] = {pf, duplicate};
     CHECK(!recognize(500.3F, ambiguous, 2).equipment);
     CHECK(recognize(500.3F, ambiguous, 2).ambiguous);
@@ -26,7 +26,7 @@ int main() {
     CHECK(c.session().phase == Phase::ready);
     c.remove_object(); CHECK(near(*c.session().dose_g, 18.2F));
     c.place(0);
-    CHECK(c.session().weighing_tool->id == 2); CHECK(c.session().vessel->id == 1);
+    CHECK(c.session().weighing_tool->id == 4); CHECK(c.session().vessel->id == 1);
     CHECK(near(c.session().net_g, 0)); CHECK(near(*c.session().dose_g, 18.2F));
     c.liquid(2, 1);
     CHECK(c.session().phase == Phase::brewing); CHECK(near(c.session().seconds, 1));
@@ -55,15 +55,16 @@ int main() {
     c.set_mode(Mode::pour_over); c.place(0); c.set_dose(20);
     CHECK(!c.session().target_g); // Cup-only quantity is not input water.
 
-    Equipment item{0, Kind::cup, "New cup", "Cup only", 156.8F, std::nullopt};
-    auto blank = item; blank.name = "   "; CHECK(!c.register_equipment(blank, true));
+    Equipment item{0, Kind::other, 156.8F, std::nullopt};
+    auto blank = item; blank.id = equipment_icon_count; CHECK(!c.register_equipment(blank, true));
     CHECK(!c.register_equipment(item, false)); CHECK(c.register_equipment(item, true));
     c.reset(); CHECK(c.equipment_count() == 4);
     c.remove_object();
     CHECK(!c.set_dose(0)); CHECK(!c.set_dose(60.1F));
     CHECK(!c.set_dose(std::numeric_limits<float>::infinity()));
     CHECK(c.set_dose(0.1F)); CHECK(c.set_dose(60.0F));
-    while (c.equipment_count() < config::max_equipment) CHECK(c.register_equipment(item, true));
+    while (c.equipment_count() < config::max_equipment) { item.id = static_cast<unsigned>(c.equipment_count() + 1); CHECK(c.register_equipment(item, true)); }
+    item.id = 0;
     CHECK(!c.register_equipment(item, true));
 
     c.load_scenario(Scenario::known);
@@ -77,13 +78,13 @@ int main() {
     CHECK(c.record_count() == config::max_records);
     Controller reading;
     reading.place(1); reading.weigh_beans(18.2F);
-    CHECK(reading.remove_equipment(2));
+    CHECK(reading.remove_equipment(equipment_key(Kind::portafilter, 4)));
     CHECK(near(reading.session().net_g, 18.2F));
     CHECK(!reading.session().weighing_tool && !reading.session().active_object);
     CHECK(reading.session().loaded && reading.session().baseline_known);
     Controller removed;
     removed.liquid(2, 1); removed.finish();
-    const auto archived_id = removed.latest_record().session.vessel->id;
+    const auto archived_id = equipment_key(*removed.latest_record().session.vessel);
     CHECK(!removed.remove_equipment(archived_id)); // Result is locked too.
     removed.next(); removed.remove_object(); removed.place(0);
     const auto count = removed.equipment_count();
@@ -93,20 +94,21 @@ int main() {
     CHECK(!removed.session().active_object && !removed.session().vessel);
     CHECK(removed.session().loaded && removed.session().baseline_known);
     CHECK(near(removed.session().net_g, 0));
-    CHECK(removed.latest_record().session.vessel->id == archived_id);
+    CHECK(equipment_key(*removed.latest_record().session.vessel) == archived_id);
     CHECK(near(removed.latest_record().session.net_g, 2));
     CHECK(removed.equipment()[0].kind == Kind::portafilter);
     CHECK(removed.register_equipment(item, true));
-    CHECK(removed.equipment()[2].id == 4); // Never reuse compacted list IDs.
-    CHECK(removed.remove_equipment(4));
+    CHECK(removed.has_equipment(item.kind, item.id));
+    CHECK(!removed.register_equipment(item, true)); // Same kind/icon is unavailable.
+    CHECK(removed.remove_equipment(equipment_key(item)));
     CHECK(removed.register_equipment(item, true));
-    CHECK(removed.equipment()[2].id == 5);
+    CHECK(removed.has_equipment(item.kind, item.id)); // Deleted icon can be registered again.
     removed.load_scenario(Scenario::pour_over);
     CHECK(removed.session().vessel->kind == Kind::pour_over_set);
     removed.liquid(1, 1);
-    CHECK(!removed.remove_equipment(3)); // Brewing is locked.
+    CHECK(!removed.remove_equipment(equipment_key(Kind::pour_over_set, 3))); // Brewing is locked.
     removed.reset(); removed.remove_object();
-    while (removed.equipment_count()) CHECK(removed.remove_equipment(removed.equipment()[0].id));
+    while (removed.equipment_count()) CHECK(removed.remove_equipment(equipment_key(removed.equipment()[0])));
     for (const auto scenario : {Scenario::known, Scenario::pour_over, Scenario::sequential}) {
         removed.load_scenario(scenario); removed.run_demo();
         for (int i = 0; i < 100; ++i) removed.tick(0.1F);
@@ -117,6 +119,6 @@ int main() {
     removed.reset(); removed.remove_object();
     CHECK(removed.register_equipment(item, true)); // Empty list can recover.
     CHECK(removed.select_equipment(0));
-    CHECK(removed.equipment()[0].id == 6);
+    CHECK(removed.equipment()[0].id == item.id);
     std::cout << checks << " checks passed\n";
 }

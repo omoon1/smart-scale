@@ -22,7 +22,7 @@ int main() {
         for (const float polarity : {1.0F, -1.0F}) {
             Controller c(true);
             assert(c.scale().restore({0, polarity * 1000}));
-            assert(c.register_equipment({0, Kind::cup, "Cup", "", 100.0F, {}}, true));
+            assert(c.register_equipment({0, Kind::other, 100.0F, {}}, true));
             std::uint64_t now = 0;
             auto feed = [&](float grams) {
                 c.sensor_sample(static_cast<int>(grams * polarity * 1000), now += interval);
@@ -67,7 +67,7 @@ int main() {
 
             Controller beans(true);
             assert(beans.scale().restore({0, polarity * 1000}));
-            assert(beans.register_equipment({0, Kind::portafilter, "Tool", "", 100.0F, {}}, true));
+            assert(beans.register_equipment({0, Kind::portafilter, 100.0F, {}}, true));
             assert(beans.set_dose(18));
             for (unsigned ms = interval; ms < 6000; ms += interval)
                 beans.sensor_sample(static_cast<int>((100000 + (ms > 3000 ? (ms - 3000) * 2 : 0)) * polarity), ms);
@@ -75,7 +75,7 @@ int main() {
 
             Controller placement(true);
             assert(placement.scale().restore({0, polarity * 1000}));
-            assert(placement.register_equipment({0, Kind::cup, "Cup", "", 100.0F, {}}, true));
+            assert(placement.register_equipment({0, Kind::other, 100.0F, {}}, true));
             assert(placement.set_dose(18));
             for (unsigned ms = interval; ms < 6000; ms += interval) {
                 const float grams = ms < 1000 ? 0 : ms < 3000 ? 100 : 101;
@@ -83,7 +83,7 @@ int main() {
             }
             assert(placement.session().phase == Phase::ready); // Step then flat.
             assert(placement.session().brew_prepared);
-            assert(placement.remove_equipment(placement.equipment()[0].id));
+            assert(placement.remove_equipment(equipment_key(placement.equipment()[0])));
             assert(!placement.session().brew_prepared);
             placement.sensor_fault();
             for (unsigned i = 0; i < 2; ++i)

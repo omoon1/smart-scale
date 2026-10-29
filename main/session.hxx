@@ -5,23 +5,31 @@
 #include <array>
 #include <cstdint>
 #include <optional>
-#include <string>
+#include <vector>
+#include <unordered_map>
 
 namespace smart_scale {
 enum class Mode { espresso, pour_over };
 enum class Phase { ready, brewing, result, remove_load };
-enum class Kind { cup, portafilter, pour_over_set };
+enum class Kind { other, portafilter, pour_over_set };
 enum class DoseSource { unknown, measured, manual };
 enum class Scenario { known, unknown, sequential, pour_over };
 enum class BrewError { none, object_removed, sensor_fault };
 struct Equipment {
     std::uint32_t id{};
-    Kind kind{Kind::cup};
-    std::string name;
-    std::string configuration;
+    Kind kind{Kind::other};
     std::optional<float> empty_g;
     std::optional<float> usual_dose_g;
 };
+// id is the stable zero-based index into the bundled icon list.
+inline constexpr std::uint32_t equipment_icon_count = 20;
+using EquipmentKey = std::uint32_t;
+constexpr EquipmentKey equipment_key(Kind kind, std::uint32_t id) {
+    return static_cast<EquipmentKey>(kind) * equipment_icon_count + id;
+}
+constexpr EquipmentKey equipment_key(const Equipment& item) { return equipment_key(item.kind, item.id); }
+using EquipmentMap = std::unordered_map<EquipmentKey, Equipment>;
+bool valid_equipment(const Equipment& item);
 struct Point { float seconds{}, grams{}; };
 struct Session {
     Phase phase{Phase::ready};
@@ -65,15 +73,27 @@ public:
         return remaining > 0 ? remaining : 0;
     }
     [[nodiscard]] const Session& session() const { return session_; }
-    [[nodiscard]] const auto& equipment() const { return equipment_; }
-    [[nodiscard]] std::size_t equipment_count() const { return equipment_count_; }
+    // Stable display order; never expose unordered_map iteration order as a row ID.
+    [[nodiscard]] std::vector<Equipment> equipment() const;
+    [[nodiscard]] const EquipmentMap& equipment_map() const { return equipment_; }
+    bool has_equipment(Kind kind, std::uint32_t id) const {
+        return id < equipment_icon_count && static_cast<unsigned>(kind) <= static_cast<unsigned>(Kind::pour_over_set) &&
+            equipment_.contains(equipment_key(kind, id));
+    }
+    bool restore_equipment(const std::vector<Equipment>& items);
+    bool equipment_storage_error() const { return equipment_storage_error_; }
+    void equipment_storage_error(bool error) { equipment_storage_error_ = error; }
+    bool equipment_dirty() const { return equipment_revision_ != saved_equipment_revision_; }
+    std::uint64_t equipment_revision() const { return equipment_revision_; }
+    void equipment_saved(std::uint64_t revision) { if (revision == equipment_revision_) saved_equipment_revision_ = revision; }
+    [[nodiscard]] std::size_t equipment_count() const { return equipment_.size(); }
     [[nodiscard]] std::size_t record_count() const { return record_count_; }
     [[nodiscard]] const Record& latest_record() const;
     bool select_equipment(std::size_t index);
     bool set_dose(float grams, DoseSource source = DoseSource::manual);
     bool set_mode(Mode mode);
     bool register_equipment(Equipment equipment, bool stable);
-    bool remove_equipment(std::uint32_t id);
+    bool remove_equipment(EquipmentKey key);
     void remove_object();
     void place(std::size_t index);
     void weigh_beans(float grams);
@@ -93,7 +113,7 @@ private:
     void mark_brew_error(BrewError error);
     void begin_brew(float elapsed_s = 0);
     void update_brew_preparation();
-    std::optional<std::uint32_t> tared_vessel_id_;
+    std::optional<EquipmentKey> tared_vessel_id_;
     std::optional<float> vessel_baseline_g_;
     std::optional<Calibration> vessel_calibration_;
     FlowStartDetector flow_start_;
@@ -107,9 +127,9 @@ private:
     bool recognition_checked_{}, object_ambiguous_{}, dose_tared_{};
     Scale scale_;
     Session session_{};
-    std::array<Equipment, config::max_equipment> equipment_{};
-    std::size_t equipment_count_{3};
-    std::uint32_t next_equipment_id_{4};
+    EquipmentMap equipment_;
+    bool equipment_storage_error_{};
+    std::uint64_t equipment_revision_{}, saved_equipment_revision_{};
     std::array<Record, config::max_records> records_{};
     std::size_t record_count_{}, next_record_{};
     bool demo_running_{};

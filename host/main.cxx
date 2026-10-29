@@ -71,6 +71,12 @@ bool has_label(lv_obj_t* parent, const std::string& text) {
         if (has_label(lv_obj_get_child(parent, static_cast<int>(i)), text)) return true;
     return false;
 }
+lv_obj_t* icon_button(lv_obj_t* parent, const char* text) {
+    if (lv_obj_check_type(parent, &lv_btn_class) && has_label(parent, text)) return parent;
+    for (unsigned i = 0; i < lv_obj_get_child_cnt(parent); ++i)
+        if (auto* result = icon_button(lv_obj_get_child(parent, static_cast<int>(i)), text)) return result;
+    return nullptr;
+}
 
 }
 int main(int argc, char** argv) {
@@ -335,7 +341,7 @@ int main(int argc, char** argv) {
     controller.finish(); controller.load_scenario(Scenario::known); pump(view);
     view.open(ui::Dialog::registration); screenshot(view, "09-register-type");
     auto* type = find_type(lv_scr_act(), &lv_dropdown_class);
-    require(type && std::string(lv_dropdown_get_options(type)) == "Container\nPortafilter\nPour-over set", "Container replaces Cup");
+    require(type && std::string(lv_dropdown_get_options(type)) == "Other\nPortafilter\nPour-over set", "Equipment kind choices use Other, Portafilter and Pour-over set");
     lv_dropdown_set_selected(type, 2);
     click(view, 370, 284); screenshot(view, "10-register-weight");
     click(view, 150, 222); // Mark unstable.
@@ -361,9 +367,27 @@ int main(int argc, char** argv) {
     screenshot(view, "12-register-icon-selected");
     click(view, 370, 282);
     require(controller.equipment_count() == 4, "Registration saves profile");
-    require(controller.equipment()[3].name == "Pour-over set 🦋", "Selected type and icon survive Back and Save");
+    require(controller.equipment()[3].id == 19, "Selected type and icon survive Back and Save");
     require(controller.equipment()[3].kind == Kind::pour_over_set, "Selected equipment type survives registration");
     screenshot(view, "13-registered");
+    view.open(ui::Dialog::registration); pump(view);
+    type = find_type(lv_scr_act(), &lv_dropdown_class);
+    lv_dropdown_set_selected(type, 2);
+    click(view, 370, 284); click(view, 370, 284);
+    auto* used = icon_button(lv_scr_act(), ui::equipment_icons[19]);
+    require(used && lv_obj_has_state(used, LV_STATE_DISABLED), "Registered kind/icon is disabled");
+    auto* available = icon_button(lv_scr_act(), ui::equipment_icons[0]);
+    require(available && !lv_obj_has_state(available, LV_STATE_DISABLED), "Unused icon remains selectable");
+    lv_event_send(used, LV_EVENT_CLICKED, nullptr); pump(view);
+    require(has_label(lv_scr_act(), "Pour-over set 🫘"), "Even injected events cannot select a duplicate");
+    screenshot(view, "29-registered-icon-disabled");
+    click(view, 65, 282); click(view, 65, 282);
+    type = find_type(lv_scr_act(), &lv_dropdown_class);
+    lv_dropdown_set_selected(type, 0);
+    click(view, 370, 284); click(view, 370, 284);
+    available = icon_button(lv_scr_act(), ui::equipment_icons[19]);
+    require(available && !lv_obj_has_state(available, LV_STATE_DISABLED), "Same icon is available in another kind");
+    view.open(ui::Dialog::objects); pump(view);
     click(view, 344, 84); // First row trash button.
     screenshot(view, "14-remove-equipment");
     require(controller.equipment_count() == 4, "Remove requires confirmation");
