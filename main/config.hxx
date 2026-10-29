@@ -19,6 +19,8 @@ inline constexpr float filter_transition_tau_s = 0.3F, motion_detector_tau_s = 0
 inline constexpr float motion_threshold_g = 0.12F;
 inline constexpr std::uint64_t motion_confirm_ms = 200, filter_quiet_after_ms = 1000;
 inline constexpr std::uint64_t display_confirm_ms = 300;
+inline constexpr std::uint64_t display_quiet_confirm_ms = 1000;
+inline constexpr float display_average_tau_s = 0.25F;
 inline constexpr std::uint64_t sensor_timeout_ms = 1000;
 inline constexpr std::uint64_t stability_window_ms = 1200;
 inline constexpr std::uint64_t stability_min_ms = 1000;

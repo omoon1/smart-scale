@@ -293,7 +293,8 @@ void View::refresh_values() {
     std::optional<float> displayed = available ? std::optional<float>{s.net_g} : std::nullopt;
     if (controller_.live()) {
         if (s.phase != Phase::result)
-            displayed = weight_display_.update(displayed, scale.sample_ms(), scale.quiet());
+            displayed = weight_display_.update(displayed, scale.sample_ms(),
+                                                scale.quiet() && s.phase != Phase::brewing);
     }
     const auto weight_text = number(displayed);
     // Log actual visible transitions, including unavailable/recovery. Retain the

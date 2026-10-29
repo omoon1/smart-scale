@@ -77,12 +77,12 @@ int main() {
         assert(*display.update(ms % 200 ? -0.1F : 0.1F, ms, true) == 0);
     assert(*display.update(0.1F, 2100, true) == 0);
     for (unsigned i = 0; i < 100; ++i) assert(*display.update(0.1F, 2100, true) == 0);
-    for (unsigned ms = 2200; ms <= 2500; ms += 100) display.update(0.1F, ms, true);
-    assert(std::abs(*display.update(0.1F, 2600, true) - 0.1F) < 0.001F);
-    for (unsigned ms = 2700; ms <= 3100; ms += 100) display.update(-0.1F, ms, true);
-    assert(std::abs(*display.update(-0.1F, 3200, true) + 0.1F) < 0.001F);
-    assert(!display.update(std::nullopt, 3300, true));
-    assert(*display.update(200.0F, 3400, true) == 200);
+    for (unsigned ms = 2200; ms <= 3800; ms += 100) display.update(0.1F, ms, true);
+    assert(std::abs(*display.update(0.1F, 3900, true) - 0.1F) < 0.001F);
+    for (unsigned ms = 4000; ms <= 5600; ms += 100) display.update(-0.1F, ms, true);
+    assert(std::abs(*display.update(-0.1F, 5700, true) + 0.1F) < 0.001F);
+    assert(!display.update(std::nullopt, 5800, true));
+    assert(*display.update(200.0F, 5900, true) == 200);
     display.reset();
     assert(*display.update(0.0F, 3400, false) == 0); // Tare epoch.
     assert(*display.update(2.0F, 3500, false) == 2); // No extra pour delay.
