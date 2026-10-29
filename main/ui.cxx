@@ -155,26 +155,200 @@ void View::draw() {
     series_ = target_series_ = nullptr;
     rendered_phase_ = controller_.session().phase;
     const auto phase = rendered_phase_;
-    if (phase == Phase::ready) {
-        button(screen_, controller_.session().mode == Mode::espresso ? "Espresso" : "Pour-over",
-               16, 8, 156, 44, Action::toggle_mode);
-    } else label(screen_, phase == Phase::brewing ? "Running" : phase == Phase::result ? "Brew complete" : "Reset",
-                 20, 19, 230, &lv_font_montserrat_22);
-    if (phase == Phase::brewing) label(screen_, equipment_icons[9], 280, 19, 32, &lv_font_montserrat_22, mint);
-    label(screen_, controller_.live() ? "HX711  LIVE" : "DEMO   82% " LV_SYMBOL_BATTERY_3, 328, 24, 145, &lv_font_montserrat_14, mint);
-    if (phase == Phase::brewing || phase == Phase::result) draw_brew(screen_, phase == Phase::result);
-    else if (phase == Phase::remove_load) {
-        label(screen_, LV_SYMBOL_REFRESH, 214, 82, 60, &lv_font_montserrat_48, amber);
-        label(screen_, "Remove objects from the scale", 32, 154, 420, &lv_font_montserrat_22);
-        label(screen_, "The current load will not become the empty zero.\nSession cleared. Equipment and records retained.",
-              32, 192, 420, &lv_font_montserrat_14, muted);
-        if (!controller_.live()) button(screen_, "Simulate removal", 140, 264, 200, 44, Action::remove, 0, true);
-    } else draw_ready(screen_);
-    if (dialog_ != Dialog::none) draw_dialog(screen_);
+    if (wide()) draw_wide(screen_);
+    else {
+        if (phase == Phase::ready) {
+            button(screen_, controller_.session().mode == Mode::espresso ? "Espresso" : "Pour-over",
+                   16, 8, 156, 44, Action::toggle_mode);
+        } else label(screen_, phase == Phase::brewing ? "Running" : phase == Phase::result ? "Brew complete" : "Reset",
+                     20, 19, 230, &lv_font_montserrat_22);
+        if (phase == Phase::brewing) label(screen_, equipment_icons[9], 280, 19, 32, &lv_font_montserrat_22, mint);
+        label(screen_, controller_.live() ? "HX711  LIVE" : "DEMO   82% " LV_SYMBOL_BATTERY_3, 328, 24, 145, &lv_font_montserrat_14, mint);
+        if (phase == Phase::brewing || phase == Phase::result) draw_brew(screen_, phase == Phase::result);
+        else if (phase == Phase::remove_load) {
+            label(screen_, LV_SYMBOL_REFRESH, 214, 82, 60, &lv_font_montserrat_48, amber);
+            label(screen_, "Remove objects from the scale", 32, 154, 420, &lv_font_montserrat_22);
+            label(screen_, "The current load will not become the empty zero.\nSession cleared. Equipment and records retained.",
+                  32, 192, 420, &lv_font_montserrat_14, muted);
+            if (!controller_.live()) button(screen_, "Simulate removal", 140, 264, 200, 44, Action::remove, 0, true);
+        } else draw_ready(screen_);
+    }
+    if (dialog_ != Dialog::none) {
+        if (wide()) draw_wide_dialog(screen_);
+        else draw_dialog(screen_);
+    }
     lv_scr_load(screen_);
     if (old) lv_obj_del(old);
     refresh_values();
 }
+// Layout follows the logical LVGL resolution. Panel rotation belongs to the BSP.
+bool View::wide() const {
+    return lv_disp_get_hor_res(nullptr) == 640 && lv_disp_get_ver_res(nullptr) == 172;
+}
+void View::draw_wide(lv_obj_t* root) {
+    const auto phase = controller_.session().phase;
+    if (phase == Phase::ready) {
+        button(root, controller_.session().mode == Mode::espresso ? "Espresso" : "Pour-over",
+               8, 4, 140, 44, Action::toggle_mode);
+        target_text_ = label(root, "", 158, 18, 92, &lv_font_montserrat_14, muted);
+        weight_ = label(root, "0.0", 12, 51, 218, &weight_font_72);
+        weight_unit_ = label(root, "g", 0, 0, 28, &lv_font_montserrat_22);
+        sensor_status_ = label(root, "", 12, 133, 230, &lv_font_montserrat_14, muted);
+        stage_text_ = label(root, "", 260, 10, 370, &lv_font_montserrat_18, mint);
+        object_card_ = button(root, "", 254, 36, 180, 82, Action::objects);
+        object_text_ = label(object_card_, "", 10, 8, 142, &lv_font_montserrat_18);
+        lv_label_set_long_mode(object_text_, LV_LABEL_LONG_DOT);
+        lv_obj_set_height(object_text_, 23);
+        object_check_ = label(object_card_, "", 154, 10, 22, &lv_font_montserrat_14, mint);
+        object_weight_ = label(object_card_, "", 10, 39, 164, &lv_font_montserrat_28);
+        coffee_card_ = button(root, "", 442, 36, 190, 82, Action::dose);
+        label(coffee_card_, "Coffee", 10, 8, 140, &lv_font_montserrat_18);
+        coffee_check_ = label(coffee_card_, "", 164, 10, 22, &lv_font_montserrat_14, mint);
+        dose_text_ = label(coffee_card_, "", 10, 30, 164, &lv_font_montserrat_22);
+        coffee_hint_ = label(coffee_card_, "", 10, 58, 164, &lv_font_montserrat_14, muted);
+        if (controller_.live()) {
+            start_button_ = button(root, "Start brew", 254, 124, 110, 44, Action::run, 0, true);
+            tare_button_ = button(root, "Tare", 370, 124, 70, 44, Action::tare);
+            button(root, "Calibrate", 446, 124, 100, 44, Action::calibration);
+        } else {
+            button(root, "Run demo", 254, 124, 140, 44, Action::run, 0, true);
+            button(root, "Scenarios", 402, 124, 144, 44, Action::demo);
+        }
+        button(root, "Reset", 552, 124, 80, 44, Action::reset);
+    } else if (phase == Phase::remove_load) {
+        label(root, LV_SYMBOL_REFRESH " Remove objects", 16, 12, 580, &lv_font_montserrat_28, amber);
+        label(root, "Session cleared. Equipment and records retained.\nThe current load will not become the empty zero.",
+              16, 64, 600, &lv_font_montserrat_18, muted);
+        if (!controller_.live()) button(root, "Simulate removal", 424, 124, 208, 44, Action::remove, 0, true);
+    } else {
+        label(root, phase == Phase::result ? "Brew complete" : "Running", 12, 4, 260, &lv_font_montserrat_22);
+        object_text_ = label(root, "", 300, 9, 328, &lv_font_montserrat_14, muted);
+        lv_label_set_long_mode(object_text_, LV_LABEL_LONG_DOT);
+        lv_obj_set_height(object_text_, 18);
+        status_ = label(root, "", 12, 31, 620, &lv_font_montserrat_14, mint);
+        chart_ = lv_chart_create(root); style(chart_, bg);
+        lv_obj_set_pos(chart_, 12, 66); lv_obj_set_size(chart_, 220, 76);
+        lv_obj_set_style_radius(chart_, 0, 0);
+        lv_obj_set_style_line_color(chart_, color(border), LV_PART_MAIN);
+        lv_obj_set_style_line_width(chart_, 2, LV_PART_ITEMS);
+        lv_obj_set_style_size(chart_, 0, LV_PART_INDICATOR);
+        lv_chart_set_type(chart_, LV_CHART_TYPE_SCATTER);
+        lv_chart_set_point_count(chart_, 120); lv_chart_set_div_line_count(chart_, 3, 4);
+        target_series_ = lv_chart_add_series(chart_, color(amber), LV_CHART_AXIS_PRIMARY_Y);
+        series_ = lv_chart_add_series(chart_, color(mint), LV_CHART_AXIS_PRIMARY_Y);
+        current_point_ = lv_obj_create(root); style(current_point_, mint);
+        lv_obj_set_size(current_point_, 7, 7); lv_obj_set_style_radius(current_point_, LV_RADIUS_CIRCLE, 0);
+        lv_obj_add_flag(current_point_, LV_OBJ_FLAG_HIDDEN);
+        chart_max_ = label(root, "", 12, 49, 100, &lv_font_montserrat_14, muted);
+        chart_time_ = label(root, "", 12, 146, 110, &lv_font_montserrat_14, muted);
+        label(root, "time (s)", 166, 146, 68, &lv_font_montserrat_14, muted);
+        weight_ = label(root, "", 248, 52, 194, &lv_font_montserrat_48);
+        weight_unit_ = label(root, "g", 0, 0, 24, &lv_font_montserrat_14);
+        time_ = label(root, "", 480, 52, 148, &lv_font_montserrat_28);
+        flow_ = label(root, "", 480, 87, 150, &lv_font_montserrat_18, mint);
+        target_text_ = label(root, "", 248, 104, 158, &lv_font_montserrat_14, muted);
+        if (phase == Phase::result) {
+            button(root, "Next brew", 482, 124, 150, 44, Action::next, 0, true);
+        } else {
+            button(root, "Reset", 414, 124, 100, 44, Action::reset);
+            button(root, "Finish", 522, 124, 110, 44, Action::finish, 0, true);
+        }
+    }
+}
+void View::draw_wide_dialog(lv_obj_t* root) {
+    // Full-screen sheets make the 172 px height usable without shrinking controls.
+    auto* box = lv_obj_create(root); style(box);
+    lv_obj_set_pos(box, 0, 0); lv_obj_set_size(box, 640, 172);
+    lv_obj_set_style_radius(box, 0, 0); lv_obj_set_style_border_width(box, 0, 0);
+    button(box, LV_SYMBOL_CLOSE, 588, 4, 44, 44, Action::close);
+    if (dialog_ == Dialog::dose) {
+        label(box, "Coffee", 12, 12, 180, &lv_font_montserrat_22, mint);
+        dose_value_ = label(box, "", 12, 65, 184, &lv_font_montserrat_48);
+        for (int i = 0; i < 3; ++i)
+            button(box, i == 0 ? "18 g" : i == 1 ? "20 g" : "22 g", 208 + i * 128, 54, 120, 44,
+                   Action::dose_preset, 180 + i * 20);
+        const char* names[] = {"-1 g", "-0.1", "+0.1", "+1 g"};
+        const int values[] = {-10, -1, 1, 10};
+        for (int i = 0; i < 4; ++i) button(box, names[i], 208 + i * 104, 108, 96, 52, Action::dose_adjust, values[i]);
+    } else if (dialog_ == Dialog::objects) {
+        label(box, "Containers", 12, 12, 400, &lv_font_montserrat_22, mint);
+        auto* list = lv_obj_create(box); style(list);
+        lv_obj_set_pos(list, 12, 54); lv_obj_set_size(list, 436, 108);
+        lv_obj_add_flag(list, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_scroll_dir(list, LV_DIR_VER);
+        if (!controller_.equipment_count()) label(list, "No equipment yet", 12, 35, 400, &lv_font_montserrat_18, muted);
+        for (std::size_t i = 0; i < controller_.equipment_count(); ++i) {
+            const auto& item = controller_.equipment()[i];
+            auto* row = button(list, item.name.c_str(), 0, i * 52, 374, 46, Action::choose_object, i);
+            lv_label_set_long_mode(lv_obj_get_child(row, 0), LV_LABEL_LONG_DOT);
+            lv_obj_set_height(lv_obj_get_child(row, 0), 24); lv_obj_center(lv_obj_get_child(row, 0));
+            button(list, LV_SYMBOL_TRASH, 382, i * 52, 46, 46, Action::request_remove, item.id);
+        }
+        button(box, "+ Register\nequipment", 460, 72, 172, 72, Action::registration, 0, true);
+    } else if (dialog_ == Dialog::remove_equipment) {
+        label(box, "Remove equipment?", 12, 12, 540, &lv_font_montserrat_22);
+        for (std::size_t i = 0; i < controller_.equipment_count(); ++i)
+            if (controller_.equipment()[i].id == remove_equipment_id_)
+                label(box, controller_.equipment()[i].name.c_str(), 12, 60, 380, &lv_font_montserrat_22, mint);
+        label(box, "Saved brews stay unchanged.", 12, 112, 380, &lv_font_montserrat_14, muted);
+        button(box, "Cancel", 416, 58, 216, 46, Action::cancel_remove);
+        button(box, "Remove", 416, 114, 216, 46, Action::confirm_remove, 0, true);
+    } else if (dialog_ == Dialog::calibration) {
+        label(box, "Calibrate scale", 12, 12, 540, &lv_font_montserrat_22);
+        calibration_weight_label_ = label(box, "?", 12, 54, 260, &lv_font_montserrat_28);
+        calibration_message_ = label(box, "", 12, 96, 260, &lv_font_montserrat_14, mint);
+        label(box, "Empty platform, capture zero; add mass.", 284, 52, 348);
+        button(box, "Capture empty zero", 284, 72, 348, 44, Action::capture_zero);
+        for (int i = 0; i < 3; ++i) button(box, i == 0 ? "20 g" : i == 1 ? "50 g" : "100 g",
+            284 + i * 118, 120, 112, 44, Action::calibrate, i == 0 ? 20 : i == 1 ? 50 : 100);
+    } else if (dialog_ == Dialog::demo) {
+        label(box, "Dummy scenarios", 12, 12, 540, &lv_font_montserrat_22);
+        const char* names[] = {"Cup + 18.2 g dose", "Unknown / no baseline", "Portafilter > beans > cup", "V60 / bloom + pours"};
+        for (int i = 0; i < 4; ++i) button(box, names[i], 12 + (i % 2) * 314, 56 + (i / 2) * 56,
+                                         306, 48, Action::choose_scenario, i);
+    } else draw_wide_registration(box);
+}
+void View::draw_wide_registration(lv_obj_t* box) {
+    button(box, "Back", 404, 4, 80, 44, Action::register_back);
+    if (registration_step_ == 2) {
+        const auto name = std::string(kind_name(registration_kind_)) + " " + equipment_icons[registration_icon_];
+        icon_name_ = label(box, name.c_str(), 12, 12, 380, &lv_font_montserrat_22, mint);
+        button(box, "Save", 492, 4, 88, 44, Action::register_save, 0, true);
+        label(box, registration_error_.empty() ? "Icon 3/3" : registration_error_.c_str(), 12, 49, 580,
+              &lv_font_montserrat_14, registration_error_.empty() ? muted : amber);
+        for (unsigned i = 0; i < std::size(equipment_icons); ++i) {
+            auto* item = button(box, equipment_icons[i], 12 + (i % 10) * 62, 68 + (i / 10) * 50,
+                                56, 44, Action::choose_icon, i);
+            auto* caption = lv_obj_get_child(item, 0);
+            lv_obj_set_style_text_font(caption, &equipment_icons_32, 0); lv_obj_center(caption);
+            lv_obj_set_style_border_color(item, color(i == registration_icon_ ? mint : border), 0);
+            lv_obj_set_style_border_width(item, i == registration_icon_ ? 2 : 1, 0);
+            icon_buttons_[i] = item;
+        }
+        return;
+    }
+    label(box, registration_step_ == 0 ? "Choose equipment type" : "Empty reference weight",
+          12, 12, 380, &lv_font_montserrat_22);
+    registration_next_ = button(box, "Continue", 492, 60, 140, 100, Action::register_next, 0, true);
+    if (registration_step_ == 0) {
+        kind_input_ = lv_dropdown_create(box);
+        lv_dropdown_set_options(kind_input_, "Container\nPortafilter\nPour-over set");
+        lv_dropdown_set_selected(kind_input_, static_cast<unsigned>(registration_kind_));
+        lv_obj_set_pos(kind_input_, 12, 68); lv_obj_set_size(kind_input_, 460, 48);
+        // The popup scrolls within the short display; do not inherit a 200 px list.
+        lv_obj_set_style_max_height(lv_dropdown_get_list(kind_input_), 106, 0);
+    } else if (controller_.live()) {
+        registration_weight_label_ = label(box, "?", 12, 54, 280, &lv_font_montserrat_48);
+        registration_status_ = label(box, "", 12, 112, 460, &lv_font_montserrat_14, muted);
+        label(box, "Place empty equipment on the platform.", 12, 144, 460);
+    } else {
+        label(box, "156.8 g", 12, 54, 280, &lv_font_montserrat_48);
+        button(box, registration_stable_ ? "Stable reading" : "Unstable - wait", 12, 116, 270, 44,
+               Action::stable, 0, registration_stable_);
+        if (!registration_stable_) lv_obj_add_state(registration_next_, LV_STATE_DISABLED);
+    }
+}
+
 void View::draw_ready(lv_obj_t* root) {
     weight_ = label(root, "0.0", 22, 108, 218, &weight_font_72);
     weight_unit_ = label(root, "g", 0, 0, 28, &lv_font_montserrat_22);
@@ -369,8 +543,8 @@ void View::refresh_values() {
         lv_point_t size{};
         lv_txt_get_size(&size, weight_text.c_str(), weight_font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
         const auto* unit_font = s.phase == Phase::ready ? &lv_font_montserrat_22 : &lv_font_montserrat_14;
-        const int x = (s.phase == Phase::ready ? 22 : 278) + size.x + 6;
-        const int y = (s.phase == Phase::ready ? 108 : 104) + weight_font->line_height - weight_font->base_line
+        const int x = lv_obj_get_x(weight_) + size.x + 6;
+        const int y = lv_obj_get_y(weight_) + weight_font->line_height - weight_font->base_line
                       - unit_font->line_height + unit_font->base_line;
         if (lv_obj_get_x(weight_unit_) != x || lv_obj_get_y(weight_unit_) != y)
             lv_obj_set_pos(weight_unit_, x, y);
@@ -433,7 +607,7 @@ void View::refresh_values() {
             stage = LV_SYMBOL_PLAY " Start brew";
             hint = "Water flow starts timer.";
         }
-        if (target_text_) set_text(target_text_, s.target_g ? ("Target " + number(s.target_g, " g")).c_str() : "");
+        if (target_text_) set_text(target_text_, s.target_g ? (std::string(wide() ? "Target\n" : "Target ") + number(s.target_g, " g")).c_str() : "");
         if (stage_text_) set_text(stage_text_, stage.c_str());
         if (sensor_status_) set_text(sensor_status_, hint.c_str());
         return;
@@ -448,6 +622,7 @@ void View::refresh_values() {
     // Demo volume estimate; real sensor flow is reported in grams per second.
     constexpr float demo_density_g_ml = 1.0F;
     const float flow_ml_s = s.flow_g_s / demo_density_g_ml;
+    if (wide()) lv_obj_set_style_text_font(flow_, s.uncertain ? &lv_font_montserrat_14 : &lv_font_montserrat_18, 0);
     set_text(flow_, s.phase == Phase::result ? ("Ratio " + (s.ratio() ? "1:" + number(s.ratio()) : "?")).c_str()
         : s.uncertain ? "Flow unavailable" : number(controller_.live() ? s.flow_g_s : flow_ml_s, controller_.live() ? " g/s" : " ml/s").c_str());
     std::string status;
@@ -479,8 +654,9 @@ void View::refresh_values() {
     set_text(chart_time_, axis);
     if (s.sample_count && !s.uncertain) {
         lv_obj_clear_flag(current_point_, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_set_pos(current_point_, 32 + static_cast<int>(218 * s.seconds / max_t) - 3,
-                       112 + 106 - static_cast<int>(106 * s.net_g / max_g) - 3);
+        lv_obj_set_pos(current_point_, lv_obj_get_x(chart_) + static_cast<int>((lv_obj_get_width(chart_) - 2) * s.seconds / max_t) - 3,
+                       lv_obj_get_y(chart_) + lv_obj_get_height(chart_) - 2 -
+                       static_cast<int>((lv_obj_get_height(chart_) - 2) * s.net_g / max_g) - 3);
     } else lv_obj_add_flag(current_point_, LV_OBJ_FLAG_HIDDEN);
     for (std::size_t i = 0; i < 120; ++i) {
         const auto index = s.sample_count > 120 ? i * (s.sample_count - 1) / 119 : i;

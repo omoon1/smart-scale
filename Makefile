@@ -22,7 +22,7 @@ $(PORT_ARGS):
 	@:
 endif
 help:
-	@printf '%s\n' 'make install         Install pinned ESP-IDF and tools into .tools/' 'make build           Build ESP32-S3 firmware' 'make probe           Discover serial ports (Linux/macOS)' 'make flash /dev/ttyACM0  Flash, then monitor (Ctrl+] exits)' 'make monitor /dev/ttyACM0  Open serial monitor only' 'make flash PORT=...  Alternative port syntax; flash and monitor' 'make menuconfig      Configure firmware' 'make idf ARGS="..."   Run local idf.py with arbitrary arguments' 'make test            Run native C++ state tests' 'make preview         Render actual LVGL screens into build-host/screens/' 'make simulator       Run the same UI in an SDL2 desktop window'
+	@printf '%s\n' 'make install         Install pinned ESP-IDF and tools into .tools/' 'make build           Build ESP32-S3 firmware' 'make probe           Discover serial ports (Linux/macOS)' 'make flash /dev/ttyACM0  Flash, then monitor (Ctrl+] exits)' 'make monitor /dev/ttyACM0  Open serial monitor only' 'make flash PORT=...  Alternative port syntax; flash and monitor' 'make menuconfig      Configure firmware' 'make idf ARGS="..."   Run local idf.py with arbitrary arguments' 'make test            Run native C++ state tests' 'make preview         Render actual LVGL screens into build-host/screens/' 'make simulator       Run the same UI in an SDL2 desktop window' 'make preview-wide    Test and render the 640x172 UI' 'make simulator-wide  Open the 640x172 UI in SDL2'
 install setup:
 	@./scripts/install-idf.sh
 build menuconfig size clean fullclean:
@@ -70,3 +70,10 @@ preview:
 	@./scripts/host.sh --coffee-screenshots
 simulator:
 	@./scripts/host.sh --interactive
+
+.PHONY: preview-wide simulator-wide
+preview-wide:
+	@./scripts/host.sh --wide-screenshots
+	@./scripts/host.sh --wide-live-screenshots
+simulator-wide:
+	@./scripts/host.sh --wide-interactive

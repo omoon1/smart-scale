@@ -89,3 +89,10 @@ See [architecture and scope](docs/architecture.md), [hardware setup](docs/hardwa
 
 See [Scale troubleshooting logs](docs/scale-diagnostics.md) for automatic anomaly
 traces, timestamp/sequence interpretation, and a stationary-load recording procedure.
+
+### 3.49-inch wide-panel UI
+
+Use `make preview-wide` to validate/render the **640×172 landscape** layout, or
+`make simulator-wide` to interact with it. See [wide-panel UX and hardware-port boundary](docs/wide-panel-ux.md)
+for actual screenshots and board integration requirements. The existing firmware
+still targets the ST7796/FT6336 board; this UI change does not add the AXS15231B BSP.
