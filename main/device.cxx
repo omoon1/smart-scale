@@ -3,7 +3,6 @@
 #include "board349.hxx"
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
-#include "driver/ledc.h"
 #include "esp_io_expander_tca9554.h"
 #include "esp_lcd_axs15231b.h"
 #include "esp_lvgl_port.h"
@@ -26,8 +25,15 @@ void Device::init() {
     if (initialized_) return;
     ESP_LOGI(tag, "Waveshare 3.49 V2/Rev1.1: AXS15231B QSPI, 640x172 landscape");
     // Keep the panel dark through reset and the first complete DMA refresh.
-    ESP_ERROR_CHECK(gpio_set_level(static_cast<gpio_num_t>(board::lcd_backlight), 0));
-    ESP_ERROR_CHECK(gpio_set_direction(static_cast<gpio_num_t>(board::lcd_backlight), GPIO_MODE_OUTPUT));
+    const auto backlight = static_cast<gpio_num_t>(board::lcd_backlight);
+    ESP_ERROR_CHECK(gpio_reset_pin(backlight));
+    ESP_ERROR_CHECK(gpio_set_level(backlight, 0));
+    // gpio_config routes the pad to the GPIO output, with input enabled for
+    // pad-level diagnostics. Never attach LEDC in this bring-up build.
+    gpio_config_t light{};
+    light.pin_bit_mask = 1ULL << board::lcd_backlight;
+    light.mode = GPIO_MODE_INPUT_OUTPUT;
+    ESP_ERROR_CHECK(gpio_config(&light));
     i2c_master_bus_config_t i2c{};
     i2c.i2c_port = I2C_NUM_0;
     i2c.sda_io_num = static_cast<gpio_num_t>(board::i2c_sda);
@@ -42,7 +48,7 @@ void Device::init() {
     ESP_ERROR_CHECK(probe);
     ESP_ERROR_CHECK(esp_io_expander_new_i2c_tca9554(bus_, ESP_IO_EXPANDER_I2C_TCA9554_ADDRESS_000, &expander_));
     // The expander API requires output mode before setting levels. GPIO42
-    // already holds PWM low, so BL_EN cannot illuminate uninitialized RAM.
+    // already holds the GPIO low, so BL_EN cannot illuminate uninitialized RAM.
     ESP_ERROR_CHECK(esp_io_expander_set_dir(expander_, board::backlight_enable | board::lcd_reset | board::system_enable,
                                           IO_EXPANDER_OUTPUT));
     ESP_ERROR_CHECK(esp_io_expander_set_level(expander_, board::backlight_enable, 0));
@@ -101,21 +107,6 @@ void Device::init() {
     ESP_ERROR_CHECK(esp_io_expander_set_level(expander_, board::lcd_reset, 1));
     vTaskDelay(pdMS_TO_TICKS(30));
     ESP_ERROR_CHECK(esp_lcd_panel_init(panel_));
-
-    ledc_timer_config_t timer{};
-    timer.speed_mode = LEDC_LOW_SPEED_MODE;
-    timer.duty_resolution = LEDC_TIMER_8_BIT;
-    timer.timer_num = LEDC_TIMER_1;
-    timer.freq_hz = 50000;
-    timer.clk_cfg = LEDC_USE_RC_FAST_CLK;
-    ESP_ERROR_CHECK(ledc_timer_config(&timer));
-    ledc_channel_config_t light{};
-    light.gpio_num = board::lcd_backlight;
-    light.speed_mode = LEDC_LOW_SPEED_MODE;
-    light.channel = LEDC_CHANNEL_0;
-    light.timer_sel = LEDC_TIMER_1;
-    light.duty = 0;
-    ESP_ERROR_CHECK(ledc_channel_config(&light));
 
     lvgl_port_cfg_t port = ESP_LVGL_PORT_INIT_CONFIG();
     ESP_ERROR_CHECK(lvgl_port_init(&port));
@@ -198,15 +189,48 @@ esp_err_t Device::show() {
     lv_obj_invalidate(lv_disp_get_scr_act(display_));
     lv_refr_now(display_);
     ESP_LOGI(tag, "First frame refresh complete; forcing backlight ON");
-    // Bring-up diagnostic: bypass PWM and hold GPIO42 HIGH continuously.
-    // Keep the dark startup sequence above; only enable after DMA completes.
-    auto error = ledc_stop(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 1);
+    // Enable the boost circuit first, then drive the pad without LEDC routing.
+    auto error = esp_io_expander_set_level(expander_, board::backlight_enable, 1);
     if (error != ESP_OK) {
-        ESP_LOGE(tag, "Backlight GPIO42 forced HIGH failed: %s", esp_err_to_name(error));
+        ESP_LOGE(tag, "Backlight EXIO1 enable failed: %s", esp_err_to_name(error));
         return error;
     }
-    error = esp_io_expander_set_level(expander_, board::backlight_enable, 1);
-    ESP_LOGI(tag, "Backlight forced ON (GPIO42 HIGH, EXIO1 enabled): %s", esp_err_to_name(error));
+    error = gpio_set_level(static_cast<gpio_num_t>(board::lcd_backlight), 1);
+    ESP_LOGI(tag, "Backlight direct GPIO42 HIGH: %s; pad=%d (expected 1)",
+             esp_err_to_name(error), gpio_get_level(static_cast<gpio_num_t>(board::lcd_backlight)));
+    if (error != ESP_OK) return error;
+
+    // The expander driver's direction/output getters return cached values.
+    // Use a temporary read-only handle to inspect the actual TCA9554 registers.
+    i2c_device_config_t config{};
+    config.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+    config.device_address = ESP_IO_EXPANDER_I2C_TCA9554_ADDRESS_000;
+    config.scl_speed_hz = 400000;
+    i2c_master_dev_handle_t diagnostic{};
+    error = i2c_master_bus_add_device(bus_, &config, &diagnostic);
+    if (error != ESP_OK) {
+        ESP_LOGE(tag, "Backlight register diagnostic setup failed: %s", esp_err_to_name(error));
+        return error;
+    }
+    const uint8_t registers[] = {0x03, 0x01, 0x00}; // Direction, output latch, input.
+    uint8_t values[3]{};
+    for (unsigned i = 0; i < 3; ++i) {
+        error = i2c_master_transmit_receive(diagnostic, &registers[i], 1, &values[i], 1, 100);
+        if (error != ESP_OK) {
+            ESP_LOGE(tag, "TCA9554 register 0x%02x read failed: %s", registers[i], esp_err_to_name(error));
+            break;
+        }
+    }
+    const auto cleanup = i2c_master_bus_rm_device(diagnostic);
+    if (error == ESP_OK) {
+        ESP_LOGI(tag, "TCA9554 hardware readback: config=0x%02x output=0x%02x input=0x%02x; EXIO1 dir=%s latch=%d pad=%d",
+                 values[0], values[1], values[2], (values[0] & board::backlight_enable) ? "INPUT" : "OUTPUT",
+                 !!(values[1] & board::backlight_enable), !!(values[2] & board::backlight_enable));
+        if ((values[0] & board::backlight_enable) || !(values[1] & board::backlight_enable) ||
+            !(values[2] & board::backlight_enable))
+            ESP_LOGW(tag, "Backlight EXIO1 readback mismatch: expected OUTPUT, latch=1, pad=1");
+        error = cleanup;
+    }
     return error;
 }
 bool Device::reset_pressed() {
