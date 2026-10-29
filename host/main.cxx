@@ -65,6 +65,12 @@ lv_obj_t* find_type(lv_obj_t* parent, const lv_obj_class_t* type) {
         if (auto* found = find_type(lv_obj_get_child(parent, static_cast<int>(i)), type)) return found;
     return nullptr;
 }
+bool has_label(lv_obj_t* parent, const std::string& text) {
+    if (lv_obj_check_type(parent, &lv_label_class) && text == lv_label_get_text(parent)) return true;
+    for (unsigned i = 0; i < lv_obj_get_child_cnt(parent); ++i)
+        if (has_label(lv_obj_get_child(parent, static_cast<int>(i)), text)) return true;
+    return false;
+}
 
 }
 int main(int argc, char** argv) {
@@ -95,6 +101,7 @@ int main(int argc, char** argv) {
         const int masses[] = {20, 50, 100};
         for (int i = 0; i < 3; ++i) {
             feed(-78000);
+            if (i == 0) require(has_label(lv_scr_act(), "-78000 counts"), "uncalibrated dialog shows filtered counts");
             click(view, 240, 154); // Capture empty zero in centered dialog.
             feed(-78000 + masses[i] * 866);
             click(view, 146 + i * 94, 206);
@@ -107,6 +114,37 @@ int main(int argc, char** argv) {
         click(view, 172, 286); // Tare.
         require(std::abs(controller.scale().net()) < 0.01F, "touch tare");
         screenshot(view, "19-hx711-live");
+        // A tare changes the idle net reading, never the gross calibration or
+        // registration readout. Both dialogs use the same timed presentation.
+        click(view, 268, 286);
+        require(has_label(lv_scr_act(), "100.0 g"), "calibration displays gross despite tare");
+        screenshot(view, "22-hx711-calibration-gross");
+        controller.sensor_sample(std::nullopt, now += 1100); controller.tick(1.1F); pump(view);
+        require(has_label(lv_scr_act(), "? g"), "calibration hides stale values after timeout");
+        feed(8600);
+        require(has_label(lv_scr_act(), "100.0 g"), "calibration recovers with a fresh display reference");
+        click(view, 366, 32);
+        view.open(smart_scale::ui::Dialog::registration); pump(view); pump(view);
+        click(view, 370, 284);
+        require(has_label(lv_scr_act(), "100.0 g"), "registration uses stabilized gross");
+        // Synthetic +/-0.2 g sensor noise, with real timestamps, while this
+        // dialog is open. Quantized sensor values never feed saved equipment.
+        for (unsigned i = 0; i < 150; ++i) {
+            controller.sensor_sample(8600 + static_cast<int>(173 * std::sin(i * 0.1 * 6.283185307 / 1.4)), now += 100);
+            controller.tick(0.1F); pump(view);
+        }
+        require(controller.scale().quiet(), "registration keeps common quiet filtering active");
+        feed(8707);
+        const float reference = controller.scale().gross();
+        require(std::abs(reference - 100.0F) > 0.1F, "registration source retains sub-display precision");
+        screenshot(view, "23-hx711-registration-stabilized");
+        click(view, 370, 284); // Capture the actual filtered gross, not the label.
+        click(view, 370, 284); // Save default icon.
+        require(controller.equipment_count() == 1 &&
+                std::abs(*controller.equipment()[0].empty_g - reference) < 0.001F,
+                "registered mass is not rounded or display-held");
+        click(view, 366, 32); // Close equipment list.
+        feed(8600);
         click(view, 60, 286); // Start brew.
         require(controller.session().phase == smart_scale::Phase::brewing, "touch starts real brew");
         feed(25920);

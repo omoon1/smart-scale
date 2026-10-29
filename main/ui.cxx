@@ -140,7 +140,7 @@ void View::draw() {
     weight_ = weight_unit_ = time_ = flow_ = status_ = object_text_ = dose_text_ = target_text_ = chart_ = nullptr;
     dose_value_ = icon_name_ = kind_input_ = chart_max_ = chart_time_ = current_point_ = object_weight_ = nullptr;
     start_button_ = tare_button_ = nullptr;
-    sensor_status_ = calibration_message_ = registration_weight_label_ = registration_status_ = registration_next_ = nullptr;
+    sensor_status_ = calibration_message_ = calibration_weight_label_ = registration_weight_label_ = registration_status_ = registration_next_ = nullptr;
     icon_buttons_.fill(nullptr);
     series_ = target_series_ = nullptr;
     rendered_phase_ = controller_.session().phase;
@@ -249,6 +249,19 @@ void View::draw_brew(lv_obj_t* root, bool result) {
 }
 void View::refresh_values() {
     const auto& s = controller_.session();
+    const auto& scale = controller_.scale();
+    // Independent caches for net grams, gross grams and uncalibrated counts.
+    // Update once per sensor timestamp; redraws never restart confirmation.
+    if (display_epoch_ != scale.display_epoch() || display_phase_ != s.phase) {
+        weight_display_.reset(); gross_display_.reset(); counts_display_.reset();
+        display_epoch_ = scale.display_epoch();
+        display_phase_ = s.phase;
+    }
+    const auto gross = gross_display_.update(scale.ready() ? std::optional<float>{scale.gross()} : std::nullopt,
+                                             scale.sample_ms(), scale.quiet());
+    const auto counts = counts_display_.update(scale.filtered_counts() ?
+        std::optional<float>{static_cast<float>(*scale.filtered_counts())} : std::nullopt,
+        scale.sample_ms(), scale.quiet(), false);
     if (start_button_) {
         const bool ready = controller_.scale().ready() && controller_.scale().stable();
         if (ready && s.loaded) lv_obj_clear_state(start_button_, LV_STATE_DISABLED);
@@ -259,10 +272,18 @@ void View::refresh_values() {
     if (sensor_status_ && controller_.live()) set_text(sensor_status_, controller_.scale().status());
     if (calibration_message_) set_text(calibration_message_,
         (calibration_message_text_ + "\n" + controller_.scale().status()).c_str());
+    if (calibration_weight_label_) {
+        if (scale.calibration()) set_text(calibration_weight_label_, gross ? number(gross, " g").c_str() : "? g");
+        else {
+            char text[48];
+            if (counts) std::snprintf(text, sizeof(text), "%.0f counts", static_cast<double>(*counts));
+            else std::snprintf(text, sizeof(text), "? counts");
+            set_text(calibration_weight_label_, text);
+        }
+    }
     if (registration_weight_label_) {
         const bool stable = controller_.scale().ready() && controller_.scale().stable();
-        set_text(registration_weight_label_, number(controller_.scale().ready() ?
-            std::optional<float>{controller_.scale().gross()} : std::nullopt, " g").c_str());
+        set_text(registration_weight_label_, number(gross, " g").c_str());
         set_text(registration_status_, controller_.scale().status());
         if (stable) lv_obj_clear_state(registration_next_, LV_STATE_DISABLED);
         else lv_obj_add_state(registration_next_, LV_STATE_DISABLED);
@@ -271,12 +292,8 @@ void View::refresh_values() {
         (!controller_.live() || s.phase == Phase::result || controller_.scale().ready());
     std::optional<float> displayed = available ? std::optional<float>{s.net_g} : std::nullopt;
     if (controller_.live()) {
-        if (display_epoch_ != controller_.scale().display_epoch() || display_phase_ != s.phase) {
-            weight_display_.reset();
-            display_epoch_ = controller_.scale().display_epoch();
-            display_phase_ = s.phase;
-        }
-        displayed = weight_display_.update(displayed);
+        if (s.phase != Phase::result)
+            displayed = weight_display_.update(displayed, scale.sample_ms(), scale.quiet());
     }
     const auto weight_text = number(displayed);
     // Log actual visible transitions, including unavailable/recovery. Retain the
@@ -407,7 +424,8 @@ void View::draw_dialog(lv_obj_t* root) {
     button(box, LV_SYMBOL_CLOSE, width - 52, 4, 44, 44, Action::close);
     if (dialog_ == Dialog::calibration) {
         label(box, "Calibrate scale", 16, 18, 230, &lv_font_montserrat_22);
-        label(box, "1. Empty platform, wait, capture zero.\n2. Place known mass and wait.\n3. Tap its exact mass below.", 16, 62, 272);
+        calibration_weight_label_ = label(box, "?", 16, 56, 272, &lv_font_montserrat_28);
+        label(box, "1. Empty platform, capture zero.\n2. Add mass, wait, tap its value.", 16, 94, 272);
         button(box, "Capture empty zero", 16, 126, 272, 42, Action::capture_zero);
         button(box, "20 g", 16, 178, 84, 42, Action::calibrate, 20);
         button(box, "50 g", 110, 178, 84, 42, Action::calibrate, 50);

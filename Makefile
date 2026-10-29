@@ -50,6 +50,8 @@ test:
 	@./build-host/scale_tests
 	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main main/session.cxx main/scale.cxx tests/filter_test.cxx -o build-host/filter_tests
 	@./build-host/filter_tests
+	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main main/scale.cxx tests/adaptive_test.cxx -o build-host/adaptive_tests
+	@./build-host/adaptive_tests
 preview:
 	@./scripts/host.sh --screenshots
 	@./scripts/host.sh --live-screenshots

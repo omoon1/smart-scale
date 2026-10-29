@@ -32,6 +32,8 @@ private:
     void refresh_values();
     Controller& controller_;
     WeightDisplay weight_display_;
+    WeightDisplay gross_display_;
+    WeightDisplay counts_display_{1.0F, 150.0F, 0.0F};
     std::string last_logged_weight_;
     std::uint64_t last_weight_log_ms_{};
     std::uint32_t display_epoch_{};
@@ -54,7 +56,7 @@ private:
     std::string registration_error_;
     float registration_weight_{156.8F};
     lv_obj_t *start_button_{}, *tare_button_{};
-    lv_obj_t *sensor_status_{}, *calibration_message_{}, *registration_weight_label_{}, *registration_status_{}, *registration_next_{};
+    lv_obj_t *sensor_status_{}, *calibration_message_{}, *calibration_weight_label_{}, *registration_weight_label_{}, *registration_status_{}, *registration_next_{};
     std::string calibration_message_text_;
 };
 }

@@ -5,6 +5,8 @@ namespace smart_scale {
 void Scale::clear_window() {
     count_ = cursor_ = median_count_ = median_cursor_ = 0;
     filtered_.reset();
+    adaptive_.reset();
+    flow_filtered_.reset();
     stable_since_.reset();
     flow_g_s_ = 0;
     ++display_epoch_;
@@ -46,12 +48,14 @@ void Scale::ingest(std::int32_t raw, std::uint64_t now) {
     cursor_ = (cursor_ + 1) % samples_.size();
     count_ = std::min<unsigned>(count_ + 1, samples_.size());
     const double dt = static_cast<double>(now - previous_ms) / 1000;
-    if (!filtered_) filtered_ = value;
+    filtered_ = adaptive_.update(value, dt, now, calibration_ ? std::abs(calibration_->counts_per_gram) : 0,
+                                stability_stats().std_counts);
+    if (!flow_filtered_) flow_filtered_ = value;
     else {
-        const double previous = *filtered_;
+        const double previous = *flow_filtered_;
         const double alpha = -std::expm1(-dt / config::filter_tau_s);
-        *filtered_ += alpha * (value - *filtered_);
-        flow_g_s_ = calibration_ ? static_cast<float>((*filtered_ - previous) / calibration_->counts_per_gram / dt) : 0;
+        *flow_filtered_ += alpha * (value - *flow_filtered_);
+        flow_g_s_ = calibration_ ? static_cast<float>((*flow_filtered_ - previous) / calibration_->counts_per_gram / dt) : 0;
     }
     if (calibration_ && std::abs(gross()) > 10000) {
         overload_ = true;
@@ -134,6 +138,9 @@ StabilityStats Scale::stability_stats() const {
 bool Scale::restore(Calibration c) {
     if (!valid_calibration(c)) return false;
     calibration_ = c;
+    // Restart motion thresholds in the new calibration units, retaining the
+    // count history used by the strict calibration/stability checks.
+    adaptive_.reset();
     tare_g_ = 0;
     flow_g_s_ = 0;
     ++display_epoch_;

@@ -13,6 +13,12 @@ inline constexpr int dose_min_tenths = 1;
 inline constexpr int dose_max_tenths = 600;
 inline constexpr float object_tolerance_g = 40.0F; // Identity only, not a dose or tare tolerance.
 inline constexpr float filter_tau_s = 0.3F;
+// Flow keeps a fixed filter; adaptive weight mode changes must not create flow.
+inline constexpr float filter_fast_tau_s = 0.15F, filter_quiet_tau_s = 0.8F;
+inline constexpr float filter_transition_tau_s = 0.3F, motion_detector_tau_s = 0.12F;
+inline constexpr float motion_threshold_g = 0.12F;
+inline constexpr std::uint64_t motion_confirm_ms = 200, filter_quiet_after_ms = 1000;
+inline constexpr std::uint64_t display_confirm_ms = 300;
 inline constexpr std::uint64_t sensor_timeout_ms = 1000;
 inline constexpr std::uint64_t stability_window_ms = 1200;
 inline constexpr std::uint64_t stability_min_ms = 1000;
