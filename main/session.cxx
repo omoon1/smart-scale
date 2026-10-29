@@ -38,11 +38,20 @@ const char* Controller::recognition_status() const {
     if (!scale_.stable()) return "waiting_stable";
     return session_.loaded ? "pending" : "empty";
 }
+void Controller::mark_brew_error(BrewError error) {
+    if (session_.phase != Phase::brewing) return;
+    if (!session_.uncertain) {
+        session_.uncertain = true;
+        session_.brew_error = error;
+        brew_error_elapsed_s_ = 0;
+    }
+}
 void Controller::sensor_fault() {
     if (!live_) return;
     scale_.invalidate();
     empty_since_.reset();
-    if (session_.phase == Phase::brewing) session_.uncertain = true;
+    below_object_since_.reset();
+    mark_brew_error(BrewError::sensor_fault);
 }
 void Controller::sensor_sample(std::optional<std::int32_t> raw, std::uint64_t now) {
     if (!live_) return;
@@ -51,17 +60,28 @@ void Controller::sensor_sample(std::optional<std::int32_t> raw, std::uint64_t no
     if (session_.phase == Phase::result) return; // Keep archived result immutable.
     if (!scale_.ready()) {
         empty_since_.reset();
-        if (session_.phase == Phase::brewing) session_.uncertain = true;
+        below_object_since_.reset();
+        mark_brew_error(BrewError::sensor_fault);
         return;
     }
     // Removal needs only a persistent near-zero median, not a fresh 3.2 s drift
     // window. Otherwise a normal lift/replacement never rearms recognition.
     const auto recent = scale_.recent_gross();
+    if (session_.phase == Phase::brewing && session_.empty_reference_g && recent) {
+        // Compare physical gross weight with the locked registered empty mass,
+        // never with the previous beverage/net reading. Median + hold reject
+        // isolated spikes; a small margin covers normal empty-object jitter.
+        if (*recent < *session_.empty_reference_g - config::brew_removal_margin_g) {
+            if (!below_object_since_) below_object_since_ = scale_.sample_ms();
+            if (scale_.sample_ms() - *below_object_since_ >= config::brew_removal_hold_ms)
+                mark_brew_error(BrewError::object_removed);
+        } else below_object_since_.reset();
+    }
     if (recent && std::abs(*recent) <= 2.0F) {
         if (!empty_since_) empty_since_ = scale_.sample_ms();
         if (scale_.sample_ms() - *empty_since_ >= 300) {
             session_.loaded = false;
-            if (session_.phase == Phase::brewing) session_.uncertain = true;
+            mark_brew_error(BrewError::object_removed);
             if (session_.phase == Phase::remove_load) session_.phase = Phase::ready;
             if (session_.phase == Phase::ready) {
                 session_.active_object.reset();
@@ -94,9 +114,6 @@ void Controller::sensor_sample(std::optional<std::int32_t> raw, std::uint64_t no
             target();
         }
     }
-    // A significant negative step during brewing indicates removal, not flow.
-    if (session_.phase == Phase::brewing && scale_.net() < session_.net_g - 5.0F)
-        session_.uncertain = true;
 }
 bool Controller::tare() {
     if (!live_ || session_.phase != Phase::ready || !scale_.tare()) return false;
@@ -110,6 +127,13 @@ bool Controller::start_brew() {
     session_.phase = Phase::brewing;
     session_.baseline_known = true;
     session_.uncertain = false;
+    session_.brew_error = BrewError::none;
+    session_.empty_reference_g.reset();
+    const auto& object = session_.active_object;
+    if (object && object->empty_g && std::isfinite(*object->empty_g) && *object->empty_g > 0)
+        session_.empty_reference_g = object->empty_g;
+    below_object_since_.reset();
+    brew_error_elapsed_s_ = 0;
     session_.net_g = session_.seconds = session_.flow_g_s = 0;
     session_.samples[0] = {0, 0};
     session_.sample_count = 1;
@@ -156,7 +180,7 @@ void Controller::place(std::size_t index) {
 void Controller::remove_object() {
     session_.loaded = false;
     if (session_.phase == Phase::remove_load) session_.phase = Phase::ready;
-    if (session_.phase == Phase::brewing) session_.uncertain = true;
+    mark_brew_error(BrewError::object_removed);
     // Session identity, dose and last valid weight survive removal.
 }
 bool Controller::set_dose(float grams, DoseSource source) {
@@ -267,6 +291,8 @@ void Controller::reset() {
     demo_running_ = false;
     demo_time_ = 0;
     demo_stage_ = 0;
+    below_object_since_.reset();
+    brew_error_elapsed_s_ = 0;
     if (live_) {
         scale_.clear_tare();
         empty_since_.reset();
@@ -304,7 +330,8 @@ void Controller::tick(float dt) {
         const bool valid = scale_.ready();
         if (session_.phase == Phase::brewing) {
             session_.seconds += dt;
-            if (!valid || !session_.loaded) session_.uncertain = true;
+            if (!valid) mark_brew_error(BrewError::sensor_fault);
+            else if (!session_.loaded) mark_brew_error(BrewError::object_removed);
             if (!session_.uncertain) {
                 const float net = scale_.net();
                 session_.flow_g_s = scale_.flow();
@@ -319,6 +346,17 @@ void Controller::tick(float dt) {
             session_.net_g = scale_.net();
             if (dose_tared_ && scale_.stable() && session_.active_object && session_.active_object->kind == Kind::portafilter)
                 weigh_beans(session_.net_g);
+        }
+        if (session_.uncertain && (session_.phase == Phase::brewing || session_.phase == Phase::result)) {
+            brew_error_elapsed_s_ += static_cast<double>(dt);
+            if (brew_error_elapsed_s_ >= config::brew_error_return_s) {
+                reset(); // Archive an active failed brew as aborted exactly once.
+                // Automatic error recovery goes directly to the main screen,
+                // including when a load remains or the sensor is unavailable.
+                session_.phase = Phase::ready;
+                session_.loaded = scale_.ready() && scale_.recent_gross().value_or(0) > 2.0F;
+                if (scale_.ready()) session_.net_g = scale_.net();
+            }
         }
         return;
     }

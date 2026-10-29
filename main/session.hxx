@@ -12,6 +12,7 @@ enum class Phase { ready, brewing, result, remove_load };
 enum class Kind { cup, portafilter, pour_over_set };
 enum class DoseSource { unknown, measured, manual };
 enum class Scenario { known, unknown, sequential, pour_over };
+enum class BrewError { none, object_removed, sensor_fault };
 struct Equipment {
     std::uint32_t id{};
     Kind kind{Kind::cup};
@@ -29,6 +30,8 @@ struct Session {
     DoseSource dose_source{DoseSource::unknown};
     float net_g{}, seconds{}, flow_g_s{};
     bool loaded{}, baseline_known{}, uncertain{}, paused{};
+    std::optional<float> empty_reference_g;
+    BrewError brew_error{BrewError::none};
     std::array<Point, config::max_samples> samples{};
     std::size_t sample_count{};
     [[nodiscard]] std::optional<float> ratio() const;
@@ -50,6 +53,10 @@ public:
     void sensor_sample(std::optional<std::int32_t> raw, std::uint64_t now_ms);
     bool tare();
     bool start_brew();
+    double error_remaining_s() const {
+        const double remaining = config::brew_error_return_s - brew_error_elapsed_s_;
+        return remaining > 0 ? remaining : 0;
+    }
     [[nodiscard]] const Session& session() const { return session_; }
     [[nodiscard]] const auto& equipment() const { return equipment_; }
     [[nodiscard]] std::size_t equipment_count() const { return equipment_count_; }
@@ -76,8 +83,11 @@ private:
     void target();
     void place_demo_kind(Kind kind);
     void archive(bool aborted);
+    void mark_brew_error(BrewError error);
     bool live_{};
     std::optional<std::uint64_t> empty_since_;
+    std::optional<std::uint64_t> below_object_since_;
+    double brew_error_elapsed_s_{};
     bool recognition_checked_{}, object_ambiguous_{}, dose_tared_{};
     Scale scale_;
     Session session_{};

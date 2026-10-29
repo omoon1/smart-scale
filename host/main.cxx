@@ -157,9 +157,25 @@ int main(int argc, char** argv) {
         require(controller.session().phase == smart_scale::Phase::brewing, "touch starts real brew");
         feed(25920);
         screenshot(view, "20-hx711-brewing");
+        feed(17260); // 110 g gross: liquid decreased, registered cup remains.
+        require(!controller.session().uncertain, "decreasing net weight does not imply removal");
+        for (unsigned i = 0; i < 6; ++i) {
+            controller.sensor_sample(-60, now += 100); // 90 g < registered 100 g cup.
+            controller.tick(.1F); pump(view);
+        }
+        require(controller.session().brew_error == smart_scale::BrewError::object_removed,
+                "gross below registered empty mass detects removal");
+        require(has_label(lv_scr_act(), "Object removed - home in 03:00"), "removal error includes return countdown");
+        screenshot(view, "25-hx711-object-removed");
         controller.sensor_sample(std::nullopt, now + 1100); controller.tick(1.1F);
         screenshot(view, "21-hx711-timeout");
         require(controller.session().uncertain, "timeout invalidates live brew");
+        controller.tick(static_cast<float>(controller.error_remaining_s() - 1)); pump(view);
+        require(controller.session().phase == smart_scale::Phase::brewing, "error remains visible before three minutes");
+        controller.tick(1.1F); pump(view); pump(view);
+        require(controller.session().phase == smart_scale::Phase::ready, "error returns directly to main after three minutes");
+        require(has_label(lv_scr_act(), "Espresso"), "main screen is rendered after error timeout");
+        screenshot(view, "24-hx711-error-home");
         std::cout << "Live HX711 UI checks passed\n";
         return 0;
     }

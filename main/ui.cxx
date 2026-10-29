@@ -374,7 +374,14 @@ void View::refresh_values() {
     set_text(flow_, s.phase == Phase::result ? ("Ratio " + (s.ratio() ? "1:" + number(s.ratio()) : "?")).c_str()
         : s.uncertain ? "Flow unavailable" : number(controller_.live() ? s.flow_g_s : flow_ml_s, controller_.live() ? " g/s" : " ml/s").c_str());
     std::string status;
-    if (s.uncertain) status = "Baseline uncertain - weight unavailable";
+    if (s.uncertain && controller_.live() && s.brew_error != BrewError::none) {
+        char alert[96];
+        const auto remaining = static_cast<unsigned>(std::ceil(controller_.error_remaining_s()));
+        std::snprintf(alert, sizeof(alert), "%s - home in %02u:%02u",
+                      s.brew_error == BrewError::object_removed ? "Object removed" : "Sensor unavailable",
+                      remaining / 60, remaining % 60);
+        status = alert;
+    } else if (s.uncertain) status = "Baseline uncertain - weight unavailable";
     else if (s.target_g && s.net_g >= *s.target_g) status = "Target reached  +" + number(s.net_g - *s.target_g, " g");
     else if (s.flow_g_s == 0 && s.phase == Phase::brewing) status = "Flow paused - timer continues";
     else status = s.mode == Mode::pour_over && s.vessel && s.vessel->kind == Kind::pour_over_set ? "Set mass increase / water added" : "Beverage collected in cup";
