@@ -52,6 +52,9 @@ lv_obj_t* label(lv_obj_t* p, const char* text, int x, int y, int width,
     lv_obj_clear_flag(obj, LV_OBJ_FLAG_CLICKABLE);
     return obj;
 }
+void pulse_coffee(void* obj, int32_t opacity) {
+    lv_obj_set_style_border_opa(static_cast<lv_obj_t*>(obj), static_cast<lv_opa_t>(opacity), 0);
+}
 void style(lv_obj_t* obj, unsigned rgb = panel) {
     lv_obj_set_style_bg_color(obj, color(rgb), 0);
     lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
@@ -143,6 +146,9 @@ void View::draw() {
     weight_ = weight_unit_ = time_ = flow_ = status_ = object_text_ = dose_text_ = target_text_ = chart_ = nullptr;
     dose_value_ = icon_name_ = kind_input_ = chart_max_ = chart_time_ = current_point_ = object_weight_ = nullptr;
     start_button_ = tare_button_ = nullptr;
+    coffee_card_ = coffee_hint_ = coffee_check_ = object_card_ = object_check_ = stage_text_ = nullptr;
+    coffee_visual_state_ = -1;
+    object_visual_selected_ = false;
     sensor_status_ = calibration_message_ = calibration_weight_label_ = registration_weight_label_ = registration_status_ = registration_next_ = nullptr;
     icon_buttons_.fill(nullptr);
     series_ = target_series_ = nullptr;
@@ -153,6 +159,7 @@ void View::draw() {
                16, 8, 156, 44, Action::toggle_mode);
     } else label(screen_, phase == Phase::brewing ? "Running" : phase == Phase::result ? "Brew complete" : "Reset",
                  20, 19, 230, &lv_font_montserrat_22);
+    if (phase == Phase::brewing) label(screen_, equipment_icons[9], 280, 19, 32, &lv_font_montserrat_22, mint);
     label(screen_, controller_.live() ? "HX711  LIVE" : "DEMO   82% " LV_SYMBOL_BATTERY_3, 328, 24, 145, &lv_font_montserrat_14, mint);
     if (phase == Phase::brewing || phase == Phase::result) draw_brew(screen_, phase == Phase::result);
     else if (phase == Phase::remove_load) {
@@ -170,14 +177,21 @@ void View::draw() {
 void View::draw_ready(lv_obj_t* root) {
     weight_ = label(root, "0.0", 22, 108, 218, &weight_font_72);
     weight_unit_ = label(root, "g", 0, 0, 28, &lv_font_montserrat_22);
-    sensor_status_ = label(root, "Place to weigh.", 24, 210, 248, &lv_font_montserrat_14, muted);
+    stage_text_ = label(root, "", 24, 70, 248, &lv_font_montserrat_22, mint);
+    sensor_status_ = label(root, "", 24, 208, 240, &lv_font_montserrat_14, muted);
+    target_text_ = label(root, "", 24, 240, 240, &lv_font_montserrat_14, muted);
     auto* object = button(root, "", 280, 66, 184, 84, Action::objects);
-    object_text_ = label(object, "", 12, 10, 160, &lv_font_montserrat_18);
+    object_card_ = object;
+    object_check_ = label(object, "", 154, 10, 22, &lv_font_montserrat_14, mint);
+    object_text_ = label(object, "", 12, 10, 138, &lv_font_montserrat_18);
     lv_label_set_long_mode(object_text_, LV_LABEL_LONG_DOT);
     lv_obj_set_height(object_text_, 23);
     object_weight_ = label(object, "", 12, 40, 160, &lv_font_montserrat_28);
     auto* dose = button(root, "", 280, 158, 184, 84, Action::dose);
-    label(dose, "Coffee", 38, 10, 134, &lv_font_montserrat_18);
+    coffee_card_ = dose;
+    coffee_check_ = label(dose, "", 154, 10, 22, &lv_font_montserrat_14, mint);
+    coffee_hint_ = label(dose, "", 12, 61, 160, &lv_font_montserrat_14, muted);
+    label(dose, "Coffee", 38, 10, 110, &lv_font_montserrat_18);
     // Native LVGL bean silhouette and curved seam; no extra font or image asset.
     auto* bean = lv_obj_create(dose);
     style(bean, ink);
@@ -270,12 +284,11 @@ void View::refresh_values() {
         scale.sample_ms(), scale.quiet(), false, noise_counts);
     if (start_button_) {
         const bool ready = controller_.scale().ready() && controller_.scale().stable();
-        if (ready && s.loaded) lv_obj_clear_state(start_button_, LV_STATE_DISABLED);
+        if (ready && s.brew_prepared) lv_obj_clear_state(start_button_, LV_STATE_DISABLED);
         else lv_obj_add_state(start_button_, LV_STATE_DISABLED);
         if (ready) lv_obj_clear_state(tare_button_, LV_STATE_DISABLED);
         else lv_obj_add_state(tare_button_, LV_STATE_DISABLED);
     }
-    if (sensor_status_ && controller_.live()) set_text(sensor_status_, controller_.scale().status());
     if (calibration_message_) set_text(calibration_message_,
         (calibration_message_text_ + "\n" + controller_.scale().status()).c_str());
     if (calibration_weight_label_) {
@@ -363,10 +376,64 @@ void View::refresh_values() {
     if (s.phase == Phase::ready) {
         const auto& item = s.active_object;
         if (object_text_) {
-            set_text(object_text_, item ? item->name.c_str() : controller_.live() && !controller_.equipment_count() ? "Register object" : controller_.object_ambiguous() ? "Choose object" : "Object ?");
+            set_text(object_text_, item ? item->name.c_str() : controller_.live() && !controller_.equipment_count() ? "Register object" : controller_.object_ambiguous() ? "Choose object" : "Container");
             set_text(object_weight_, number(item ? item->empty_g : std::nullopt, " g").c_str());
         }
-        if (dose_text_) set_text(dose_text_, number(s.dose_g, " g").c_str());
+        const auto candidate = controller_.coffee_candidate();
+        if (dose_text_) set_text(dose_text_, number(s.dose_g ? s.dose_g : candidate, " g").c_str());
+        const int visual = s.dose_g ? 2 : candidate && dialog_ == Dialog::none ? 1 : 0;
+        if (coffee_card_ && visual != coffee_visual_state_) {
+            coffee_visual_state_ = visual;
+            lv_anim_del(coffee_card_, pulse_coffee);
+            lv_obj_set_style_border_opa(coffee_card_, LV_OPA_COVER, 0);
+            lv_obj_set_style_border_color(coffee_card_, color(visual == 1 ? amber : visual == 2 ? mint : border), 0);
+            lv_obj_set_style_border_width(coffee_card_, visual ? 2 : 1, 0);
+            lv_obj_set_style_text_color(coffee_hint_, color(visual == 1 ? amber : muted), 0);
+            if (visual == 1) {
+                lv_anim_t pulse;
+                lv_anim_init(&pulse);
+                lv_anim_set_var(&pulse, coffee_card_);
+                lv_anim_set_exec_cb(&pulse, pulse_coffee);
+                lv_anim_set_values(&pulse, LV_OPA_30, LV_OPA_COVER);
+                lv_anim_set_time(&pulse, 700);
+                lv_anim_set_playback_time(&pulse, 700);
+                lv_anim_set_repeat_count(&pulse, LV_ANIM_REPEAT_INFINITE);
+                lv_anim_start(&pulse);
+            }
+        }
+        if (coffee_hint_) set_text(coffee_hint_, s.dose_g ? "Tap to edit" : candidate ? "Tap to save" : "Tap to set");
+        if (coffee_check_) set_text(coffee_check_, s.dose_g ? LV_SYMBOL_OK : "");
+        const bool selected = item && s.loaded;
+        if (object_card_ && selected != object_visual_selected_) {
+            object_visual_selected_ = selected;
+            lv_obj_set_style_border_color(object_card_, color(selected ? mint : border), 0);
+            lv_obj_set_style_border_width(object_card_, selected ? 2 : 1, 0);
+        }
+        if (object_check_) set_text(object_check_, selected ? LV_SYMBOL_OK : "");
+        std::string stage, hint;
+        if (controller_.live() && !scale.ready()) {
+            stage = LV_SYMBOL_WARNING " Check scale";
+            hint = scale.status();
+        } else if (!selected) {
+            stage = std::string(equipment_icons[1]) + " Load container";
+            hint = controller_.object_ambiguous() ? "Tap Container to choose." :
+                s.loaded ? "Select or register this container." : "Place a registered container.";
+        } else if (!s.dose_g) {
+            stage = std::string(equipment_icons[0]) + (candidate ? " Save coffee" : " Load coffee");
+            hint = candidate ? "Tap the flashing Coffee card." : "Add coffee, or tap Coffee to set.";
+        } else if (item->kind == Kind::portafilter) {
+            stage = std::string(equipment_icons[1]) + " Load container";
+            hint = "Coffee saved. Place the brew vessel.";
+        } else if (controller_.live() && !s.brew_prepared) {
+            stage = LV_SYMBOL_PAUSE " Wait for stable";
+            hint = "Keep the container still.";
+        } else {
+            stage = LV_SYMBOL_PLAY " Start brew";
+            hint = "Water flow starts timer.";
+        }
+        if (target_text_) set_text(target_text_, s.target_g ? ("Target " + number(s.target_g, " g")).c_str() : "");
+        if (stage_text_) set_text(stage_text_, stage.c_str());
+        if (sensor_status_) set_text(sensor_status_, hint.c_str());
         return;
     }
     if (s.phase != Phase::brewing && s.phase != Phase::result) return;
@@ -581,7 +648,10 @@ void View::action(Action a, int value) {
         break;
     case Action::cancel_remove: dialog_ = Dialog::objects; break;
     case Action::objects: open(Dialog::objects); return;
-    case Action::dose: open(Dialog::dose); return;
+    case Action::dose:
+        if (pending_draw_ || dialog_ != Dialog::none || controller_.session().phase != Phase::ready) return;
+        if (controller_.save_coffee()) { refresh_values(); return; }
+        open(Dialog::dose); return;
     case Action::toggle_mode:
         controller_.set_mode(controller_.session().mode == Mode::espresso ? Mode::pour_over : Mode::espresso);
         break;
