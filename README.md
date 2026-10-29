@@ -84,3 +84,8 @@ The `.cxx`/`.hxx` organization, nested device namespaces, `device()` accessor, t
 | `docs/` | Architecture, requirement coverage, hardware bring-up, validation |
 
 See [architecture and scope](docs/architecture.md), [hardware setup](docs/hardware.md), and [validation](docs/validation.md).
+
+## Scale troubleshooting
+
+See [Scale troubleshooting logs](docs/scale-diagnostics.md) for automatic anomaly
+traces, timestamp/sequence interpretation, and a stationary-load recording procedure.

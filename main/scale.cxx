@@ -13,12 +13,16 @@ void Scale::clear_window() {
     stability_motion_ms_ = 0;
     flow_g_s_ = 0;
     ++display_epoch_;
+    stability_reason_ = "warming_up";
+    operational_noise_ = half_shift_ = anchor_delta_ = 0;
+    drift_guard_ = false;
 }
 void Scale::invalidate() {
     ++faults_;
     connected_ = false;
     captured_zero_.reset();
     clear_window();
+    notify("sensor_invalidated");
 }
 float Scale::mean() const {
     double sum = 0;
@@ -30,7 +34,7 @@ float Scale::mean() const {
 }
 void Scale::ingest(std::int32_t raw, std::uint64_t now) {
     // Ignore duplicate/out-of-order timestamps. Gaps cannot reuse an old baseline.
-    if (connected_ && now <= last_ms_) return;
+    if (connected_ && now <= last_ms_) { notify("timestamp_rejected"); return; }
     if (connected_ && now - last_ms_ > config::sensor_timeout_ms) invalidate();
     const auto previous_ms = last_ms_;
     last_ms_ = now;
@@ -38,11 +42,11 @@ void Scale::ingest(std::int32_t raw, std::uint64_t now) {
     ++received_;
     connected_ = true;
     overload_ = raw <= -8388608 || raw >= 8388607;
-    if (overload_) { ++faults_; clear_window(); captured_zero_.reset(); return; }
+    if (overload_) { ++faults_; clear_window(); captured_zero_.reset(); notify("overload"); notify("sample"); return; }
     median_[median_cursor_] = raw;
     median_cursor_ = (median_cursor_ + 1) % median_.size();
     median_count_ = std::min<unsigned>(median_count_ + 1, median_.size());
-    if (median_count_ < median_.size()) return;
+    if (median_count_ < median_.size()) { notify("sample"); return; }
     auto sorted = median_;
     std::sort(sorted.begin(), sorted.end());
     const double value = sorted[1];
@@ -65,8 +69,12 @@ void Scale::ingest(std::int32_t raw, std::uint64_t now) {
         clear_window();
         captured_zero_.reset();
         ++faults_;
+        notify("overload");
     }
+    const bool was_stable = stable();
     update_stability(value, now);
+    if (was_stable != stable()) notify("stability_changed");
+    notify("sample");
 }
 void Scale::check_timeout(std::uint64_t now) {
     if (connected_ && now > last_ms_ && now - last_ms_ > config::sensor_timeout_ms) invalidate();
@@ -93,6 +101,7 @@ void Scale::update_stability(double recent, std::uint64_t now) {
         else { newer += sample.counts; ++new_n; }
     }
     if (n < config::stable_min_samples || now - oldest < config::stable_min_ms || !old_n || !new_n) {
+        stability_reason_ = "warming_up";
         stable_since_.reset(); stable_latched_ = false; unstable_since_.reset(); return;
     }
     const double average = sum / n;
@@ -103,6 +112,8 @@ void Scale::update_stability(double recent, std::uint64_t now) {
     const bool drift = now - stability_motion_ms_ >= config::drift_window_ms &&
                        stats.drift_span_ms >= config::drift_min_ms &&
                        std::abs(stats.drift_counts_s) > stats.drift_limit;
+    operational_noise_ = noise; half_shift_ = shift;
+    anchor_delta_ = std::abs(recent - stable_anchor_); drift_guard_ = drift;
     if (stable_latched_) {
         // A median-confirmed large load change exits immediately. Ordinary
         // jitter needs a persistent, wider threshold to release the latch.
@@ -112,17 +123,23 @@ void Scale::update_stability(double recent, std::uint64_t now) {
         if (bad && !unstable_since_) unstable_since_ = now;
         if (!bad) unstable_since_.reset();
         if (hard || (unstable_since_ && now - *unstable_since_ >= config::stable_exit_ms)) {
+            stability_reason_ = hard ? "hard_shift" : noise > units(config::stable_noise_exit_g, 1200) ? "noise_exit" : "anchor_shift";
             if (hard) stability_motion_ms_ = now;
             stable_latched_ = false; stable_since_.reset(); unstable_since_.reset();
         }
     } else {
         const bool qualifies = noise <= units(config::stable_noise_enter_g, 750) &&
                                shift <= units(config::stable_half_shift_g, 600) && !drift;
-        if (!qualifies) stable_since_.reset();
+        if (!qualifies) {
+            stability_reason_ = noise > units(config::stable_noise_enter_g, 750) ? "noise_enter" :
+                                shift > units(config::stable_half_shift_g, 600) ? "half_shift" : "drift_guard";
+            stable_since_.reset();
+        }
         else {
+            stability_reason_ = "enter_hold";
             if (!stable_since_) stable_since_ = now;
             if (now - *stable_since_ >= config::stable_enter_ms) {
-                stable_latched_ = true; stable_anchor_ = average;
+                stable_latched_ = true; stable_anchor_ = average; stability_reason_ = "qualified";
             }
         }
     }
@@ -190,7 +207,7 @@ StabilityStats Scale::stability_stats() const {
     return stats;
 }
 bool Scale::restore(Calibration c) {
-    if (!valid_calibration(c)) return false;
+    if (!valid_calibration(c)) { notify("calibration_rejected"); return false; }
     calibration_ = c;
     // Restart motion thresholds in the new calibration units, retaining the
     // count history used by the measurement averages and diagnostics.
@@ -198,17 +215,19 @@ bool Scale::restore(Calibration c) {
     tare_g_ = 0;
     flow_g_s_ = 0;
     ++display_epoch_;
+    notify("calibration_restored");
     return true;
 }
 bool Scale::capture_zero() {
-    if (!stable()) return false;
+    if (!stable()) { notify("zero_rejected"); return false; }
     captured_zero_ = mean();
+    notify("zero_captured");
     return true;
 }
 bool Scale::calibrate(float grams) {
-    if (!captured_zero_ || !stable() || !std::isfinite(grams) || grams <= 0 || grams > 10000) return false;
+    if (!captured_zero_ || !stable() || !std::isfinite(grams) || grams <= 0 || grams > 10000) { notify("calibration_rejected"); return false; }
     const auto delta = mean() - *captured_zero_;
-    if (std::abs(delta) < 1000) return false;
+    if (std::abs(delta) < 1000) { notify("calibration_rejected"); return false; }
     Calibration c{*captured_zero_, delta / grams};
     if (!restore(c)) return false;
     pending_save_ = c;
@@ -216,7 +235,7 @@ bool Scale::calibrate(float grams) {
     return true;
 }
 bool Scale::tare() {
-    if (!ready() || !stable()) return false;
+    if (!ready() || !stable()) { notify("tare_rejected"); return false; }
     // Fast Stable may precede low-pass convergence after placing a vessel.
     // Tare the qualified median mean and align filter state to prevent the
     // unchanged vessel from drifting upward as the old filter catches up.
@@ -226,6 +245,7 @@ bool Scale::tare() {
     tare_g_ = gross();
     flow_g_s_ = 0;
     ++display_epoch_;
+    notify("tare_applied");
     return true;
 }
 std::optional<Calibration> Scale::take_pending_save() {

@@ -3,6 +3,8 @@
 #include "session.hxx"
 #include "ui.hxx"
 #include "acquisition.hxx"
+#include "diagnostic_logger.hxx"
+#include "esp_app_desc.h"
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
 #include "esp_timer.h"
@@ -14,7 +16,31 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+namespace {
+struct Diagnostics {
+    smart_scale::AnomalyTrace trace;
+    static void observe(void* context, const smart_scale::Scale& scale, const char* event) {
+        auto& self = *static_cast<Diagnostics*>(context);
+        auto& logger = smart_scale::device::DiagnosticLogger::instance();
+        auto sample = smart_scale::diagnostic_sample(scale, esp_timer_get_time() / 1000);
+        if (std::strcmp(event, "sample") == 0) {
+            if (const auto trigger = self.trace.push(sample)) logger.sample(trigger, sample, self.trace.id());
+        } else {
+            if (std::strcmp(event, "sensor_invalidated") == 0 || std::strcmp(event, "overload") == 0)
+                self.trace.begin(sample.now_ms, event);
+            logger.sample(event, sample);
+        }
+    }
+};
+}
+
 extern "C" void app_main() {
+    auto& logger = smart_scale::device::DiagnosticLogger::instance();
+    logger.start();
+    // Large capture history belongs in PSRAM, never on app_main's stack.
+    void* diagnostic_storage = heap_caps_malloc(sizeof(Diagnostics), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    ESP_ERROR_CHECK(diagnostic_storage ? ESP_OK : ESP_ERR_NO_MEM);
+    auto& diagnostics = *new (diagnostic_storage) Diagnostics;
     auto& display = smart_scale::device::display::device();
     display.init();
     // Session history is the largest application object; keep it out of DMA RAM.
@@ -23,6 +49,7 @@ extern "C" void app_main() {
     auto release = [](smart_scale::Controller* value) { value->~Controller(); heap_caps_free(value); };
     std::unique_ptr<smart_scale::Controller, decltype(release)> controller(
         new (storage) smart_scale::Controller(true), release);
+    controller->scale().observe(Diagnostics::observe, &diagnostics);
     static smart_scale::device::scale::Acquisition acquisition;
     ESP_ERROR_CHECK(acquisition.start());
     const auto storage_status = smart_scale::device::scale::init_storage();
@@ -30,6 +57,18 @@ extern "C" void app_main() {
         if (auto calibration = smart_scale::device::scale::load_calibration())
             controller->scale().restore(*calibration);
     } else ESP_LOGE("scale", "NVS unavailable: %s", esp_err_to_name(storage_status));
+    char configuration[768];
+    const auto* app = esp_app_get_description();
+    std::snprintf(configuration, sizeof(configuration),
+        "fw=%s idf=%s source=hx711 dout=%d sck=%d channel=A gain=128 rate=observed_in_health median_n=3 fast_tau_s=%.2f quiet_tau_s=%.2f stable_window_ms=%llu enter_sd_g=%.2f exit_sd_g=%.2f half_shift_g=%.2f anchor_shift_g=%.2f hard_shift_g=%.2f drift_limit_gps=%.2f trace_pre_ms=5000 trace_post_ms=5000 trace_jump_g=1 trace_capacity=1024 cooldown_ms=30000",
+        app->version, app->idf_ver, smart_scale::config::hx711_dout, smart_scale::config::hx711_sck,
+        static_cast<double>(smart_scale::config::filter_fast_tau_s), static_cast<double>(smart_scale::config::filter_quiet_tau_s),
+        static_cast<unsigned long long>(smart_scale::config::stable_window_ms),
+        static_cast<double>(smart_scale::config::stable_noise_enter_g), static_cast<double>(smart_scale::config::stable_noise_exit_g),
+        static_cast<double>(smart_scale::config::stable_half_shift_g), static_cast<double>(smart_scale::config::stable_anchor_shift_g),
+        static_cast<double>(smart_scale::config::stable_hard_shift_g), static_cast<double>(smart_scale::config::stability_drift_g_s));
+    logger.text("scale_config", configuration);
+    logger.sample("startup", smart_scale::diagnostic_sample(controller->scale(), esp_timer_get_time() / 1000));
     static smart_scale::ui::View view(*controller);
     if (lvgl_port_lock(0)) {
         view.init();
@@ -39,19 +78,22 @@ extern "C" void app_main() {
     auto previous = esp_timer_get_time();
     std::uint64_t last_diagnostic_ms = previous / 1000, previous_received = 0, max_age_ms = 0;
     unsigned max_batch = 0;
+    std::uint64_t acquisition_seq = 0;
+    unsigned started_trace = 0;
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(smart_scale::config::ui_period_ms));
         const auto now = esp_timer_get_time();
         const auto elapsed = static_cast<float>(now - previous) / 1000000.0F;
         previous = now;
         std::optional<smart_scale::Calibration> save;
-        char diagnostic[512]{};
+        char diagnostic[1024]{};
         if (lvgl_port_lock(0)) {
             const auto now_ms = static_cast<std::uint64_t>(esp_timer_get_time() / 1000);
             smart_scale::device::scale::Reading reading;
             unsigned batch = 0;
             for (unsigned i = 0; i < acquisition.capacity && acquisition.receive(reading); ++i) {
                 ++batch;
+                acquisition_seq = reading.seq;
                 max_age_ms = std::max(max_age_ms, now_ms > reading.ms ? now_ms - reading.ms : 0);
                 if (reading.gap) controller->sensor_fault();
                 if (now_ms > reading.ms && now_ms - reading.ms > smart_scale::config::sensor_timeout_ms) {
@@ -73,8 +115,11 @@ extern "C" void app_main() {
                 const double factor = calibration ? calibration->counts_per_gram : 0;
                 const double units = calibration ? std::abs(factor) : 1;
                 const double hz = (scale.received() - previous_received) * 1000.0 / (now_ms - last_diagnostic_ms);
+                char failed[64]; smart_scale::failed_names(stats.failed, failed);
                 std::snprintf(diagnostic, sizeof(diagnostic),
-                    "ready=%d stable=%d quiet=%d fail=%u hold_ms=%llu n=%u span_ms=%llu drift_n=%u drift_span_ms=%llu sd=%.4f/%.4f drift=%.4f/%.4f residual=%.4f p2p=%.4f units=%s hz=%.1f age_ms=%llu max_age_ms=%llu batch=%u overflow=%u faults=%llu factor=%.4f zero=%.1f profiles=%u object=%s",
+                    "now_ms=%llu sample_ms=%llu seq=%llu acquisition_seq=%llu failed=%s ready=%d stable=%d quiet=%d fail=%u hold_ms=%llu n=%u span_ms=%llu drift_n=%u drift_span_ms=%llu sd=%.4f/%.4f drift=%.4f/%.4f residual=%.4f p2p=%.4f units=%s hz=%.1f age_ms=%llu max_age_ms=%llu batch=%u overflow=%u sample_dropped_estimate=%u acquisition_hwm=%u log_dropped=%u log_hwm=%u trace_truncated=%u trace_missed_samples=%u faults=%llu factor=%.4f zero=%.1f profiles=%u object=%s",
+                    static_cast<unsigned long long>(now_ms), static_cast<unsigned long long>(scale.sample_ms()),
+                    static_cast<unsigned long long>(scale.received()), static_cast<unsigned long long>(acquisition_seq), failed,
                     scale.ready(), scale.stable(), scale.quiet(), stats.failed,
                     static_cast<unsigned long long>(scale.stable_for_ms()), stats.samples,
                     static_cast<unsigned long long>(stats.span_ms), stats.drift_samples,
@@ -82,14 +127,36 @@ extern "C" void app_main() {
                     stats.drift_counts_s / (calibration ? factor : 1), stats.drift_limit / units, stats.residual_counts / units,
                     stats.peak_to_peak_counts / units, calibration ? "g,g/s" : "counts,counts/s", hz,
                     static_cast<unsigned long long>(scale.last_raw() && now_ms > scale.sample_ms() ? now_ms - scale.sample_ms() : 0),
-                    static_cast<unsigned long long>(max_age_ms), max_batch, acquisition.overflows(),
+                    static_cast<unsigned long long>(max_age_ms), max_batch, acquisition.overflows(), acquisition.dropped(), acquisition.high_water(),
+                    logger.dropped(), logger.high_water(), diagnostics.trace.truncated(), diagnostics.trace.missed_samples(),
                     static_cast<unsigned long long>(scale.faults()), factor, calibration ? calibration->zero : 0,
                     static_cast<unsigned>(controller->equipment_count()), controller->recognition_status());
                 last_diagnostic_ms = now_ms; previous_received = scale.received(); max_age_ms = 0; max_batch = 0;
             }
             lvgl_port_unlock();
         }
-        if (diagnostic[0]) ESP_LOGI("hx711_diag", "%s", diagnostic); // Outside LVGL lock.
+        if (diagnostic[0]) logger.text("hx711_diag", diagnostic);
+        diagnostics.trace.poll(esp_timer_get_time() / 1000);
+        if (diagnostics.trace.frozen()) {
+            if (started_trace != diagnostics.trace.id()) {
+                char header[256];
+                std::snprintf(header, sizeof(header), "event=trace_begin id=%u trigger_ms=%llu reason=%s truncated_total=%u",
+                    diagnostics.trace.id(), static_cast<unsigned long long>(diagnostics.trace.trigger_ms()),
+                    diagnostics.trace.trigger_reason(), diagnostics.trace.truncated());
+                if (logger.text("scale_trace", header)) started_trace = diagnostics.trace.id();
+            }
+            if (started_trace == diagnostics.trace.id()) {
+                for (unsigned i = 0; i < 16 && diagnostics.trace.front(); ++i) {
+                    if (!logger.sample("trace_sample", *diagnostics.trace.front(), diagnostics.trace.id(), true)) break;
+                    diagnostics.trace.pop();
+                }
+                if (!diagnostics.trace.front()) {
+                    char footer[128];
+                    std::snprintf(footer, sizeof(footer), "event=trace_end id=%u log_dropped=%u", diagnostics.trace.id(), logger.dropped());
+                    if (logger.text("scale_trace", footer)) diagnostics.trace.finish();
+                }
+            }
+        }
         if (save) {
             const auto error = smart_scale::device::scale::save_calibration(*save);
             if (error != ESP_OK) ESP_LOGE("scale", "Calibration save failed: %s", esp_err_to_name(error));
