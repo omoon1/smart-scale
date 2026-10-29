@@ -113,7 +113,9 @@ void View::init() { draw(); }
 void View::open(Dialog dialog) {
     if (controller_.session().phase == Phase::brewing || controller_.session().phase == Phase::result) return;
     dialog_ = dialog;
+    controller_.set_auto_brew_enabled(dialog == Dialog::none);
     if (dialog == Dialog::registration) {
+        registration_measurement_.reset();
         registration_step_ = 0;
         registration_stable_ = true;
         registration_kind_ = Kind::cup;
@@ -124,6 +126,7 @@ void View::open(Dialog dialog) {
 }
 void View::reset() { controller_.scale().cancel_calibration(); controller_.reset(); dialog_ = Dialog::none; schedule_draw(); }
 void View::update() {
+    controller_.set_auto_brew_enabled(dialog_ == Dialog::none);
     if (rendered_phase_ != controller_.session().phase) {
         dialog_ = Dialog::none; // Cancel unconfirmed edits when extraction starts.
         schedule_draw();
@@ -140,7 +143,7 @@ void View::draw() {
     weight_ = weight_unit_ = time_ = flow_ = status_ = object_text_ = dose_text_ = target_text_ = chart_ = nullptr;
     dose_value_ = icon_name_ = kind_input_ = chart_max_ = chart_time_ = current_point_ = object_weight_ = nullptr;
     start_button_ = tare_button_ = nullptr;
-    sensor_status_ = calibration_message_ = registration_weight_label_ = registration_status_ = registration_next_ = nullptr;
+    sensor_status_ = calibration_message_ = calibration_weight_label_ = registration_weight_label_ = registration_status_ = registration_next_ = nullptr;
     icon_buttons_.fill(nullptr);
     series_ = target_series_ = nullptr;
     rendered_phase_ = controller_.session().phase;
@@ -249,6 +252,22 @@ void View::draw_brew(lv_obj_t* root, bool result) {
 }
 void View::refresh_values() {
     const auto& s = controller_.session();
+    const auto& scale = controller_.scale();
+    // Independent caches for net grams, gross grams and uncalibrated counts.
+    // Update once per sensor timestamp; redraws never restart confirmation.
+    if (display_epoch_ != scale.display_epoch() || display_phase_ != s.phase) {
+        weight_display_.reset(); gross_display_.reset(); counts_display_.reset();
+        display_epoch_ = scale.display_epoch();
+        display_phase_ = s.phase;
+    }
+    const auto stats = scale.stability_stats();
+    const float noise_counts = static_cast<float>(stats.std_counts);
+    const float noise_g = scale.calibration() ? noise_counts / std::abs(scale.calibration()->counts_per_gram) : 0;
+    const auto gross = gross_display_.update(scale.ready() ? std::optional<float>{scale.gross()} : std::nullopt,
+                                             scale.sample_ms(), scale.quiet(), true, noise_g);
+    const auto counts = counts_display_.update(scale.filtered_counts() ?
+        std::optional<float>{static_cast<float>(*scale.filtered_counts())} : std::nullopt,
+        scale.sample_ms(), scale.quiet(), false, noise_counts);
     if (start_button_) {
         const bool ready = controller_.scale().ready() && controller_.scale().stable();
         if (ready && s.loaded) lv_obj_clear_state(start_button_, LV_STATE_DISABLED);
@@ -259,11 +278,21 @@ void View::refresh_values() {
     if (sensor_status_ && controller_.live()) set_text(sensor_status_, controller_.scale().status());
     if (calibration_message_) set_text(calibration_message_,
         (calibration_message_text_ + "\n" + controller_.scale().status()).c_str());
+    if (calibration_weight_label_) {
+        if (scale.calibration()) set_text(calibration_weight_label_, gross ? number(gross, " g").c_str() : "? g");
+        else {
+            char text[48];
+            if (counts) std::snprintf(text, sizeof(text), "%.0f counts", static_cast<double>(*counts));
+            else std::snprintf(text, sizeof(text), "? counts");
+            set_text(calibration_weight_label_, text);
+        }
+    }
     if (registration_weight_label_) {
-        const bool stable = controller_.scale().ready() && controller_.scale().stable();
-        set_text(registration_weight_label_, number(controller_.scale().ready() ?
-            std::optional<float>{controller_.scale().gross()} : std::nullopt, " g").c_str());
-        set_text(registration_status_, controller_.scale().status());
+        const auto snapshot = registration_measurement_.update(scale);
+        const bool stable = snapshot.has_value();
+        set_text(registration_weight_label_, number(gross, " g").c_str());
+        set_text(registration_status_, stable ? "Stable - ready to continue" :
+                 scale.stable() ? "Wait for a fresh stable reading" : scale.status());
         if (stable) lv_obj_clear_state(registration_next_, LV_STATE_DISABLED);
         else lv_obj_add_state(registration_next_, LV_STATE_DISABLED);
     }
@@ -271,12 +300,9 @@ void View::refresh_values() {
         (!controller_.live() || s.phase == Phase::result || controller_.scale().ready());
     std::optional<float> displayed = available ? std::optional<float>{s.net_g} : std::nullopt;
     if (controller_.live()) {
-        if (display_epoch_ != controller_.scale().display_epoch() || display_phase_ != s.phase) {
-            weight_display_.reset();
-            display_epoch_ = controller_.scale().display_epoch();
-            display_phase_ = s.phase;
-        }
-        displayed = weight_display_.update(displayed);
+        if (s.phase != Phase::result)
+            displayed = weight_display_.update(displayed, scale.sample_ms(),
+                                                scale.quiet(), true, noise_g);
     }
     const auto weight_text = number(displayed);
     // Log actual visible transitions, including unavailable/recovery. Retain the
@@ -294,12 +320,15 @@ void View::refresh_values() {
         const auto& scale = controller_.scale();
         const auto raw = scale.last_raw() ? std::to_string(*scale.last_raw()) : "NA";
         const auto gross = scale.ready() ? number(scale.gross(), " g") : "NA";
-        char line[256];
+        const char* error = s.brew_error == BrewError::object_removed ? "object_removed" :
+                            s.brew_error == BrewError::sensor_fault ? "sensor_fault" : "none";
+        char line[384];
         std::snprintf(line, sizeof(line),
-            "display=%s g raw=%s sample_ms=%llu gross=%s net=%.4f g stable=%d ready=%d status=%s",
+            "display=%s g raw=%s sample_ms=%llu gross=%s net=%.4f g stable=%d ready=%d status=%s brew_error=%s removal_below=%.4f g",
             weight_text.c_str(), raw.c_str(), static_cast<unsigned long long>(scale.sample_ms()),
             gross.c_str(), static_cast<double>(scale.ready() ? scale.net() : NAN),
-            scale.stable(), scale.ready(), scale.status());
+            scale.stable(), scale.ready(), scale.status(), error,
+            static_cast<double>(s.removal_threshold_g.value_or(NAN)));
 #ifdef ESP_PLATFORM
         ESP_LOGI("weight", "%s", line);
 #else
@@ -353,7 +382,14 @@ void View::refresh_values() {
     set_text(flow_, s.phase == Phase::result ? ("Ratio " + (s.ratio() ? "1:" + number(s.ratio()) : "?")).c_str()
         : s.uncertain ? "Flow unavailable" : number(controller_.live() ? s.flow_g_s : flow_ml_s, controller_.live() ? " g/s" : " ml/s").c_str());
     std::string status;
-    if (s.uncertain) status = "Baseline uncertain - weight unavailable";
+    if (s.uncertain && controller_.live() && s.brew_error != BrewError::none) {
+        char alert[96];
+        const auto remaining = static_cast<unsigned>(std::ceil(controller_.error_remaining_s()));
+        std::snprintf(alert, sizeof(alert), "%s - home in %02u:%02u",
+                      s.brew_error == BrewError::object_removed ? "Object removed" : "Sensor unavailable",
+                      remaining / 60, remaining % 60);
+        status = alert;
+    } else if (s.uncertain) status = "Baseline uncertain - weight unavailable";
     else if (s.target_g && s.net_g >= *s.target_g) status = "Target reached  +" + number(s.net_g - *s.target_g, " g");
     else if (s.flow_g_s == 0 && s.phase == Phase::brewing) status = "Flow paused - timer continues";
     else status = s.mode == Mode::pour_over && s.vessel && s.vessel->kind == Kind::pour_over_set ? "Set mass increase / water added" : "Beverage collected in cup";
@@ -407,7 +443,8 @@ void View::draw_dialog(lv_obj_t* root) {
     button(box, LV_SYMBOL_CLOSE, width - 52, 4, 44, 44, Action::close);
     if (dialog_ == Dialog::calibration) {
         label(box, "Calibrate scale", 16, 18, 230, &lv_font_montserrat_22);
-        label(box, "1. Empty platform, wait, capture zero.\n2. Place known mass and wait.\n3. Tap its exact mass below.", 16, 62, 272);
+        calibration_weight_label_ = label(box, "?", 16, 56, 272, &lv_font_montserrat_28);
+        label(box, "1. Empty platform, capture zero.\n2. Add mass, wait, tap its value.", 16, 94, 272);
         button(box, "Capture empty zero", 16, 126, 272, 42, Action::capture_zero);
         button(box, "20 g", 16, 178, 84, 42, Action::calibrate, 20);
         button(box, "50 g", 110, 178, 84, 42, Action::calibrate, 50);
@@ -562,8 +599,9 @@ void View::action(Action a, int value) {
     case Action::stable: registration_stable_ = !registration_stable_; break;
     case Action::register_next:
         if (controller_.live() && registration_step_ == 1) {
-            if (!controller_.scale().ready() || !controller_.scale().stable() || controller_.scale().gross() <= 0) return;
-            registration_weight_ = controller_.scale().gross();
+            const auto snapshot = registration_measurement_.update(controller_.scale());
+            if (!snapshot) return;
+            registration_weight_ = snapshot->grams;
             registration_stable_ = true;
         }
         if (registration_step_ == 0 && kind_input_) {
@@ -572,6 +610,7 @@ void View::action(Action a, int value) {
         if (registration_step_ == 0 || (registration_step_ == 1 && registration_stable_)) ++registration_step_;
         break;
     case Action::register_back:
+        registration_measurement_.reset();
         if (registration_step_ > 0) --registration_step_; else dialog_ = Dialog::objects;
         break;
     case Action::choose_icon: {
@@ -597,6 +636,7 @@ void View::action(Action a, int value) {
         break;
     }
     }
+    controller_.set_auto_brew_enabled(dialog_ == Dialog::none);
     schedule_draw();
 }
 }

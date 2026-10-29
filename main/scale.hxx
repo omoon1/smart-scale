@@ -1,5 +1,6 @@
 #pragma once
 #include "config.hxx"
+#include "adaptive_filter.hxx"
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -35,6 +36,10 @@ public:
     std::optional<std::int32_t> last_raw() const { return last_raw_; }
     std::uint64_t sample_ms() const { return last_ms_; }
     float flow() const { return flow_g_s_; }
+    bool quiet() const { return adaptive_.quiet(); }
+    std::optional<double> filtered_counts() const {
+        return connected_ && !overload_ ? filtered_ : std::nullopt;
+    }
     void check_timeout(std::uint64_t now_ms);
     bool restore(Calibration calibration);
     bool capture_zero();
@@ -69,16 +74,23 @@ public:
 private:
     float mean() const;
     void clear_window();
+    void update_stability(double recent, std::uint64_t now);
     struct Sample { double counts{}; std::uint64_t ms{}; };
     std::array<Sample, 320> samples_{};
     std::array<std::int32_t, 3> median_{};
     unsigned median_count_{}, median_cursor_{};
     std::optional<double> filtered_;
+    AdaptiveFilter adaptive_;
+    std::optional<double> flow_filtered_;
     float flow_g_s_{};
     unsigned count_{}, cursor_{};
     std::uint64_t last_ms_{};
     std::optional<std::int32_t> last_raw_;
     std::optional<std::uint64_t> stable_since_;
+    std::optional<std::uint64_t> unstable_since_;
+    bool stable_latched_{};
+    double stable_anchor_{};
+    std::uint64_t stability_motion_ms_{};
     std::uint64_t received_{}, faults_{};
     bool connected_{}, overload_{}, save_failed_{};
     float tare_g_{};

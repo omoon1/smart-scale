@@ -65,6 +65,12 @@ lv_obj_t* find_type(lv_obj_t* parent, const lv_obj_class_t* type) {
         if (auto* found = find_type(lv_obj_get_child(parent, static_cast<int>(i)), type)) return found;
     return nullptr;
 }
+bool has_label(lv_obj_t* parent, const std::string& text) {
+    if (lv_obj_check_type(parent, &lv_label_class) && text == lv_label_get_text(parent)) return true;
+    for (unsigned i = 0; i < lv_obj_get_child_cnt(parent); ++i)
+        if (has_label(lv_obj_get_child(parent, static_cast<int>(i)), text)) return true;
+    return false;
+}
 
 }
 int main(int argc, char** argv) {
@@ -95,6 +101,7 @@ int main(int argc, char** argv) {
         const int masses[] = {20, 50, 100};
         for (int i = 0; i < 3; ++i) {
             feed(-78000);
+            if (i == 0) require(has_label(lv_scr_act(), "-78000 counts"), "uncalibrated dialog shows filtered counts");
             click(view, 240, 154); // Capture empty zero in centered dialog.
             feed(-78000 + masses[i] * 866);
             click(view, 146 + i * 94, 206);
@@ -107,13 +114,98 @@ int main(int argc, char** argv) {
         click(view, 172, 286); // Tare.
         require(std::abs(controller.scale().net()) < 0.01F, "touch tare");
         screenshot(view, "19-hx711-live");
+        // A tare changes the idle net reading, never the gross calibration or
+        // registration readout. Both dialogs use the same timed presentation.
+        click(view, 268, 286);
+        require(has_label(lv_scr_act(), "100.0 g"), "calibration displays gross despite tare");
+        screenshot(view, "22-hx711-calibration-gross");
+        controller.sensor_sample(std::nullopt, now += 1100); controller.tick(1.1F); pump(view);
+        require(has_label(lv_scr_act(), "? g"), "calibration hides stale values after timeout");
+        feed(8600);
+        require(has_label(lv_scr_act(), "100.0 g"), "calibration recovers with a fresh display reference");
+        click(view, 366, 32);
+        view.open(smart_scale::ui::Dialog::registration); pump(view); pump(view);
+        click(view, 370, 284);
+        require(has_label(lv_scr_act(), "100.0 g"), "registration uses stabilized gross");
+        // Synthetic +/-0.2 g sensor noise, with real timestamps, while this
+        // dialog is open. Quantized sensor values never feed saved equipment.
+        for (unsigned i = 0; i < 150; ++i) {
+            controller.sensor_sample(8600 + static_cast<int>(173 * std::sin(i * 0.1 * 6.283185307 / 1.4)), now += 100);
+            controller.tick(0.1F); pump(view);
+        }
+        require(controller.scale().quiet(), "registration keeps common quiet filtering active");
+        feed(8707);
+        const float reference = controller.scale().gross();
+        require(std::abs(reference - 100.0F) > 0.1F, "registration source retains sub-display precision");
+        for (unsigned i = 0; i < 12; ++i) {
+            controller.sensor_sample(8707 + (i % 2 ? 121 : -121), now += 100);
+            controller.tick(0.1F); pump(view);
+        }
+        require(controller.scale().stable(), "minor registration noise keeps Stable latched");
+        require(has_label(lv_scr_act(), "Stable - ready to continue"), "registration status stays actionable during brief noise");
+        screenshot(view, "23-hx711-registration-stabilized");
+        click(view, 370, 284); // Capture the recent qualified mean, not the label.
+        require(has_label(lv_scr_act(), "Icon 3/3"), "Continue consumes snapshot despite minor noise");
+        click(view, 370, 284); // Save default icon.
+        require(controller.equipment_count() == 1 &&
+                std::abs(*controller.equipment()[0].empty_g - reference) < 0.03F &&
+                std::abs(*controller.equipment()[0].empty_g - 100.1F) > 0.005F,
+                "registered mass is an unrounded qualified mean");
+        click(view, 366, 32); // Close equipment list.
+        feed(8254); // Actual placement ~99.6 g, registered mass ~100.12 g.
         click(view, 60, 286); // Start brew.
         require(controller.session().phase == smart_scale::Phase::brewing, "touch starts real brew");
+        feed(8167); // -0.1 g net is noise, not cup removal.
+        require(!controller.session().uncertain && controller.session().net_g < -.09F,
+                "negative tenth-gram reading stays in live brew despite registration offset");
+        require(!has_label(lv_scr_act(), "Object removed - home in 03:00"),
+                "negative net does not show removal error");
+        screenshot(view, "26-hx711-negative-net");
         feed(25920);
         screenshot(view, "20-hx711-brewing");
+        feed(17260); // 110 g gross: liquid decreased, registered cup remains.
+        require(!controller.session().uncertain, "decreasing net weight does not imply removal");
+        for (unsigned i = 0; i < 6; ++i) {
+            controller.sensor_sample(-60, now += 100); // 90 g < registered 100 g cup.
+            controller.tick(.1F); pump(view);
+        }
+        require(controller.session().brew_error == smart_scale::BrewError::object_removed,
+                "gross below registered empty mass detects removal");
+        require(has_label(lv_scr_act(), "Object removed - home in 03:00"), "removal error includes return countdown");
+        screenshot(view, "25-hx711-object-removed");
         controller.sensor_sample(std::nullopt, now + 1100); controller.tick(1.1F);
         screenshot(view, "21-hx711-timeout");
         require(controller.session().uncertain, "timeout invalidates live brew");
+        controller.tick(static_cast<float>(controller.error_remaining_s() - 1)); pump(view);
+        require(controller.session().phase == smart_scale::Phase::brewing, "error remains visible before three minutes");
+        controller.tick(1.1F); pump(view); pump(view);
+        require(controller.session().phase == smart_scale::Phase::ready, "error returns directly to main after three minutes");
+        require(has_label(lv_scr_act(), "Espresso"), "main screen is rendered after error timeout");
+        screenshot(view, "24-hx711-error-home");
+        feed(-78000); feed(8600); // Rearm cup recognition after removal.
+        require(has_label(lv_scr_act(), "0.0"), "recognized vessel displays zero after automatic tare");
+        screenshot(view, "28-hx711-vessel-zero");
+        view.open(smart_scale::ui::Dialog::calibration); pump(view);
+        for (unsigned i = 1; i <= 18; ++i) {
+            controller.sensor_sample(8600 + 173 * i, now += 100);
+            controller.tick(.1F); pump(view);
+        }
+        require(controller.session().phase == smart_scale::Phase::ready,
+                "calibration dialog blocks automatic brew");
+        click(view, 366, 32); feed(8600);
+        require(!controller.session().brew_prepared, "vessel without coffee dose is not brew prepared");
+        require(controller.set_dose(18) && controller.session().brew_prepared,
+                "registered vessel and coffee dose enter internal brew preparation");
+        for (unsigned i = 1; i <= 20; ++i) {
+            controller.sensor_sample(8600 + 173 * i, now += 100);
+            controller.tick(.1F); pump(view);
+            if (controller.session().phase == smart_scale::Phase::brewing) break;
+        }
+        pump(view); pump(view);
+        require(controller.session().phase == smart_scale::Phase::brewing &&
+                controller.session().net_g > 1 && has_label(lv_scr_act(), "Running"),
+                "sustained flow opens Running automatically and retains liquid");
+        screenshot(view, "27-hx711-auto-brew");
         std::cout << "Live HX711 UI checks passed\n";
         return 0;
     }
