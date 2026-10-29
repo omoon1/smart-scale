@@ -10,7 +10,7 @@ Target: **Waveshare ESP32-S3-Touch-LCD-3.49 V2 (PCB Rev1.1)**, 16 MB flash and 8
 | LCD D0 / D1 / D2 / D3 | GPIO11 / GPIO12 / GPIO13 / GPIO14 |
 | LCD reset | TCA9554 EXIO5, high 30 ms → low 250 ms → high 30 ms |
 | Backlight enable | TCA9554 EXIO1 |
-| Backlight PWM | GPIO42, 50 kHz, 8-bit, duty 204/255 |
+| Backlight control | GPIO42; PWM initialized dark, then stopped with output held HIGH for bring-up |
 | System power hold | TCA9554 EXIO6, high |
 | Expander I²C bus | I2C0, SDA GPIO47 / SCL GPIO48; TCA9554 address 0x20 |
 | Touch I²C bus | I2C1, SDA GPIO17 / SCL GPIO18; address 0x3B, 300 kHz |
@@ -23,7 +23,7 @@ There is **no AXP2101 access at 0x34**. This board's charger/power circuitry doe
 
 The vendor QSPI driver starts a frame with RAMWR and continues subsequent strips with RAMWRC; it does not set a row window for arbitrary dirty rectangles. The BSP therefore registers a **full-refresh 640×172 LVGL display** and rotates into the native 172×640 raster in ten 64-row strips. Each strip is copied into 22,016 bytes of internal DMA memory; the single 220,160-byte LVGL framebuffer lives in PSRAM. It waits for completion before reusing the strip and before declaring the frame complete. LVGL colors remain byte-swapped RGB565; panel color order is RGB, not the old BGR setting.
 
-The existing `esp_lvgl_port` supplies the LVGL task, tick and mutex. The BSP registers its own flush and input callbacks, avoiding the generic partial-area rotation path. GPIO42 and EXIO1 keep the backlight off until `show()` has synchronously completed the first frame. QSPI failure or a one-second strip timeout aborts rather than reusing a potentially active DMA buffer.
+The existing `esp_lvgl_port` supplies the LVGL task, tick and mutex. The BSP registers its own flush and input callbacks, avoiding the generic partial-area rotation path. GPIO42 and EXIO1 keep the backlight off until `show()` has synchronously completed the first frame. For the reported backlight-off condition, `show()` now stops PWM with its idle output HIGH and enables EXIO1. This forces full-on output to isolate PWM behavior; it is a bring-up diagnostic, not a confirmed hardware fix. Logs bracket the first frame refresh and report the backlight enable API result (which does not prove electrical output or visible light). QSPI failure or a one-second strip timeout aborts rather than reusing a potentially active DMA buffer.
 
 Touch uses the vendor's 11-byte query and 32-byte response on the separate touch bus. Landscape mapping reverses both raw axes with zero-based bounds (639−x, 171−y). Failed reads, out-of-range points, release packets and multi-touch all report release; read errors are logged on failure/recovery transitions. A touch disconnect must not keep a dose button held or reset the device.
 

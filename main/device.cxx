@@ -194,13 +194,20 @@ esp_err_t Device::show() {
     if (!initialized_) return ESP_ERR_INVALID_STATE;
     // Caller holds the same LVGL port lock used by the UI task. flush() waits
     // for every DMA completion, so no transfer remains in flight on return.
+    ESP_LOGI(tag, "First frame refresh starting; backlight held off");
     lv_obj_invalidate(lv_disp_get_scr_act(display_));
     lv_refr_now(display_);
-    auto error = ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 204);
-    if (error != ESP_OK) return error;
-    error = ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
-    if (error != ESP_OK) return error;
-    return esp_io_expander_set_level(expander_, board::backlight_enable, 1);
+    ESP_LOGI(tag, "First frame refresh complete; forcing backlight ON");
+    // Bring-up diagnostic: bypass PWM and hold GPIO42 HIGH continuously.
+    // Keep the dark startup sequence above; only enable after DMA completes.
+    auto error = ledc_stop(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 1);
+    if (error != ESP_OK) {
+        ESP_LOGE(tag, "Backlight GPIO42 forced HIGH failed: %s", esp_err_to_name(error));
+        return error;
+    }
+    error = esp_io_expander_set_level(expander_, board::backlight_enable, 1);
+    ESP_LOGI(tag, "Backlight forced ON (GPIO42 HIGH, EXIO1 enabled): %s", esp_err_to_name(error));
+    return error;
 }
 bool Device::reset_pressed() {
     if (gpio_get_level(static_cast<gpio_num_t>(config::reset_button)) != 0) {
