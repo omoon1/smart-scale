@@ -27,7 +27,7 @@ void Device::init() {
     // Keep the panel dark through reset and the first complete DMA refresh.
     const auto backlight = static_cast<gpio_num_t>(board::lcd_backlight);
     ESP_ERROR_CHECK(gpio_reset_pin(backlight));
-    ESP_ERROR_CHECK(gpio_set_level(backlight, 0));
+    ESP_ERROR_CHECK(gpio_set_level(backlight, 1));
     // gpio_config routes the pad to the GPIO output, with input enabled for
     // pad-level diagnostics. Never attach LEDC in this bring-up build.
     gpio_config_t light{};
@@ -47,11 +47,14 @@ void Device::init() {
     if (probe != ESP_OK) ESP_LOGE(tag, "Rev1.1 expander missing: SDA=47 SCL=48 addr=0x20: %s", esp_err_to_name(probe));
     ESP_ERROR_CHECK(probe);
     ESP_ERROR_CHECK(esp_io_expander_new_i2c_tca9554(bus_, ESP_IO_EXPANDER_I2C_TCA9554_ADDRESS_000, &expander_));
-    // The expander API requires output mode before setting levels. GPIO42
-    // already holds the GPIO low, so BL_EN cannot illuminate uninitialized RAM.
+    // The expander API requires output mode before setting levels. Hold the
+    // active-low brightness control HIGH until EXIO1 gates the backlight off.
     ESP_ERROR_CHECK(esp_io_expander_set_dir(expander_, board::backlight_enable | board::lcd_reset | board::system_enable,
                                           IO_EXPANDER_OUTPUT));
     ESP_ERROR_CHECK(esp_io_expander_set_level(expander_, board::backlight_enable, 0));
+    // Waveshare V2 uses duty=0 for maximum brightness. EXIO1 now keeps the
+    // panel dark while GPIO42 stays LOW through initialization and operation.
+    ESP_ERROR_CHECK(gpio_set_level(backlight, 0));
     ESP_ERROR_CHECK(esp_io_expander_set_level(expander_, board::lcd_reset | board::system_enable, 1));
 
     i2c.i2c_port = I2C_NUM_1;
@@ -189,16 +192,15 @@ esp_err_t Device::show() {
     lv_obj_invalidate(lv_disp_get_scr_act(display_));
     lv_refr_now(display_);
     ESP_LOGI(tag, "First frame refresh complete; forcing backlight ON");
-    // Enable the boost circuit first, then drive the pad without LEDC routing.
+    // GPIO42 is already LOW (vendor maximum-brightness duty=0). Only release
+    // the EXIO1 backlight gate; driving GPIO42 HIGH here darkens the display.
     auto error = esp_io_expander_set_level(expander_, board::backlight_enable, 1);
     if (error != ESP_OK) {
         ESP_LOGE(tag, "Backlight EXIO1 enable failed: %s", esp_err_to_name(error));
         return error;
     }
-    error = gpio_set_level(static_cast<gpio_num_t>(board::lcd_backlight), 1);
-    ESP_LOGI(tag, "Backlight direct GPIO42 HIGH: %s; pad=%d (expected 1)",
+    ESP_LOGI(tag, "Backlight enabled: EXIO1 HIGH, GPIO42 LOW; %s; pad=%d (expected 0)",
              esp_err_to_name(error), gpio_get_level(static_cast<gpio_num_t>(board::lcd_backlight)));
-    if (error != ESP_OK) return error;
 
     // The expander driver's direction/output getters return cached values.
     // Use a temporary read-only handle to inspect the actual TCA9554 registers.
