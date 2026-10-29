@@ -1,6 +1,7 @@
 #pragma once
 #include "session.hxx"
 #include "weight_display.hxx"
+#include "registration_measurement.hxx"
 #include "lvgl.h"
 
 namespace smart_scale::ui {
@@ -51,6 +52,7 @@ private:
     int registration_step_{};
     Kind registration_kind_{Kind::cup};
     bool registration_stable_{true};
+    RegistrationMeasurement registration_measurement_;
     unsigned registration_icon_{};
     std::array<lv_obj_t*, 20> icon_buttons_{};
     std::string registration_error_;

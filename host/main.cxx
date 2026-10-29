@@ -137,12 +137,20 @@ int main(int argc, char** argv) {
         feed(8707);
         const float reference = controller.scale().gross();
         require(std::abs(reference - 100.0F) > 0.1F, "registration source retains sub-display precision");
+        for (unsigned i = 0; i < 12; ++i) {
+            controller.sensor_sample(8707 + (i % 2 ? 121 : -121), now += 100);
+            controller.tick(0.1F); pump(view);
+        }
+        require(!controller.scale().stable(), "registration scenario reproduces strict stability chatter");
+        require(has_label(lv_scr_act(), "Stable - ready to continue"), "registration status stays actionable during brief noise");
         screenshot(view, "23-hx711-registration-stabilized");
-        click(view, 370, 284); // Capture the actual filtered gross, not the label.
+        click(view, 370, 284); // Capture the recent qualified mean, not the label.
+        require(has_label(lv_scr_act(), "Icon 3/3"), "Continue consumes snapshot while strict stable is false");
         click(view, 370, 284); // Save default icon.
         require(controller.equipment_count() == 1 &&
-                std::abs(*controller.equipment()[0].empty_g - reference) < 0.001F,
-                "registered mass is not rounded or display-held");
+                std::abs(*controller.equipment()[0].empty_g - reference) < 0.03F &&
+                std::abs(*controller.equipment()[0].empty_g - 100.1F) > 0.005F,
+                "registered mass is an unrounded qualified mean");
         click(view, 366, 32); // Close equipment list.
         feed(8600);
         click(view, 60, 286); // Start brew.

@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | 대기 및 추출 | 세션의 net gram | 반올림하지 않은 Scale 및 Session 값 |
 | 칼리브레이션 | 보정 전 filtered counts, 보정 후 gross gram | 1.2초 median 샘플 평균으로 zero와 factor 계산 |
-| 물체 등록 | gross gram | 안정성 검사를 통과한 반올림하지 않은 gross gram |
+| 물체 등록 | gross gram | 최근 엄격한 안정 조건을 통과한 반올림 전 구간 평균 |
 | 완료 결과 | 저장된 세션의 net gram | 완료 당시 세션 유지 |
 
 화면에 보이는 무게를 tare, 보정 계수, 등록 무게, 유량, 목표 판정에 역으로 사용하지 않는다.
@@ -65,6 +65,28 @@ quiet 상태가 곧 보정 가능한 stable 상태를 의미하지 않는다.
 보정 전 counts 표시는 1 count 분해능, 150 counts 히스테리시스를 사용한다.
 표시가 고정되어도 실제 측정 오차와 drift가 제거되었다는 의미는 아니다.
 
+## 물체 등록의 다음 단계 판정
+
+물체 등록의 Continue와 클릭 처리기는 `RegistrationMeasurement`의 동일한
+snapshot을 사용한다. snapshot은 `Scale::stable()`이 참인 시점의 1.2초
+median 구간 평균이며 화면 반올림값이나 클릭 순간의 filtered gross가 아니다.
+등록 화면 진입과 뒤로 가기에서는 snapshot을 초기화한다.
+
+- 엄격한 안정 조건에 처음 도달하기 전에는 Continue를 활성화하지 않는다.
+- 안정 이후 경미한 잡음에는 최대 2초 동안 최근의 유효한 평균을 사용할 수 있다.
+- 잡음, drift 또는 수렴 오차가 기존 한계의 1.5배를 초과한 상태가 300 ms
+  지속되면 snapshot을 무효화한다. 원래의 계측 품질 판정 수치는 변경하지 않는다.
+- median이 snapshot에서 0.30 g 초과 이동하거나 구간 평균이 0.10 g 초과
+  이동하면 대기 없이 무효화하고 최소 1.2초의 새 구간을 요구한다.
+- 센서 오류, timeout, 과부하, 보정 및 tare epoch 변경은 이전 snapshot을
+  재사용하지 못하게 한다. 센서 오류를 UI가 잠깐 놓쳐도 fault 및 epoch로 검출한다.
+- snapshot이 유효하면 상태 문구와 버튼은 함께 `Stable - ready to continue`로
+  유지된다. 클릭 시에도 같은 조건을 재검증하며 표시만 활성화하는 방식은 쓰지 않는다.
+
+변화가 센서 잡음과 같은 크기라면 즉시 완벽하게 구분할 수 없다. 위 이동 임계값과
+유효 기간은 등록 전용의 초기 정책이며 실기에서 확인해야 한다. 칼리브레이션,
+tare, 추출 시작의 기존 strict stability gate는 유지한다.
+
 ## 취득과 전력
 
 기존 전용 FreeRTOS 태스크와 1 ms yielding polling을 유지한다.
@@ -88,6 +110,9 @@ RATE 핀에 의한 10/80 SPS 전환, GPIO interrupt 취득 및 LVGL 갱신 주�
 
 `make preview`는 실제 LVGL UI를 빌드하고 칼리브레이션의 counts와 gross 표시,
 tare 후 gross 유지, 물체 등록의 표시 및 저장 정밀도, timeout과 복구를 검증한다.
+`registration_test`는 잠깐의 strict stability 이탈, 심한 잡음, snapshot 만료,
+움직임 및 제거, 센서 오류와 보정 변경을 검증한다. UI 테스트는 strict stable이
+거짓인 순간에 실제 Continue를 눌러 아이콘 단계 진입과 평균값 저장을 확인한다.
 
 합성 ±0.2 g, 주기 1.4초 정지 입력에서 기존 median+tau 0.3초 EMA와 동일 입력을
 비교한다. 이 결과는 실기 센서 기록의 성능 보장이 아니며, 계량 정확도와 응답 지연은

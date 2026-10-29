@@ -21,6 +21,11 @@ inline constexpr std::uint64_t motion_confirm_ms = 200, filter_quiet_after_ms = 
 inline constexpr std::uint64_t display_confirm_ms = 300;
 inline constexpr std::uint64_t display_quiet_confirm_ms = 1000;
 inline constexpr float display_average_tau_s = 0.25F;
+// A registration may consume a recent strictly qualified mean despite brief
+// quality chatter. Never relax calibration/tare stability or hold across motion.
+inline constexpr std::uint64_t registration_snapshot_ms = 2000, registration_exit_ms = 300;
+inline constexpr float registration_exit_ratio = 1.5F;
+inline constexpr float registration_movement_g = 0.30F, registration_mean_shift_g = 0.10F;
 inline constexpr std::uint64_t sensor_timeout_ms = 1000;
 inline constexpr std::uint64_t stability_window_ms = 1200;
 inline constexpr std::uint64_t stability_min_ms = 1000;

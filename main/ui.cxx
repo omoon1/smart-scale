@@ -114,6 +114,7 @@ void View::open(Dialog dialog) {
     if (controller_.session().phase == Phase::brewing || controller_.session().phase == Phase::result) return;
     dialog_ = dialog;
     if (dialog == Dialog::registration) {
+        registration_measurement_.reset();
         registration_step_ = 0;
         registration_stable_ = true;
         registration_kind_ = Kind::cup;
@@ -282,9 +283,11 @@ void View::refresh_values() {
         }
     }
     if (registration_weight_label_) {
-        const bool stable = controller_.scale().ready() && controller_.scale().stable();
+        const auto snapshot = registration_measurement_.update(scale);
+        const bool stable = snapshot.has_value();
         set_text(registration_weight_label_, number(gross, " g").c_str());
-        set_text(registration_status_, controller_.scale().status());
+        set_text(registration_status_, stable ? "Stable - ready to continue" :
+                 scale.stable() ? "Wait for a fresh stable reading" : scale.status());
         if (stable) lv_obj_clear_state(registration_next_, LV_STATE_DISABLED);
         else lv_obj_add_state(registration_next_, LV_STATE_DISABLED);
     }
@@ -581,8 +584,9 @@ void View::action(Action a, int value) {
     case Action::stable: registration_stable_ = !registration_stable_; break;
     case Action::register_next:
         if (controller_.live() && registration_step_ == 1) {
-            if (!controller_.scale().ready() || !controller_.scale().stable() || controller_.scale().gross() <= 0) return;
-            registration_weight_ = controller_.scale().gross();
+            const auto snapshot = registration_measurement_.update(controller_.scale());
+            if (!snapshot) return;
+            registration_weight_ = snapshot->grams;
             registration_stable_ = true;
         }
         if (registration_step_ == 0 && kind_input_) {
@@ -591,6 +595,7 @@ void View::action(Action a, int value) {
         if (registration_step_ == 0 || (registration_step_ == 1 && registration_stable_)) ++registration_step_;
         break;
     case Action::register_back:
+        registration_measurement_.reset();
         if (registration_step_ > 0) --registration_step_; else dialog_ = Dialog::objects;
         break;
     case Action::choose_icon: {
