@@ -85,10 +85,56 @@ int main(int argc, char** argv) {
     static lv_indev_drv_t pointer;
     lv_indev_drv_init(&pointer); pointer.type = LV_INDEV_TYPE_POINTER; pointer.read_cb = input;
     lv_indev_drv_register(&pointer);
+    const bool coffee_test = argc > 1 && std::string(argv[1]) == "--coffee-screenshots";
     const bool live_test = argc > 1 && std::string(argv[1]) == "--live-screenshots";
-    smart_scale::Controller controller(live_test);
+    smart_scale::Controller controller(live_test || coffee_test);
+    if (coffee_test) controller.set_mode(smart_scale::Mode::pour_over);
     smart_scale::ui::View view(controller);
     view.init();
+    if (coffee_test) {
+        using namespace smart_scale;
+        std::filesystem::create_directories("build-host/screens");
+        require(controller.scale().restore({0, 1000}), "calibration");
+        require(controller.register_equipment({0, Kind::pour_over_set, "Pour-over set", "", 500.0F, {}}, true), "profile");
+        std::uint64_t now = 0;
+        auto feed = [&](int raw) {
+            for (int i = 0; i < 60; ++i) { controller.sensor_sample(raw, now += 100); controller.tick(.1F); pump(view, 100); }
+        };
+        feed(0); screenshot(view, "29-load-container");
+        feed(500000); screenshot(view, "30-load-coffee");
+        require(has_label(lv_scr_act(), "Tap to set"), "empty coffee offers manual entry");
+        feed(504900); click(view, 360, 200);
+        require(has_label(lv_scr_act(), "+0.1"), "below 5 g opens manual editor");
+        require(!controller.session().dose_g, "opening manual editor does not save a default");
+        click(view, 366, 32);
+        feed(518000); screenshot(view, "31-save-coffee");
+        require(has_label(lv_scr_act(), "Tap to save"), "candidate offers tap-to-save");
+        require(!controller.session().dose_g, "candidate remains unsaved");
+        const auto before_pulse = flush_count;
+        for (unsigned i = 0; i < 15; ++i) pump(view, 100);
+        require(flush_count > before_pulse, "candidate card pulses");
+        click(view, 360, 200);
+        require(controller.session().dose_source == DoseSource::measured, "click saves measured coffee");
+        require(!has_label(lv_scr_act(), "+0.1"), "save does not open manual editor");
+        feed(518000); screenshot(view, "32-start-brew");
+        require(has_label(lv_scr_act(), "Water flow starts timer."), "both registered shows ready guidance");
+        const auto after_save = flush_count;
+        for (unsigned i = 0; i < 15; ++i) pump(view, 100);
+        require(flush_count == after_save, "saved card stops pulsing");
+        click(view, 360, 200); screenshot(view, "33-edit-coffee");
+        require(has_label(lv_scr_act(), "+0.1"), "saved coffee opens manual editor");
+        click(view, 276, 216); click(view, 366, 32);
+        require(std::abs(*controller.session().dose_g - 18.1F) < .02F, "manual edit retained");
+        feed(518000);
+        for (unsigned i = 1; i <= 25 && controller.session().phase == Phase::ready; ++i) {
+            controller.sensor_sample(518000 + i * 200, now += 100); controller.tick(.1F); pump(view, 100);
+        }
+        require(controller.session().phase == Phase::brewing, "flow automatically starts brew");
+        require(controller.session().net_g > 1 && controller.session().net_g < 5, "brew excludes coffee");
+        screenshot(view, "34-coffee-auto-brew");
+        std::cout << "Coffee registration UI checks passed\n";
+        return 0;
+    }
     if (live_test) {
         std::filesystem::create_directories("build-host/screens");
         screenshot(view, "16-hx711-disconnected");
@@ -153,6 +199,7 @@ int main(int argc, char** argv) {
                 "registered mass is an unrounded qualified mean");
         click(view, 366, 32); // Close equipment list.
         feed(8254); // Actual placement ~99.6 g, registered mass ~100.12 g.
+        require(controller.set_dose(18), "coffee required before manual brew");
         click(view, 60, 286); // Start brew.
         require(controller.session().phase == smart_scale::Phase::brewing, "touch starts real brew");
         feed(8167); // -0.1 g net is noise, not cup removal.

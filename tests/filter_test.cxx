@@ -86,6 +86,8 @@ int main() {
 
     // Flow follows sample timestamps even when UI updates are batched/delayed.
     Controller c(true); assert(c.scale().restore({0, 1000}));
+    assert(c.register_equipment({0, Kind::cup, "Cup", "", 100.0F, {}}, true));
+    assert(c.set_dose(18));
     t = 0;
     for (unsigned i = 0; i < 40; ++i) c.sensor_sample(100000, t += 100);
     c.tick(4); assert(c.start_brew());

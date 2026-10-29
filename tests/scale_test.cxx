@@ -61,6 +61,8 @@ int main() {
     sample(0); assert(!live.start_brew()); // No vessel.
     sample(10000); near(live.session().net_g, 100);
     assert(live.tare()); near(live.scale().net(), 0);
+    assert(live.register_equipment({0, Kind::cup, "Cup", "", 100.0F, {}}, true));
+    sample(10000);
     assert(live.set_dose(18)); assert(live.start_brew());
     sample(12000); near(live.session().net_g, 20);
     sample(12000); near(live.session().flow_g_s, 0);
@@ -73,7 +75,7 @@ int main() {
     const float result = live.session().net_g;
     sample(0); near(live.session().net_g, result);
     live.next(); sample(0); assert(live.session().phase == Phase::ready);
-    sample(10000); assert(live.start_brew()); sample(11000);
+    sample(10000); assert(live.set_dose(18)); assert(live.start_brew()); sample(11000);
     sample(0); assert(live.session().uncertain); // Vessel removal invalidates result.
     live.reset(); sample(0);
     assert(live.session().phase == Phase::ready && live.record_count() == 2);
@@ -119,7 +121,9 @@ int main() {
     place(0); place(48000);
     assert(detection.session().active_object->kind == Kind::portafilter);
     assert(!detection.session().dose_g); // ±40 g is not a coffee-dose tolerance.
-    assert(detection.tare()); place(49800); near(*detection.session().dose_g, 18);
+    assert(detection.tare()); place(49800);
+    assert(!detection.session().dose_g); near(*detection.coffee_candidate(), 18);
+    assert(detection.save_coffee()); near(*detection.session().dose_g, 18);
     assert(detection.session().active_object->kind == Kind::portafilter);
     assert(detection.register_equipment({0, Kind::cup, "Other cup", "", 200.0F, {}}, true));
     place(0); place(17500);

@@ -49,6 +49,7 @@ void Controller::mark_brew_error(BrewError error) {
 void Controller::sensor_fault() {
     if (!live_) return;
     scale_.invalidate();
+    coffee_baseline_g_.reset();
     session_.brew_prepared = false;
     flow_start_.reset();
     empty_since_.reset();
@@ -63,6 +64,7 @@ void Controller::sensor_sample(std::optional<std::int32_t> raw, std::uint64_t no
     auto_brew_epoch_ = scale_.display_epoch();
     if (session_.phase == Phase::result) return; // Keep archived result immutable.
     if (!scale_.ready()) {
+        coffee_baseline_g_.reset();
         session_.brew_prepared = false;
         flow_start_.reset();
         empty_since_.reset();
@@ -93,7 +95,8 @@ void Controller::sensor_sample(std::optional<std::int32_t> raw, std::uint64_t no
             if (session_.phase == Phase::ready) {
                 session_.active_object.reset();
                 session_.vessel.reset();
-                recognition_checked_ = object_ambiguous_ = dose_tared_ = false;
+                recognition_checked_ = object_ambiguous_ = false;
+                coffee_baseline_g_.reset();
                 scale_.clear_tare();
                 tared_vessel_id_.reset(); vessel_baseline_g_.reset();
                 session_.brew_prepared = false;
@@ -107,7 +110,8 @@ void Controller::sensor_sample(std::optional<std::int32_t> raw, std::uint64_t no
             if (session_.phase == Phase::remove_load) session_.phase = Phase::ready;
             if (session_.phase == Phase::ready) {
                 session_.active_object.reset();
-                recognition_checked_ = object_ambiguous_ = dose_tared_ = false;
+                recognition_checked_ = object_ambiguous_ = false;
+                coffee_baseline_g_.reset();
                 scale_.clear_tare();
             }
         } else if (session_.phase == Phase::ready && !recognition_checked_) {
@@ -117,11 +121,19 @@ void Controller::sensor_sample(std::optional<std::int32_t> raw, std::uint64_t no
             object_ambiguous_ = match.ambiguous;
             if (match.equipment) {
                 session_.active_object = match.equipment;
+                coffee_baseline_g_ = scale_.reference_gross();
+                coffee_calibration_ = scale_.calibration();
+                if (match.equipment->kind == Kind::portafilter) scale_.set_tare(*coffee_baseline_g_);
                 if (match.equipment->kind == Kind::portafilter) session_.weighing_tool = match.equipment;
                 else session_.vessel = match.equipment;
             }
             target();
         }
+    }
+    if (session_.phase == Phase::ready && session_.active_object && !coffee_baseline_g_ && scale_.stable()) {
+        coffee_baseline_g_ = scale_.reference_gross();
+        coffee_calibration_ = scale_.calibration();
+        if (session_.active_object->kind == Kind::portafilter) scale_.set_tare(*coffee_baseline_g_);
     }
     update_brew_preparation();
     const bool eligible = auto_brew_enabled_ && session_.brew_prepared;
@@ -162,6 +174,14 @@ void Controller::update_brew_preparation() {
         session_.net_g = 0;
         session_.baseline_known = true;
     }
+    if (brew_zero_pending_) {
+        // First dose registration establishes the water baseline once. Editing
+        // an existing dose must never discard liquid already on the platform.
+        if (!scale_.tare()) return;
+        vessel_baseline_g_ = scale_.gross();
+        session_.net_g = 0;
+        brew_zero_pending_ = false;
+    }
     session_.brew_prepared = scale_.ready() && session_.dose_g &&
         std::isfinite(*session_.dose_g) && *session_.dose_g >= .1F && *session_.dose_g <= 60 &&
         session_.dose_source != DoseSource::unknown;
@@ -170,7 +190,8 @@ void Controller::update_brew_preparation() {
 bool Controller::tare() {
     if (!live_ || session_.phase != Phase::ready || !scale_.tare()) return false;
     session_.net_g = 0;
-    dose_tared_ = true;
+    coffee_baseline_g_ = scale_.reference_gross();
+    coffee_calibration_ = scale_.calibration();
     session_.baseline_known = true;
     flow_start_.reset();
     if (tared_vessel_id_) vessel_baseline_g_ = scale_.gross();
@@ -178,7 +199,8 @@ bool Controller::tare() {
     return true;
 }
 bool Controller::start_brew() {
-    if (!live_ || session_.phase != Phase::ready || !session_.loaded || scale_.gross() <= 2.0F || !scale_.tare()) return false;
+    if (!live_ || !session_.brew_prepared || !scale_.ready() || !scale_.stable()) return false;
+    scale_.set_tare(*vessel_baseline_g_);
     begin_brew();
     return true;
 }
@@ -228,7 +250,11 @@ bool Controller::select_equipment(std::size_t index) {
         recognition_checked_ = true;
         object_ambiguous_ = false;
         const auto& item = equipment_[index];
-        if (!session_.active_object || session_.active_object->id != item.id) dose_tared_ = false;
+        if (!session_.active_object || session_.active_object->id != item.id) {
+            coffee_baseline_g_ = scale_.stable() ? std::optional<float>{scale_.reference_gross()} : std::nullopt;
+            coffee_calibration_ = scale_.calibration();
+            if (coffee_baseline_g_ && item.kind == Kind::portafilter) scale_.set_tare(*coffee_baseline_g_);
+        }
         session_.active_object = item;
         if (item.kind == Kind::portafilter) session_.weighing_tool = item;
         else session_.vessel = item;
@@ -251,6 +277,7 @@ void Controller::place(std::size_t index) {
     target();
 }
 void Controller::remove_object() {
+    coffee_baseline_g_.reset(); brew_zero_pending_ = false;
     session_.loaded = false;
     session_.brew_prepared = false;
     flow_start_.reset(); tared_vessel_id_.reset(); vessel_baseline_g_.reset();
@@ -258,14 +285,48 @@ void Controller::remove_object() {
     mark_brew_error(BrewError::object_removed);
     // Session identity, dose and last valid weight survive removal.
 }
+std::optional<float> Controller::coffee_candidate() const {
+    if (!live_ || session_.phase != Phase::ready || session_.dose_g || !session_.loaded ||
+        !session_.active_object || object_ambiguous_ || !coffee_baseline_g_ ||
+        !scale_.ready() || !scale_.stable()) return {};
+    const auto calibration = scale_.calibration();
+    if (!coffee_calibration_ || !calibration || coffee_calibration_->zero != calibration->zero ||
+        coffee_calibration_->counts_per_gram != calibration->counts_per_gram) return {};
+    const float grams = scale_.reference_gross() - *coffee_baseline_g_;
+    // Reject transient movement even during stability's exit debounce.
+    const auto recent = scale_.recent_gross();
+    if (!recent || std::abs(*recent - scale_.reference_gross()) > config::registration_movement_g ||
+        !std::isfinite(grams) || grams < 5.0F || grams > 60.0F) return {};
+    return grams;
+}
+bool Controller::save_coffee() {
+    const auto candidate = coffee_candidate();
+    return candidate && set_dose(*candidate, DoseSource::measured);
+}
+void Controller::arm_flow_start() {
+    if (!auto_brew_enabled_ || !session_.brew_prepared || !scale_.ready() || !scale_.stable()) return;
+    if (const auto recent = scale_.recent_gross()) {
+        auto_brew_epoch_ = scale_.display_epoch();
+        flow_start_.update(*recent, scale_.reference_gross(), scale_.sample_ms(), true);
+    }
+}
+void Controller::set_auto_brew_enabled(bool enabled) {
+    if (auto_brew_enabled_ == enabled) return;
+    flow_start_.reset();
+    auto_brew_enabled_ = enabled;
+    arm_flow_start();
+}
 bool Controller::set_dose(float grams, DoseSource source) {
     if (session_.phase != Phase::ready || !std::isfinite(grams) ||
         grams < 0.1F || grams > 60.0F) return false;
+    if (!session_.dose_g && live_ && session_.active_object &&
+        session_.active_object->kind != Kind::portafilter) brew_zero_pending_ = true;
     session_.dose_g = grams;
     session_.dose_source = source;
     flow_start_.reset();
     target();
     update_brew_preparation();
+    arm_flow_start();
     return true;
 }
 void Controller::weigh_beans(float grams) {
@@ -359,6 +420,7 @@ void Controller::finish() {
     archive(false);
 }
 void Controller::reset() {
+    coffee_baseline_g_.reset(); coffee_calibration_.reset(); brew_zero_pending_ = false;
     tared_vessel_id_.reset(); vessel_baseline_g_.reset();
     flow_start_.reset(); auto_brew_origin_ms_.reset();
     if (session_.phase == Phase::brewing) archive(true);
@@ -376,7 +438,7 @@ void Controller::reset() {
     if (live_) {
         scale_.clear_tare();
         empty_since_.reset();
-        recognition_checked_ = object_ambiguous_ = dose_tared_ = false;
+        recognition_checked_ = object_ambiguous_ = false;
     }
 }
 void Controller::next() { reset(); }
@@ -427,8 +489,6 @@ void Controller::tick(float dt) {
             } else session_.flow_g_s = 0;
         } else if (session_.phase == Phase::ready && valid) {
             session_.net_g = scale_.net();
-            if (dose_tared_ && scale_.stable() && session_.active_object && session_.active_object->kind == Kind::portafilter)
-                weigh_beans(session_.net_g);
         }
         if (session_.uncertain && (session_.phase == Phase::brewing || session_.phase == Phase::result)) {
             brew_error_elapsed_s_ += static_cast<double>(dt);

@@ -56,10 +56,9 @@ public:
     void sensor_sample(std::optional<std::int32_t> raw, std::uint64_t now_ms);
     bool tare();
     bool start_brew();
-    void set_auto_brew_enabled(bool enabled) {
-        if (auto_brew_enabled_ != enabled) flow_start_.reset();
-        auto_brew_enabled_ = enabled;
-    }
+    [[nodiscard]] std::optional<float> coffee_candidate() const;
+    bool save_coffee();
+    void set_auto_brew_enabled(bool enabled);
     double error_remaining_s() const {
         const double remaining = config::brew_error_return_s - brew_error_elapsed_s_;
         return remaining > 0 ? remaining : 0;
@@ -93,6 +92,7 @@ private:
     void mark_brew_error(BrewError error);
     void begin_brew(float elapsed_s = 0);
     void update_brew_preparation();
+    void arm_flow_start();
     std::optional<std::uint32_t> tared_vessel_id_;
     std::optional<float> vessel_baseline_g_;
     std::optional<Calibration> vessel_calibration_;
@@ -104,7 +104,10 @@ private:
     std::optional<std::uint64_t> empty_since_;
     std::optional<std::uint64_t> below_object_since_;
     double brew_error_elapsed_s_{};
-    bool recognition_checked_{}, object_ambiguous_{}, dose_tared_{};
+    bool recognition_checked_{}, object_ambiguous_{};
+    std::optional<float> coffee_baseline_g_;
+    std::optional<Calibration> coffee_calibration_;
+    bool brew_zero_pending_{};
     Scale scale_;
     Session session_{};
     std::array<Equipment, config::max_equipment> equipment_{};
