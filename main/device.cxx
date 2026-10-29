@@ -8,6 +8,7 @@
 #include "esp_lcd_touch_ft6336.h"
 #include "esp_lvgl_port.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -15,6 +16,10 @@ namespace smart_scale::device::display {
 Device& device() { static Device instance; return instance; }
 void Device::init() {
     if (initialized_) return;
+    // Hide undefined panel RAM before rail setup, reset delays and LVGL startup.
+    // Preload the output latch before enabling the pin to avoid a high pulse.
+    ESP_ERROR_CHECK(gpio_set_level(static_cast<gpio_num_t>(config::lcd_backlight), 0));
+    ESP_ERROR_CHECK(gpio_set_direction(static_cast<gpio_num_t>(config::lcd_backlight), GPIO_MODE_OUTPUT));
     i2c_master_bus_config_t i2c{};
     i2c.i2c_port = I2C_NUM_0;
     i2c.sda_io_num = static_cast<gpio_num_t>(config::i2c_sda);
@@ -123,7 +128,7 @@ void Device::init() {
     light.speed_mode = LEDC_LOW_SPEED_MODE;
     light.channel = LEDC_CHANNEL_0;
     light.timer_sel = LEDC_TIMER_1;
-    light.duty = 818;
+    light.duty = 0; // Remain dark until show() completes the first full refresh.
     ESP_ERROR_CHECK(ledc_channel_config(&light));
     gpio_config_t button{};
     button.pin_bit_mask = 1ULL << config::reset_button;
@@ -132,6 +137,24 @@ void Device::init() {
     ESP_ERROR_CHECK(gpio_config(&button));
     initialized_ = true;
     ESP_LOGI("smart-scale", "Waveshare ST7796/FT6336: 480x320 landscape, dummy data");
+}
+esp_err_t Device::show() {
+    if (!initialized_) return ESP_ERR_INVALID_STATE;
+    // These are partial draw buffers, not full framebuffers. Repaint every pixel
+    // of panel RAM with the actual UI while the backlight remains off.
+    lv_obj_invalidate(lv_disp_get_scr_act(display_));
+    lv_refr_now(display_);
+    // LVGL may return with the final SPI DMA transfer still in flight. The
+    // port's transfer-complete callback clears flushing without taking its lock.
+    auto* draw_buf = lv_disp_get_draw_buf(display_);
+    const auto deadline = esp_timer_get_time() + 1000000;
+    while (draw_buf->flushing) {
+        if (esp_timer_get_time() >= deadline) return ESP_ERR_TIMEOUT;
+        vTaskDelay(1);
+    }
+    auto error = ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 818);
+    if (error != ESP_OK) return error;
+    return ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
 }
 bool Device::reset_pressed() {
     // Called at 100 ms: two consecutive low samples, once per press.

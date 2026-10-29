@@ -33,6 +33,7 @@ extern "C" void app_main() {
     static smart_scale::ui::View view(*controller);
     if (lvgl_port_lock(0)) {
         view.init();
+        ESP_ERROR_CHECK(display.show());
         lvgl_port_unlock();
     }
     auto previous = esp_timer_get_time();
