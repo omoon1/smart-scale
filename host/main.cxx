@@ -152,9 +152,15 @@ int main(int argc, char** argv) {
                 std::abs(*controller.equipment()[0].empty_g - 100.1F) > 0.005F,
                 "registered mass is an unrounded qualified mean");
         click(view, 366, 32); // Close equipment list.
-        feed(8600);
+        feed(8254); // Actual placement ~99.6 g, registered mass ~100.12 g.
         click(view, 60, 286); // Start brew.
         require(controller.session().phase == smart_scale::Phase::brewing, "touch starts real brew");
+        feed(8167); // -0.1 g net is noise, not cup removal.
+        require(!controller.session().uncertain && controller.session().net_g < -.09F,
+                "negative tenth-gram reading stays in live brew despite registration offset");
+        require(!has_label(lv_scr_act(), "Object removed - home in 03:00"),
+                "negative net does not show removal error");
+        screenshot(view, "26-hx711-negative-net");
         feed(25920);
         screenshot(view, "20-hx711-brewing");
         feed(17260); // 110 g gross: liquid decreased, registered cup remains.

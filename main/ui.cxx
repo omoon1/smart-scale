@@ -258,11 +258,14 @@ void View::refresh_values() {
         display_epoch_ = scale.display_epoch();
         display_phase_ = s.phase;
     }
+    const auto stats = scale.stability_stats();
+    const float noise_counts = static_cast<float>(stats.std_counts);
+    const float noise_g = scale.calibration() ? noise_counts / std::abs(scale.calibration()->counts_per_gram) : 0;
     const auto gross = gross_display_.update(scale.ready() ? std::optional<float>{scale.gross()} : std::nullopt,
-                                             scale.sample_ms(), scale.quiet());
+                                             scale.sample_ms(), scale.quiet(), true, noise_g);
     const auto counts = counts_display_.update(scale.filtered_counts() ?
         std::optional<float>{static_cast<float>(*scale.filtered_counts())} : std::nullopt,
-        scale.sample_ms(), scale.quiet(), false);
+        scale.sample_ms(), scale.quiet(), false, noise_counts);
     if (start_button_) {
         const bool ready = controller_.scale().ready() && controller_.scale().stable();
         if (ready && s.loaded) lv_obj_clear_state(start_button_, LV_STATE_DISABLED);
@@ -297,7 +300,7 @@ void View::refresh_values() {
     if (controller_.live()) {
         if (s.phase != Phase::result)
             displayed = weight_display_.update(displayed, scale.sample_ms(),
-                                                scale.quiet() && s.phase != Phase::brewing);
+                                                scale.quiet(), true, noise_g);
     }
     const auto weight_text = number(displayed);
     // Log actual visible transitions, including unavailable/recovery. Retain the
@@ -315,12 +318,15 @@ void View::refresh_values() {
         const auto& scale = controller_.scale();
         const auto raw = scale.last_raw() ? std::to_string(*scale.last_raw()) : "NA";
         const auto gross = scale.ready() ? number(scale.gross(), " g") : "NA";
-        char line[256];
+        const char* error = s.brew_error == BrewError::object_removed ? "object_removed" :
+                            s.brew_error == BrewError::sensor_fault ? "sensor_fault" : "none";
+        char line[384];
         std::snprintf(line, sizeof(line),
-            "display=%s g raw=%s sample_ms=%llu gross=%s net=%.4f g stable=%d ready=%d status=%s",
+            "display=%s g raw=%s sample_ms=%llu gross=%s net=%.4f g stable=%d ready=%d status=%s brew_error=%s removal_below=%.4f g",
             weight_text.c_str(), raw.c_str(), static_cast<unsigned long long>(scale.sample_ms()),
             gross.c_str(), static_cast<double>(scale.ready() ? scale.net() : NAN),
-            scale.stable(), scale.ready(), scale.status());
+            scale.stable(), scale.ready(), scale.status(), error,
+            static_cast<double>(s.removal_threshold_g.value_or(NAN)));
 #ifdef ESP_PLATFORM
         ESP_LOGI("weight", "%s", line);
 #else

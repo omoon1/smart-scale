@@ -14,19 +14,21 @@ inline constexpr int dose_max_tenths = 600;
 inline constexpr float object_tolerance_g = 40.0F; // Identity only, not a dose or tare tolerance.
 inline constexpr float filter_tau_s = 0.3F;
 // Flow keeps a fixed filter; adaptive weight mode changes must not create flow.
-inline constexpr float filter_fast_tau_s = 0.15F, filter_quiet_tau_s = 0.8F;
+inline constexpr float filter_fast_tau_s = 0.15F, filter_quiet_tau_s = 1.2F;
 inline constexpr float filter_transition_tau_s = 0.3F, motion_detector_tau_s = 0.12F;
 inline constexpr float motion_threshold_g = 0.12F;
 inline constexpr std::uint64_t motion_confirm_ms = 200, filter_quiet_after_ms = 1000;
 inline constexpr std::uint64_t display_confirm_ms = 300;
 inline constexpr std::uint64_t display_quiet_confirm_ms = 1000;
 inline constexpr float display_average_tau_s = 0.25F;
+inline constexpr float display_noise_decay_s = 2.0F, display_noise_multiplier = 3.0F;
 // A registration may consume a recent strictly qualified mean despite brief
 // quality chatter. Never relax calibration/tare stability or hold across motion.
 inline constexpr std::uint64_t registration_snapshot_ms = 2000, registration_exit_ms = 300;
 inline constexpr float registration_exit_ratio = 1.5F;
 inline constexpr float registration_movement_g = 0.30F, registration_mean_shift_g = 0.10F;
-inline constexpr float brew_removal_margin_g = 0.30F;
+// Removal is a physical loss of load, not a sub-gram beverage fluctuation.
+inline constexpr float brew_removal_margin_g = 1.0F;
 inline constexpr std::uint64_t brew_removal_hold_ms = 300;
 inline constexpr double brew_error_return_s = 180.0;
 inline constexpr std::uint64_t sensor_timeout_ms = 1000;

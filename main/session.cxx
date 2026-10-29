@@ -67,11 +67,11 @@ void Controller::sensor_sample(std::optional<std::int32_t> raw, std::uint64_t no
     // Removal needs only a persistent near-zero median, not a fresh 3.2 s drift
     // window. Otherwise a normal lift/replacement never rearms recognition.
     const auto recent = scale_.recent_gross();
-    if (session_.phase == Phase::brewing && session_.empty_reference_g && recent) {
-        // Compare physical gross weight with the locked registered empty mass,
-        // never with the previous beverage/net reading. Median + hold reject
-        // isolated spikes; a small margin covers normal empty-object jitter.
-        if (*recent < *session_.empty_reference_g - config::brew_removal_margin_g) {
+    if (session_.phase == Phase::brewing && session_.removal_threshold_g && recent) {
+        // A registered empty mass can differ from today's starting mass. Lock
+        // a conservative physical threshold once; never move it up as coffee
+        // is added or compare it with beverage net/display values.
+        if (*recent < *session_.removal_threshold_g) {
             if (!below_object_since_) below_object_since_ = scale_.sample_ms();
             if (scale_.sample_ms() - *below_object_since_ >= config::brew_removal_hold_ms)
                 mark_brew_error(BrewError::object_removed);
@@ -129,9 +129,13 @@ bool Controller::start_brew() {
     session_.uncertain = false;
     session_.brew_error = BrewError::none;
     session_.empty_reference_g.reset();
+    session_.removal_threshold_g.reset();
     const auto& object = session_.active_object;
-    if (object && object->empty_g && std::isfinite(*object->empty_g) && *object->empty_g > 0)
+    if (object && object->empty_g && std::isfinite(*object->empty_g) && *object->empty_g > 0) {
         session_.empty_reference_g = object->empty_g;
+        session_.removal_threshold_g = std::min({*object->empty_g, scale_.gross(), scale_.reference_gross()})
+                                       - config::brew_removal_margin_g;
+    }
     below_object_since_.reset();
     brew_error_elapsed_s_ = 0;
     session_.net_g = session_.seconds = session_.flow_g_s = 0;

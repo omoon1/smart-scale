@@ -11,7 +11,7 @@ public:
     explicit WeightDisplay(float resolution = 0.1F, float hysteresis = config::display_hysteresis_g,
                            float zero_band = config::display_zero_deadband_g)
         : resolution_(resolution), hysteresis_(hysteresis), zero_band_(zero_band) {}
-    void reset() { held_.reset(); candidate_direction_ = 0; last_ms_.reset(); }
+    void reset() { held_.reset(); candidate_direction_ = 0; last_ms_.reset(); noise_ = 0; }
     // Immediate legacy path (e.g. an immutable result). Timed live readouts use
     // the overload below; no view may feed these values into calibration/tare.
     std::optional<float> update(std::optional<float> grams, bool zero_deadband = true) {
@@ -26,13 +26,19 @@ public:
         return held_;
     }
     std::optional<float> update(std::optional<float> value, std::uint64_t sample_ms,
-                                bool quiet, bool zero_deadband = true) {
+                                bool quiet, bool zero_deadband = true, float noise = 0) {
         if (!value || !std::isfinite(*value)) { reset(); return std::nullopt; }
         if (last_ms_ && sample_ms < *last_ms_) reset();
         if (last_ms_ && sample_ms == *last_ms_) return held_;
         const auto elapsed = last_ms_ ? sample_ms - *last_ms_ : 0;
         if (elapsed > config::sensor_timeout_ms) reset();
         last_ms_ = sample_ms;
+        if (!std::isfinite(noise) || noise < 0) noise = 0;
+        // A short low-noise segment at an oscillation peak must not reopen
+        // the gate. Decay the noise envelope with actual sample time (2 s).
+        noise_ = std::max(std::min(noise, 3 * resolution_ / config::display_noise_multiplier),
+                          noise_ * static_cast<float>(std::exp(-static_cast<double>(elapsed) / 1000 /
+                                                               config::display_noise_decay_s)));
         if (!held_) {
             held_ = zero_deadband && std::abs(*value) <= zero_band_ ? 0 : rounded(*value);
             reference_ = average_ = *value;
@@ -43,8 +49,12 @@ public:
                      config::display_average_tau_s)) * (*value - average_);
         if (quiet != was_quiet_) candidate_direction_ = 0;
         was_quiet_ = quiet;
+        // Noise is the unsmoothed sensor-window standard deviation in the
+        // same units as value. Bound it so a step cannot hide itself forever.
+        const float noise_band = std::min(config::display_noise_multiplier * noise_, 3 * resolution_);
         const float delta = std::abs(*value - *held_);
-        if ((!quiet && delta >= hysteresis_) || delta >= std::max(10 * resolution_, 7 * hysteresis_)) {
+        if ((!quiet && delta >= std::max(hysteresis_, noise_band)) ||
+            delta >= std::max(10 * resolution_, 7 * hysteresis_)) {
             held_ = rounded(*value);
             reference_ = *value;
             candidate_direction_ = 0;
@@ -56,7 +66,7 @@ public:
         const float evidence = quiet ? average_ : *value;
         const float proposed = rounded(evidence);
         const float change = evidence - reference_;
-        const float amplitude = resolution_ * (quiet ? 0.8F : 0.6F);
+        const float amplitude = std::max(resolution_ * (quiet ? 0.8F : 0.6F), noise_band);
         // Separate up/down boundaries around the currently displayed digit.
         const float boundary = resolution_ * 0.7F;
         const bool beyond_boundary = std::abs(evidence - *held_) >= boundary ||
@@ -82,7 +92,7 @@ private:
     }
     float resolution_, hysteresis_, zero_band_;
     std::optional<float> held_;
-    float reference_{}, average_{};
+    float reference_{}, average_{}, noise_{};
     int candidate_direction_{};
     bool was_quiet_{};
     std::uint64_t candidate_since_{};

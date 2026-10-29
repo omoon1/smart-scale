@@ -6,6 +6,27 @@
 using namespace smart_scale;
 
 int main() {
+    // Whole sensor/display path, including the noise estimate that a real
+    // step temporarily inflates. Preserve small additions, reversals and pour.
+    for (const unsigned interval : {100U, 13U}) {
+        for (const float step : {.1F, -.1F, .2F, -.2F, 2.0F}) {
+            Scale scale; assert(scale.restore({0, 1000}));
+            WeightDisplay display;
+            unsigned last_ui = 0, accepted = 0;
+            for (unsigned ms = interval; ms <= 12000; ms += interval) {
+                scale.ingest(100000 + (ms > 6000 ? static_cast<int>(step * 1000) : 0), ms);
+                if (!scale.ready() || ms - last_ui < 100) continue;
+                last_ui = ms;
+                const auto shown = display.update(scale.gross() - 100, scale.sample_ms(), scale.quiet(), true,
+                                                   scale.stability_stats().std_counts / 1000);
+                const bool reached = std::abs(step) > 1 ? *shown >= step * .9F - .001F :
+                                     std::abs(*shown - step) < .01F;
+                if (!accepted && ms > 6000 && reached) accepted = ms - 6000;
+            }
+            assert(accepted && accepted <= (std::abs(step) > 1 ? 900U : 5000U));
+            std::cout << "sensor/display step=" << step << "g dt=" << interval << "ms accepted=" << accepted << "ms\n";
+        }
+    }
     // Recorded-data replay can replace these deterministic synthetic signals.
     // Compare identical +/-0.2 g oscillations against the previous fixed EMA.
     for (const unsigned interval : {100U, 13U}) {

@@ -31,6 +31,7 @@ struct Session {
     float net_g{}, seconds{}, flow_g_s{};
     bool loaded{}, baseline_known{}, uncertain{}, paused{};
     std::optional<float> empty_reference_g;
+    std::optional<float> removal_threshold_g;
     BrewError brew_error{BrewError::none};
     std::array<Point, config::max_samples> samples{};
     std::size_t sample_count{};

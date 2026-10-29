@@ -4,6 +4,36 @@
 using namespace smart_scale;
 
 int main() {
+    // Registration and the next placement can differ by a fraction of a gram.
+    // A -0.1 g beverage reading is not evidence that the cup was removed.
+    for (const unsigned interval : {100U, 13U}) {
+        for (const float polarity : {1.0F, -1.0F}) {
+            Controller c(true);
+            assert(c.scale().restore({0, polarity * 1000}));
+            assert(c.register_equipment({0, Kind::cup, "Cup", "", 100.0F, {}}, true));
+            std::uint64_t now = 0;
+            auto feed = [&](float grams, unsigned duration) {
+                for (unsigned ms = 0; ms < duration; ms += interval) {
+                    c.sensor_sample(static_cast<int>(grams * polarity * 1000), now += interval);
+                    c.tick(interval / 1000.0F);
+                }
+            };
+            feed(99.6F, 6000);
+            assert(c.start_brew());
+            assert(c.session().removal_threshold_g && *c.session().removal_threshold_g < 98.61F);
+            feed(99.5F, 3000);
+            assert(!c.session().uncertain);
+            assert(c.session().net_g < -0.09F && c.session().net_g > -0.11F);
+            for (unsigned i = 0; i < 20; ++i) {
+                feed(99.4F, 300); feed(99.8F, 300);
+                assert(!c.session().uncertain);
+            }
+            feed(120, 6000); feed(99.5F, 3000);
+            assert(!c.session().uncertain); // Liquid decrease, cup remains.
+            feed(90, 1000);
+            assert(c.session().brew_error == BrewError::object_removed);
+        }
+    }
     for (const float polarity : {1.0F, -1.0F}) {
         Controller c(true);
         assert(c.scale().restore({0, polarity * 1000}));
