@@ -12,6 +12,7 @@
 #include "esp_sleep.h"
 #include "sdkconfig.h"
 #include "expander_wake.hxx"
+#include "charger_wake.hxx"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -254,13 +255,30 @@ esp_err_t Device::light_sleep(uint64_t& started_us, uint64_t& ended_us, bool& us
     bool gpio_armed = false, wake_enabled = false;
 #ifdef CONFIG_SMART_SCALE_BOARD_35_V2
     std::uint32_t baseline{};
+    auto pmu_read = [this](std::uint8_t reg, std::uint8_t& value) {
+        return i2c_master_transmit_receive(pmu_, &reg, 1, &value, 1, 20) == ESP_OK;
+    };
+    auto pmu_write = [this](std::uint8_t reg, std::uint8_t value) {
+        const std::uint8_t data[] = {reg, value};
+        return i2c_master_transmit(pmu_, data, sizeof(data), 20) == ESP_OK;
+    };
     auto read_port = [this](std::uint32_t& value) {
         // Driver performs a hardware input-port read, acknowledging the shared INT.
         return esp_io_expander_get_level(expander_, 0xff, &value) == ESP_OK;
     };
     auto read_touch = [this](bool& value) { return touch_pressed(value) == ESP_OK; };
-    // Only change P2's direction; preserve reset, amplifier and PMU output latches.
-    error = esp_io_expander_set_dir(expander_, expander_touch_mask, IO_EXPANDER_INPUT);
+    // Preserve output latches; P2 and P5 carry touch and PMU interrupts.
+    error = esp_io_expander_set_dir(expander_, expander_touch_mask | expander_pmu_mask, IO_EXPANDER_INPUT);
+    if (error == ESP_OK) {
+        bool connected{};
+        if (!arm_charger_wake(pmu_read, pmu_write, connected)) {
+            ESP_LOGW("power", "sleep deferred: charger wake setup failed");
+            error = ESP_FAIL;
+        } else if (connected) {
+            user_wake = true;
+            error = ESP_ERR_INVALID_STATE;
+        }
+    }
     if (error == ESP_OK) {
         const auto preparation = prepare_expander_wake(read_port, read_touch,
             [pin] { return gpio_get_level(pin) != 0; }, baseline);
@@ -301,7 +319,11 @@ esp_err_t Device::light_sleep(uint64_t& started_us, uint64_t& ended_us, bool& us
             const bool port_ok = read_port(inputs);
             const bool touch_ok = read_touch(pressed);
             const auto reason = classify_expander_wake(baseline, inputs, pressed, port_ok && touch_ok);
-            user_wake = reason != ExpanderWake::shared;
+            bool inserted{};
+            const bool charger_ok = acknowledge_charger_wake(pmu_read, pmu_write, inserted);
+            user_wake = inserted || !charger_ok || reason != ExpanderWake::shared;
+            if (inserted || !charger_ok)
+                ESP_LOGI("power", "charger wake: inserted=%d acknowledged=%d", inserted, charger_ok);
             ESP_LOGI("power", "expander wake: reason=%d before=0x%02x after=0x%02x touch=%d elapsed_ms=%llu",
                      static_cast<int>(reason), static_cast<unsigned>(baseline), static_cast<unsigned>(inputs),
                      pressed, static_cast<unsigned long long>((ended_us - started_us) / 1000));

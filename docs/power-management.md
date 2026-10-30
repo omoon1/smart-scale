@@ -11,7 +11,7 @@ This change targets the current `main` **ESP32-S3-Touch-LCD-3.5 / ST7796 / FT633
 | 60 s | Screen off | Backlight zero, display refresh timer paused; touch and weighing continue |
 | 360 s | Sleep eligible | Five continuous minutes screen-off; light sleep only with verified touch IRQ configuration |
 
-Touch, the BOOT/application button, or a weight change of at least 0.5 g sustained for 300 ms resets idle. The weight anchor is retained so slow cumulative changes count; invalid readings and ordinary sensor noise do not. Brewing (including flow pauses) and editing dialogs keep the display bright; the read-only battery history panel does not inhibit idle transitions. This is deliberately stronger than only blocking sleep during calibration and registration. Releasing an inhibitor starts a fresh idle interval. USB uses the same policy.
+Touch, the BOOT/application button, or a weight change of at least 0.5 g sustained for 300 ms resets idle. The weight anchor is retained so slow cumulative changes count; invalid readings and ordinary sensor noise do not. Brewing (including flow pauses) and editing dialogs keep the display bright; the read-only battery history panel does not inhibit idle transitions. This is deliberately stronger than only blocking sleep during calibration and registration. Releasing an inhibitor starts a fresh idle interval. While valid external power is connected (charging, full, or USB without a battery), idle stops at 30% dimming: the screen stays on and sleep is inhibited. Connecting or disconnecting power starts a fresh idle interval; brewing/editing still keeps full normal brightness. Source changes are detected by the existing five-second awake battery poll or the forced post-wake sample. A transient PMU read error retains the last valid power-source policy while telemetry displays unknown. Before any valid reading, the default is the battery idle policy.
 
 The first touch or application-button press on a dark screen only wakes it. Touch suppression lasts through release and occurs in the input adapter before any widget sees the gesture, including dropdowns and long presses. Weight changes can wake screen-off, but cannot wake sleep because HX711 is powered down.
 
@@ -54,16 +54,20 @@ The V2 sequence:
 
 1. Hold the LVGL lock, reject active/held touch, and ask acquisition to power HX711
    down with acknowledgement (500 ms timeout).
-2. Configure GPIO4 as a pulled-up input and stop LVGL. Set only expander P2 to input,
+2. Configure GPIO4 as a pulled-up input and stop LVGL. Set expander P2 (touch) and P5 (PMU IRQ) to input,
    preserving other directions and all output latches, including LCD reset and power control.
-3. Read FT6336 TD_STATUS, read the full expander input port to acknowledge shared
+3. Enable AXP2101 VBUS-insertion IRQ (0x41 bit 7), preserving other enable bits,
+   acknowledge only its stale status (0x49 bit 7, write-one-to-clear), and check
+   current external power. Connected power cancels entry. No charger voltage,
+   current, battery model or rail setting is changed. Read FT6336 TD_STATUS, read the full expander input port to acknowledge shared
    interrupts and capture a baseline, then read TD_STATUS again. A held touch or low
-   P2 defers sleep and wakes the display. An I2C failure or pending shared INT defers sleep.
+   P2 defers sleep and wakes the display. An I2C failure, low PMU IRQ input or pending shared INT defers sleep.
 4. Arm low-level GPIO wake and recheck GPIO4 immediately before sleeping. Do not
    read the expander again between that check and sleep, to avoid clearing a new event.
 5. On successful wake, record the actual sleep interval, read/acknowledge the expander
    input port, and read TD_STATUS. Touch points, low P2, or a changed P2 mean touch.
-   A known change on other input pins alone is a shared peripheral event and stays dark.
+   A known change on other input pins alone is a shared peripheral event and stays dark,
+   except VBUS insertion, which is acknowledged and wakes the display.
    An unchanged snapshot (possible short pulse) or an I2C failure wakes conservatively.
 6. Disable the wake source, resume LVGL and HX711, clear transient measurement filters,
    and preserve calibration, tare, container and dose. Real/ambiguous wakes restart the
@@ -76,6 +80,14 @@ expander snapshots. Wake reason codes: 0 touch, 1 shared, 2 ambiguous, 3 I2C err
 Preparation codes: 0 ready, 1 touch, 2 pending IRQ, 3 I2C error.
 The history marks only successful sleep-call intervals as Sleep; setup, failed entry,
 and retry backoff remain Active. Post-wake I2C errors do not erase a successful sleep interval.
+
+Charger insertion during V2 sleep is armed explicitly through AXP2101 IRQ → EXIO5
+→ GPIO4. The handler acknowledges only VBUS insertion and refreshes battery telemetry.
+Unrelated PMU flags are preserved; a persistently low PMU IRQ blocks the next sleep
+attempt rather than hiding future charger events. Custom direct-touch wiring has no
+charger wake route in this implementation; it detects power on its next touch wake.
+Register definitions were cross-checked against [XPowersLib AXP2101 IRQ definitions](https://github.com/lewisxhe/XPowersLib/blob/master/src/XPowersParams.hpp)
+and [register addresses](https://github.com/lewisxhe/XPowersLib/blob/master/src/REG/AXP2101Constants.h).
 
 ### Corner cases and hardware validation
 

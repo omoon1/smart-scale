@@ -1,8 +1,11 @@
 #include "expander_wake.hxx"
+#include "charger_wake.hxx"
 #include "power.hxx"
 #include <cassert>
 #include <cstdint>
 #include <vector>
+#include <array>
+#include <utility>
 using namespace smart_scale;
 
 struct Hardware {
@@ -32,6 +35,8 @@ int main() {
     assert(raced.prepare(baseline) == WakePreparation::touch);
     Hardware pending; pending.irq = false;
     assert(pending.prepare(baseline) == WakePreparation::pending_irq);
+    Hardware pmu_pending; pmu_pending.port &= ~expander_pmu_mask;
+    assert(pmu_pending.prepare(baseline) == WakePreparation::pending_irq);
     Hardware port_fault; port_fault.fail_port = true;
     assert(port_fault.prepare(baseline) == WakePreparation::io_error);
     Hardware touch_fault; touch_fault.fail_touch = true;
@@ -58,4 +63,38 @@ int main() {
     power.retry_sleep(790001);
     assert(power.update(790002,true) == PowerState::active);
     assert(!power.sleep_due(900000)); // brewing still inhibits sleep
+
+    std::array<std::uint8_t,256> registers{};
+    registers[3] = 0x4a; registers[0x41] = 0x15; registers[0x49] = 0x8f;
+    std::vector<std::pair<unsigned,unsigned>> writes;
+    auto read = [&](std::uint8_t reg, std::uint8_t& value) { value=registers[reg]; return true; };
+    auto write = [&](std::uint8_t reg, std::uint8_t value) {
+        writes.emplace_back(reg,value);
+        if (reg == 0x49) registers[reg] &= ~value; // model W1C
+        else registers[reg] = value;
+        return true;
+    };
+    bool connected{};
+    assert(arm_charger_wake(read,write,connected)); assert(!connected);
+    assert(registers[0x41] == 0x95); // preserve existing enabled IRQs
+    assert(registers[0x49] == 0x0f); // preserve unrelated pending IRQs
+    assert((writes == std::vector<std::pair<unsigned,unsigned>>{{0x41,0x95},{0x49,0x80}}));
+    registers[0] = 0x20;
+    assert(arm_charger_wake(read,write,connected)); assert(connected);
+    registers[1] = 0x08; // VBUS present but not good
+    assert(arm_charger_wake(read,write,connected)); assert(!connected);
+    registers[0x49] = 0xc1;
+    bool inserted{};
+    assert(acknowledge_charger_wake(read,write,inserted)); assert(inserted);
+    assert(registers[0x49] == 0x41);
+    assert(acknowledge_charger_wake(read,write,inserted)); assert(!inserted);
+    auto failed_read = [](std::uint8_t, std::uint8_t&) { return false; };
+    auto failed_write = [](std::uint8_t, std::uint8_t) { return false; };
+    assert(!arm_charger_wake(failed_read,write,connected));
+    assert(!arm_charger_wake(read,failed_write,connected));
+    assert(!acknowledge_charger_wake(failed_read,write,inserted));
+    registers[0x49] = 0x80;
+    assert(!acknowledge_charger_wake(read,failed_write,inserted));
+    registers[3] = 0x42;
+    assert(!arm_charger_wake(read,write,connected));
 }

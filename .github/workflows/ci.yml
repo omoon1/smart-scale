@@ -28,6 +28,9 @@ jobs:
         shell: bash
         run: |
           . "$IDF_PATH/export.sh"
+          # Pin the resolver too: older image versions can resolve a second LVGL
+          # major during Kconfig retry despite the application's 8.4.0 lock.
+          python -m pip install 'idf-component-manager==2.5.2'
           if [ "${{ matrix.wake }}" = expander-v2 ]; then
             echo 'CONFIG_SMART_SCALE_BOARD_35_V2=y' >> sdkconfig.defaults
           elif [ "${{ matrix.wake }}" = custom-direct ]; then

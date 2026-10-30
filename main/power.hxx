@@ -17,15 +17,17 @@ public:
         if (!candidate_) candidate_ = now;
         if (now - *candidate_ >= 300) { anchor_ = grams; candidate_.reset(); activity(now); }
     }
-    PowerState update(std::uint64_t now, bool inhibit) {
+    PowerState update(std::uint64_t now, bool inhibit, bool external_power = false) {
         // Keep dialogs and brewing bright; release starts a fresh idle period.
-        if (inhibit || inhibited_) activity(now);
+        // Plug/unplug starts a fresh interval; plugged-in idle may only dim.
+        if (inhibit || inhibited_ || external_power != external_power_) activity(now);
         inhibited_ = inhibit;
+        external_power_ = external_power;
         const auto idle = now - activity_ms_;
-        state_ = idle >= 60000 ? PowerState::screen_off : idle >= 30000 ? PowerState::dimmed : PowerState::active;
+        state_ = idle >= 60000 && !external_power_ ? PowerState::screen_off : idle >= 30000 ? PowerState::dimmed : PowerState::active;
         return state_;
     }
-    bool sleep_due(std::uint64_t now) const { return !inhibited_ && now >= retry_ms_ && now - activity_ms_ >= 360000; }
+    bool sleep_due(std::uint64_t now) const { return !inhibited_ && !external_power_ && now >= retry_ms_ && now - activity_ms_ >= 360000; }
     // Keep the display dark and bound retries when a shared IRQ is noisy/stuck.
     void retry_sleep(std::uint64_t now) { retry_ms_ = now + 30000; sleep_reported_ = false; }
     bool report_sleep_once() { if (sleep_reported_) return false; sleep_reported_ = true; return true; }
@@ -35,7 +37,7 @@ private:
     std::optional<float> anchor_;
     std::optional<std::uint64_t> candidate_;
     PowerState state_{PowerState::active};
-    bool inhibited_{}, sleep_reported_{};
+    bool inhibited_{}, sleep_reported_{}, external_power_{};
 };
 
 // First press on a dark display is consumed through release, even after wake.

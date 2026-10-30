@@ -49,4 +49,20 @@ int main() {
     assert(battery_text({}) == "Battery --");
     PowerPolicy uptime(0x100000000ULL);
     assert(uptime.update(0x100000000ULL+60000, false)==PowerState::screen_off);
+    PowerPolicy charging;
+    assert(charging.update(0, false, true) == PowerState::active);
+    assert(charging.update(29999, false, true) == PowerState::active);
+    assert(charging.update(30000, false, true) == PowerState::dimmed);
+    assert(charging.update(60000, false, true) == PowerState::dimmed);
+    assert(charging.update(9ULL*3600000, false, true) == PowerState::dimmed);
+    assert(!charging.sleep_due(9ULL*3600000));
+    const auto unplug = 9ULL*3600000+1;
+    assert(charging.update(unplug, false, false) == PowerState::active);
+    assert(charging.update(unplug+30000, false, false) == PowerState::dimmed);
+    assert(charging.update(unplug+60000, false, false) == PowerState::screen_off);
+    assert(charging.sleep_due(unplug+360000));
+    assert(charging.update(unplug+360001, false, true) == PowerState::active);
+    assert(!charging.sleep_due(unplug+360001));
+    assert(charging.update(unplug+390001, false, true) == PowerState::dimmed);
+    assert(charging.update(unplug+390002, true, true) == PowerState::active);
 }

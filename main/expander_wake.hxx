@@ -5,6 +5,7 @@ namespace smart_scale {
 // Waveshare 3.5 V2: TP_INT -> TCA9554 P2, shared INT -> ESP32 GPIO4.
 inline constexpr int expander_wake_gpio = 4;
 inline constexpr std::uint32_t expander_touch_mask = 1U << 2;
+inline constexpr std::uint32_t expander_pmu_mask = 1U << 5;
 enum class WakePreparation { ready, touch, pending_irq, io_error };
 
 // Reading the whole input port acknowledges ALL expander interrupts. Read touch
@@ -18,6 +19,8 @@ WakePreparation prepare_expander_wake(ReadPort read_port, ReadTouch read_touch,
     if (pressed) return WakePreparation::touch;
     if (!read_port(baseline)) return WakePreparation::io_error;
     if (!(baseline & expander_touch_mask)) return WakePreparation::touch;
+    // A latched PMU IRQ would hide a later VBUS insertion on the shared line.
+    if (!(baseline & expander_pmu_mask)) return WakePreparation::pending_irq;
     if (!read_touch(pressed)) return WakePreparation::io_error;
     if (pressed) return WakePreparation::touch;
     return irq_high() ? WakePreparation::ready : WakePreparation::pending_irq;

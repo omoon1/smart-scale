@@ -99,3 +99,6 @@ through TCA9554 P2 and GPIO4. Do not select it on V1 or a 3.49-inch board.
 See [power management](docs/power-management.md) for configuration, shared-interrupt
 handling, expected logs and physical validation. Sleep remains disabled by default
 until a board/wake route is selected.
+
+While external power is connected, including a full battery, idle only dims the screen
+to 30%; screen-off and sleep are disabled. Unplugging restarts the normal idle timers.
