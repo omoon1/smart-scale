@@ -102,3 +102,6 @@ until a board/wake route is selected.
 
 While external power is connected, including a full battery, idle only dims the screen
 to 30%; screen-off and sleep are disabled. Unplugging restarts the normal idle timers.
+
+On battery, idle dims after 30 seconds and enters light sleep at 60 seconds total idle
+when the selected wake route is available. There is no extra five-minute screen-off wait.

@@ -27,7 +27,7 @@ public:
         state_ = idle >= 60000 && !external_power_ ? PowerState::screen_off : idle >= 30000 ? PowerState::dimmed : PowerState::active;
         return state_;
     }
-    bool sleep_due(std::uint64_t now) const { return !inhibited_ && !external_power_ && now >= retry_ms_ && now - activity_ms_ >= 360000; }
+    bool sleep_due(std::uint64_t now) const { return !inhibited_ && !external_power_ && now >= retry_ms_ && now - activity_ms_ >= 60000; }
     // Keep the display dark and bound retries when a shared IRQ is noisy/stuck.
     void retry_sleep(std::uint64_t now) { retry_ms_ = now + 30000; sleep_reported_ = false; }
     bool report_sleep_once() { if (sleep_reported_) return false; sleep_reported_ = true; return true; }

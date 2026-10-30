@@ -59,9 +59,9 @@ int main() {
     power.retry_sleep(430000);
     power.activity(430001); // a real touch cancels the retry backoff
     assert(power.update(430001,false) == PowerState::active);
-    assert(!power.sleep_due(790000)); assert(power.sleep_due(790001));
-    power.retry_sleep(790001);
-    assert(power.update(790002,true) == PowerState::active);
+    assert(!power.sleep_due(490000)); assert(power.sleep_due(490001));
+    power.retry_sleep(490001);
+    assert(power.update(490002,true) == PowerState::active);
     assert(!power.sleep_due(900000)); // brewing still inhibits sleep
 
     std::array<std::uint8_t,256> registers{};
