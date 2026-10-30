@@ -2,6 +2,10 @@
 #include "device.hxx"
 #include "session.hxx"
 #include "ui.hxx"
+#include "battery_history_store.hxx"
+#include <ctime>
+#include <cstdlib>
+#include <sys/time.h>
 #include "acquisition.hxx"
 #include "diagnostic_logger.hxx"
 #include "esp_app_desc.h"
@@ -36,6 +40,9 @@ struct Diagnostics {
 }
 
 extern "C" void app_main() {
+    setenv("TZ", "UTC0", 1); tzset(); // History settings and day boundaries are explicitly UTC.
+    static smart_scale::BatteryHistory history;
+    static smart_scale::device::BatteryHistoryStore history_store;
     auto& logger = smart_scale::device::DiagnosticLogger::instance();
     logger.start();
     // Large capture history belongs in PSRAM, never on app_main's stack.
@@ -58,6 +65,7 @@ extern "C" void app_main() {
         if (auto calibration = smart_scale::device::scale::load_calibration())
             controller->scale().restore(*calibration);
     } else ESP_LOGE("scale", "NVS unavailable: %s", esp_err_to_name(storage_status));
+    if (storage_status == ESP_OK) history_store.init(history);
     char configuration[768];
     const auto* app = esp_app_get_description();
     std::snprintf(configuration, sizeof(configuration),
@@ -86,6 +94,8 @@ extern "C" void app_main() {
     std::uint64_t battery_sample_ms = 0;
     bool battery_sampled = false;
     bool battery_valid = false;
+    smart_scale::BatterySnapshot current_battery;
+    bool history_event = false;
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(smart_scale::config::ui_period_ms));
         const auto now = esp_timer_get_time();
@@ -118,12 +128,25 @@ extern "C" void app_main() {
             power.weight(controller->scale().ready() ? std::optional<float>{controller->scale().gross()} : std::nullopt, now_ms);
             if (!battery_sampled || now_ms - battery_sample_ms >= 5000) {
                 const auto battery = display.battery();
+                history_event |= smart_scale::BatteryHistory::state(current_battery) != smart_scale::BatteryHistory::state(battery);
+                current_battery = battery;
                 view.battery(battery);
                 if (!battery_sampled || battery.valid != battery_valid)
                     ESP_LOGI("power", "battery telemetry %s", battery.valid ? "available" : "unavailable");
                 battery_valid = battery.valid;
                 battery_sample_ms = now_ms; battery_sampled = true;
             }
+            const auto old_day = history.data().newest_day;
+            history.update(now_ms / 1000, std::time(nullptr), smart_scale::BatteryHistory::state(current_battery), current_battery);
+            if (auto clock = view.take_clock_request()) {
+                timeval tv{}; tv.tv_sec = *clock;
+                if (settimeofday(&tv, nullptr) == 0) {
+                    history.update(now_ms / 1000, std::time(nullptr), smart_scale::BatteryHistory::state(current_battery), current_battery);
+                    history_event = true;
+                } else ESP_LOGW("battery", "could not set history clock");
+            }
+            history_event |= old_day != history.data().newest_day;
+            view.history(history.data(), smart_scale::BatteryHistory::dated(std::time(nullptr)));
             controller->tick(elapsed);
             view.update();
             const auto desired = power.update(now_ms, view.power_inhibited());
@@ -166,8 +189,25 @@ extern "C" void app_main() {
                 if (!display.sleep_supported()) {
                     ESP_LOGW("power", "sleep blocked: touch wake wiring not verified; remaining screen-off");
                 } else {
+                    history_store.checkpoint(history, esp_timer_get_time() / 1000000, true, true);
                     const bool stopped = acquisition.suspend();
-                    const auto error = stopped ? display.light_sleep() : ESP_ERR_TIMEOUT;
+                    uint64_t sleep_start{}, sleep_end{};
+                    const auto error = stopped ? display.light_sleep(sleep_start, sleep_end) : ESP_ERR_TIMEOUT;
+                    const auto resumed_s = static_cast<uint64_t>(esp_timer_get_time() / 1000000);
+                    const auto wall = std::time(nullptr);
+                    if (error == ESP_OK) {
+                        // Only the successful sleep call belongs to Sleep. Setup and failed attempts stay Active.
+                        const auto start_s = sleep_start / 1000000, end_s = sleep_end / 1000000;
+                        const auto sleep_state = smart_scale::BatteryHistory::state(current_battery, true);
+                        history.update(start_s, wall - (resumed_s - start_s), sleep_state, {});
+                        current_battery = display.battery();
+                        history.update(end_s, wall - (resumed_s - end_s), smart_scale::BatteryHistory::state(current_battery),
+                                       current_battery, smart_scale::BatteryHistory::approximate);
+                    } else current_battery = display.battery();
+                    history.update(resumed_s, wall, smart_scale::BatteryHistory::state(current_battery), current_battery);
+                    view.battery(current_battery);
+                    view.history(history.data(), smart_scale::BatteryHistory::dated(std::time(nullptr)));
+                    history_event = true;
                     acquisition.resume(); // also cancel a timed-out suspend request
                     controller->resume_measurement();
                     const auto resumed = esp_timer_get_time();
@@ -184,6 +224,8 @@ extern "C" void app_main() {
             }
             lvgl_port_unlock();
         }
+        history_store.checkpoint(history, esp_timer_get_time() / 1000000, history_event);
+        history_event = false;
         if (diagnostic[0]) logger.text("hx711_diag", diagnostic);
         diagnostics.trace.poll(esp_timer_get_time() / 1000);
         if (diagnostics.trace.frozen()) {
@@ -216,3 +258,4 @@ extern "C" void app_main() {
         }
     }
 }
+

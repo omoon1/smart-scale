@@ -144,6 +144,29 @@ int main(int argc, char** argv) {
         view.battery(smart_scale::decode_axp2101(0x28, 4, 100));
         screenshot(view, "36-battery-full");
         require(has_label(lv_scr_act(), LV_SYMBOL_BATTERY_FULL " 100%"), "full battery retains percentage only");
+        smart_scale::BatteryHistory history;
+        constexpr int64_t day = 1793318400;
+        history.update(0, day, smart_scale::UsageState::active, smart_scale::decode_axp2101(8, 0, 90));
+        history.update(4500, day + 4500, smart_scale::UsageState::sleep, smart_scale::decode_axp2101(8, 0, 84));
+        history.update(17700, day + 17700, smart_scale::UsageState::charging, smart_scale::decode_axp2101(8, 0, 72));
+        history.update(21300, day + 21300, smart_scale::UsageState::active, smart_scale::decode_axp2101(0x28, 0x20, 85));
+        view.battery(smart_scale::decode_axp2101(0x28, 0x20, 85));
+        view.history(history.data());
+        click(view, 440, 30);
+        require(has_label(lv_scr_act(), "Battery history"), "top-right battery opens history");
+        require(!view.power_inhibited(), "history panel permits idle power policy");
+        screenshot(view, "37-battery-history");
+        click(view, 100, 282);
+        require(has_label(lv_scr_act(), "Set UTC date / time"), "history opens clock setting");
+        screenshot(view, "38-battery-clock");
+        click(view, 100, 278);
+        require(view.take_clock_request().has_value(), "valid clock selection produces a clock request");
+        click(view, 432, 30);
+        view.history({}, false);
+        click(view, 440, 30);
+        require(has_label(lv_scr_act(), "Undated"), "undated history is explicit");
+        screenshot(view, "39-battery-undated");
+        click(view, 432, 30);
         view.battery({});
         pump(view);
         click(view, 268, 286);
@@ -218,6 +241,10 @@ int main(int argc, char** argv) {
         screenshot(view, "26-hx711-negative-net");
         feed(25920);
         screenshot(view, "20-hx711-brewing");
+        click(view, 440, 30);
+        require(has_label(lv_scr_act(), "Battery history"), "history accessible during brew");
+        require(controller.session().phase == smart_scale::Phase::brewing && view.power_inhibited(), "history preserves brewing and its sleep inhibitor");
+        click(view, 432, 30);
         feed(17260); // 110 g gross: liquid decreased, registered cup remains.
         require(!controller.session().uncertain, "decreasing net weight does not imply removal");
         for (unsigned i = 0; i < 6; ++i) {
@@ -434,3 +461,4 @@ int main(int argc, char** argv) {
     require(find_type(lv_scr_act(), &lv_dropdown_class), "Empty list still allows registration");
     std::cout << "UI interaction checks passed\n";
 }
+

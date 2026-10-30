@@ -115,9 +115,10 @@ void View::deferred_draw(void* p) {
 }
 void View::init() { draw(); }
 void View::open(Dialog dialog) {
-    if (controller_.session().phase == Phase::brewing || controller_.session().phase == Phase::result) return;
+    if (dialog != Dialog::battery_history && dialog != Dialog::battery_clock &&
+        (controller_.session().phase == Phase::brewing || controller_.session().phase == Phase::result)) return;
     dialog_ = dialog;
-    controller_.set_auto_brew_enabled(dialog == Dialog::none);
+    controller_.set_auto_brew_enabled(dialog == Dialog::none || dialog == Dialog::battery_history);
     if (dialog == Dialog::registration) {
         registration_measurement_.reset();
         registration_step_ = 0;
@@ -130,7 +131,7 @@ void View::open(Dialog dialog) {
 }
 void View::reset() { controller_.scale().cancel_calibration(); controller_.reset(); dialog_ = Dialog::none; schedule_draw(); }
 void View::update() {
-    controller_.set_auto_brew_enabled(dialog_ == Dialog::none);
+    controller_.set_auto_brew_enabled(dialog_ == Dialog::none || dialog_ == Dialog::battery_history);
     if (rendered_phase_ != controller_.session().phase) {
         dialog_ = Dialog::none; // Cancel unconfirmed edits when extraction starts.
         schedule_draw();
@@ -144,6 +145,9 @@ void View::draw() {
     lv_obj_set_style_radius(screen_, 0, 0);
     lv_obj_set_style_border_width(screen_, 0, 0);
     binding_count_ = 0;
+    for (auto& row : history_rows_) row.fill(nullptr);
+    clock_fields_.fill(nullptr);
+    history_status_ = clock_error_ = nullptr;
     weight_ = weight_unit_ = time_ = flow_ = status_ = object_text_ = dose_text_ = target_text_ = chart_ = nullptr;
     dose_value_ = icon_name_ = kind_input_ = chart_max_ = chart_time_ = current_point_ = object_weight_ = nullptr;
     start_button_ = tare_button_ = nullptr;
@@ -161,7 +165,12 @@ void View::draw() {
     } else label(screen_, phase == Phase::brewing ? "Running" : phase == Phase::result ? "Brew complete" : "Reset",
                  20, 19, 230, &lv_font_montserrat_22);
     if (phase == Phase::brewing) label(screen_, equipment_icons[9], 280, 19, 32, &lv_font_montserrat_22, mint);
-    battery_label_ = label(screen_, "", 318, 24, 156, &lv_font_montserrat_14, mint);
+    auto* battery_button = button(screen_, "", 344, 8, 120, 44, Action::battery_history);
+    lv_obj_align(battery_button, LV_ALIGN_TOP_RIGHT, -16, 8);
+    lv_obj_set_style_border_width(battery_button, 0, 0);
+    lv_obj_set_style_bg_opa(battery_button, LV_OPA_TRANSP, 0);
+    battery_label_ = lv_obj_get_child(battery_button, 0);
+    lv_obj_set_style_text_align(battery_label_, LV_TEXT_ALIGN_RIGHT, 0);
     if (phase == Phase::brewing || phase == Phase::result) draw_brew(screen_, phase == Phase::result);
     else if (phase == Phase::remove_load) {
         label(screen_, LV_SYMBOL_REFRESH, 214, 82, 60, &lv_font_montserrat_48, amber);
@@ -266,6 +275,7 @@ void View::draw_brew(lv_obj_t* root, bool result) {
     }
 }
 void View::refresh_values() {
+    refresh_history();
     if (battery_label_) {
         const char* icon = !battery_.percent ? LV_SYMBOL_BATTERY_EMPTY :
             *battery_.percent >= 90 ? LV_SYMBOL_BATTERY_FULL :
@@ -273,8 +283,9 @@ void View::refresh_values() {
             *battery_.percent >= 30 ? LV_SYMBOL_BATTERY_2 : LV_SYMBOL_BATTERY_1;
         const auto text = controller_.live() ? std::string(icon) + " " + battery_text(battery_) : std::string("DEMO battery --");
         set_text(battery_label_, text.c_str());
-        lv_obj_set_style_text_color(battery_label_,
-            color(controller_.live() ? battery_color(battery_) : 0xA6A6A6), 0);
+        const auto battery_ink = color(controller_.live() ? battery_color(battery_) : 0xA6A6A6);
+        if (lv_obj_get_style_text_color(battery_label_, LV_PART_MAIN).full != battery_ink.full)
+            lv_obj_set_style_text_color(battery_label_, battery_ink, 0);
     }
     const auto& s = controller_.session();
     const auto& scale = controller_.scale();
@@ -516,11 +527,13 @@ void View::draw_dialog(lv_obj_t* root) {
     lv_obj_set_style_bg_opa(shade, LV_OPA_70, 0);
     auto* box = lv_obj_create(shade);
     style(box);
-    lv_obj_set_size(box, dialog_ == Dialog::registration ? 452 : 304, 304);
+    lv_obj_set_size(box, (dialog_ == Dialog::registration || dialog_ == Dialog::battery_history || dialog_ == Dialog::battery_clock) ? 452 : 304, 304);
     lv_obj_center(box);
-    const int width = dialog_ == Dialog::registration ? 452 : 304;
+    const int width = (dialog_ == Dialog::registration || dialog_ == Dialog::battery_history || dialog_ == Dialog::battery_clock) ? 452 : 304;
     button(box, LV_SYMBOL_CLOSE, width - 52, 4, 44, 44, Action::close);
-    if (dialog_ == Dialog::calibration) {
+    if (dialog_ == Dialog::battery_history) draw_history(box);
+    else if (dialog_ == Dialog::battery_clock) draw_clock(box);
+    else if (dialog_ == Dialog::calibration) {
         label(box, "Calibrate scale", 16, 18, 230, &lv_font_montserrat_22);
         calibration_weight_label_ = label(box, "?", 16, 56, 272, &lv_font_montserrat_28);
         label(box, "1. Empty platform, capture zero.\n2. Add mass, wait, tap its value.", 16, 94, 272);
@@ -580,6 +593,84 @@ void View::draw_dialog(lv_obj_t* root) {
         for (int i = 0; i < 4; ++i) button(box, names[i], 12, 62 + i * 54, 280, 46, Action::choose_scenario, i);
     } else draw_registration(box);
 }
+void View::draw_history(lv_obj_t* box) {
+    label(box, "Battery history", 16, 15, 300, &lv_font_montserrat_22);
+    history_status_ = label(box, "", 16, 45, 420, &lv_font_montserrat_14, muted);
+    const int columns[] = {4, 76, 160, 238, 316};
+    const int widths[] = {70, 84, 78, 78, 100};
+    const char* headers[] = {"Day", "Charging", "Active", "Sleep", "Battery"};
+    for (unsigned c = 0; c < 5; ++c) label(box, headers[c], 12 + columns[c], 70, widths[c]);
+    auto* list = lv_obj_create(box);
+    style(list); lv_obj_set_pos(list, 12, 92); lv_obj_set_size(list, 428, 136);
+    lv_obj_add_flag(list, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(list, LV_DIR_VER);
+    for (unsigned i = 0; i < history_rows_.size(); ++i)
+        for (unsigned c = 0; c < 5; ++c) {
+            auto* cell = label(list, "", columns[c], i * 29, widths[c]);
+            lv_label_set_long_mode(cell, LV_LABEL_LONG_CLIP);
+            history_rows_[i][c] = cell;
+        }
+    label(box, "Charging = plugged in; * partial / estimated", 16, 234, 424, &lv_font_montserrat_14, muted);
+    button(box, "Set UTC date / time", 16, 256, 230, 40, Action::battery_clock);
+    label(box, "Hours : minutes", 264, 269, 170, &lv_font_montserrat_14, muted);
+    refresh_history();
+}
+void View::refresh_history() {
+    if (!history_status_) return;
+    const auto status = battery_text(battery_) + (!history_clock_valid_ ? "  |  Clock not set - undated usage" : "  |  Last 7 days (UTC)");
+    set_text(history_status_, status.c_str());
+    for (unsigned i = 0; i < history_rows_.size(); ++i) {
+        const BatteryDay* d = nullptr;
+        char date[20] = "Undated";
+        const bool undated = history_.newest_day ? i == 7 : i == 0;
+        if (!history_.newest_day && i > 0) {
+            for (auto* cell : history_rows_[i]) set_text(cell, "");
+            continue;
+        }
+        if (undated) d = &history_.undated;
+        else {
+            const auto day = history_.newest_day - static_cast<int>(i);
+            const std::time_t epoch = int64_t(day) * 86400;
+            if (auto* t = std::gmtime(&epoch)) std::strftime(date, sizeof(date), "%m/%d", t);
+            const auto& entry = history_.days[day % 7];
+            if (entry.day == day) d = &entry;
+        }
+        const auto date_text = std::string(date) + (d && d->flags ? "*" : "");
+        set_text(history_rows_[i][0], date_text.c_str());
+        for (unsigned c = 0; c < 3; ++c) {
+            char text[32] = "--";
+            if (d) std::snprintf(text, sizeof(text), "%lu:%02lu", (unsigned long)(d->seconds[c]/3600),
+                                (unsigned long)(d->seconds[c]/60%60));
+            set_text(history_rows_[i][c+1], text);
+        }
+        char percent[24] = "--";
+        if (d && d->first <= 100 && d->last <= 100)
+            std::snprintf(percent, sizeof(percent), "%u>%u%%", d->first, d->last);
+        set_text(history_rows_[i][4], percent);
+    }
+}
+void View::draw_clock(lv_obj_t* box) {
+    label(box, "Set UTC date / time", 16, 16, 320, &lv_font_montserrat_22);
+    label(box, "Daily history uses UTC. Set again after power loss.", 16, 58, 420);
+    const char* names[] = {"Year", "Month", "Day", "Hour", "Minute"};
+    const int first[] = {2024, 1, 1, 0, 0}, count[] = {76, 12, 31, 24, 60};
+    auto now = std::time(nullptr);
+    std::tm current{}; current.tm_year = 126; current.tm_mday = 1;
+    if (BatteryHistory::dated(now)) if (auto* t = std::gmtime(&now)) current = *t;
+    const int selected[] = {current.tm_year - 124, current.tm_mon, current.tm_mday - 1, current.tm_hour, current.tm_min};
+    for (unsigned i = 0; i < clock_fields_.size(); ++i) {
+        label(box, names[i], 16 + i * 84, 106, 80);
+        auto* field = lv_dropdown_create(box); clock_fields_[i] = field;
+        std::string options;
+        for (int n = 0; n < count[i]; ++n) { if (n) options += '\n'; options += std::to_string(first[i] + n); }
+        lv_dropdown_set_options(field, options.c_str());
+        lv_dropdown_set_selected(field, selected[i]);
+        lv_obj_set_pos(field, 16 + i * 84, 132); lv_obj_set_size(field, 80, 44);
+    }
+    clock_error_ = label(box, "Earlier undated usage stays undated.", 16, 198, 420, &lv_font_montserrat_14, muted);
+    button(box, "Save", 16, 246, 180, 46, Action::save_clock, 0, true);
+    button(box, "Back", 212, 246, 180, 46, Action::battery_history);
+}
 void View::draw_registration(lv_obj_t* box) {
     if (registration_step_ == 2) {
         const auto name = std::string(kind_name(registration_kind_)) + " " + equipment_icons[registration_icon_];
@@ -627,6 +718,24 @@ void View::draw_registration(lv_obj_t* box) {
 }
 void View::action(Action a, int value) {
     switch (a) {
+    case Action::battery_history: open(Dialog::battery_history); return;
+    case Action::battery_clock: open(Dialog::battery_clock); return;
+    case Action::save_clock: {
+        if (dialog_ != Dialog::battery_clock || pending_draw_) return;
+        std::tm t{};
+        t.tm_year = 124 + lv_dropdown_get_selected(clock_fields_[0]);
+        t.tm_mon = lv_dropdown_get_selected(clock_fields_[1]);
+        t.tm_mday = 1 + lv_dropdown_get_selected(clock_fields_[2]);
+        t.tm_hour = lv_dropdown_get_selected(clock_fields_[3]);
+        t.tm_min = lv_dropdown_get_selected(clock_fields_[4]);
+        const auto entered = t;
+        const auto epoch = std::mktime(&t); // Firmware uses UTC0, explicitly shown in UI.
+        if (epoch < 0 || t.tm_year != entered.tm_year || t.tm_mon != entered.tm_mon || t.tm_mday != entered.tm_mday) {
+            set_text(clock_error_, "Invalid date"); return;
+        }
+        clock_request_ = epoch;
+        open(Dialog::battery_history); return;
+    }
     case Action::tare: controller_.tare(); break;
     case Action::calibration:
         controller_.scale().cancel_calibration();
@@ -718,7 +827,8 @@ void View::action(Action a, int value) {
         break;
     }
     }
-    controller_.set_auto_brew_enabled(dialog_ == Dialog::none);
+    controller_.set_auto_brew_enabled(dialog_ == Dialog::none || dialog_ == Dialog::battery_history);
     schedule_draw();
 }
 }
+

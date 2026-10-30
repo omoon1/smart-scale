@@ -215,7 +215,8 @@ bool Device::sleep_supported() const {
     return false;
 #endif
 }
-esp_err_t Device::light_sleep() {
+esp_err_t Device::light_sleep(uint64_t& started_us, uint64_t& ended_us) {
+    started_us = ended_us = 0;
 #ifdef CONFIG_SMART_SCALE_TOUCH_WAKE_VERIFIED
     if (!sleep_supported() || touch_down_ || touch_activity_) return ESP_ERR_INVALID_STATE;
     const auto pin = static_cast<gpio_num_t>(CONFIG_SMART_SCALE_TOUCH_WAKE_GPIO);
@@ -233,7 +234,11 @@ esp_err_t Device::light_sleep() {
     // Timer is stopped to avoid advancing animations during the pause.
     error = lvgl_port_stop();
     if (error == ESP_OK) {
-        if (gpio_get_level(pin)) error = esp_light_sleep_start();
+        if (gpio_get_level(pin)) {
+            started_us = esp_timer_get_time();
+            error = esp_light_sleep_start();
+            ended_us = esp_timer_get_time();
+        }
         else error = ESP_ERR_INVALID_STATE;
         lvgl_port_resume();
     }
@@ -259,3 +264,4 @@ bool Device::reset_pressed() {
     return false;
 }
 }
+

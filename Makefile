@@ -66,9 +66,14 @@ test:
 	@./build-host/diagnostics_tests
 	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main tests/power_test.cxx -o build-host/power_tests
 	@./build-host/power_tests
+	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main tests/battery_history_test.cxx -o build-host/battery_history_tests
+	@./build-host/battery_history_tests
+	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I tests/nvs_stub -I main tests/battery_history_store_test.cxx -o build-host/battery_history_store_tests
+	@./build-host/battery_history_store_tests
 preview:
 	@./scripts/host.sh --screenshots
 	@./scripts/host.sh --live-screenshots
 	@./scripts/host.sh --coffee-screenshots
 simulator:
 	@./scripts/host.sh --interactive
+

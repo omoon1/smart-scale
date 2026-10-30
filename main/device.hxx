@@ -23,7 +23,7 @@ public:
     bool touch_down() const { return touch_down_; }
     BatterySnapshot battery(); // LVGL lock required; read-only PMU access
     bool sleep_supported() const;
-    esp_err_t light_sleep(); // acquisition stopped; LVGL lock held
+    esp_err_t light_sleep(uint64_t& started_us, uint64_t& ended_us); // acquisition stopped; LVGL lock held
 
 private:
     static void read_touch(lv_indev_drv_t*, lv_indev_data_t*);
@@ -44,3 +44,4 @@ private:
 };
 Device& device();
 }
+

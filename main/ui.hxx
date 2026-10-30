@@ -4,22 +4,26 @@
 #include "registration_measurement.hxx"
 #include "lvgl.h"
 #include "battery.hxx"
+#include "battery_history.hxx"
+#include <ctime>
 
 namespace smart_scale::ui {
-enum class Dialog { none, calibration, objects, dose, demo, registration, remove_equipment };
+enum class Dialog { none, calibration, objects, dose, demo, registration, remove_equipment, battery_history, battery_clock };
 class View {
 public:
     explicit View(Controller& controller) : controller_(controller) {}
     void init();
     void update();
     void battery(const BatterySnapshot& value) { battery_ = value; }
-    bool power_inhibited() const { return dialog_ != Dialog::none || controller_.session().phase == Phase::brewing; }
+    void history(const BatteryHistoryData& value, bool clock_valid = true) { history_ = value; history_clock_valid_ = clock_valid; }
+    std::optional<std::time_t> take_clock_request() { auto value = clock_request_; clock_request_.reset(); return value; }
+    bool power_inhibited() const { return (dialog_ != Dialog::none && dialog_ != Dialog::battery_history) || controller_.session().phase == Phase::brewing; }
     void open(Dialog dialog);
     void reset();
 private:
     enum class Action { tare, calibration, capture_zero, calibrate, objects, dose, toggle_mode, demo, close,
         request_remove, confirm_remove, cancel_remove, dose_adjust, dose_preset, choose_object, choose_scenario, run, pause, finish, next,
-        reset, remove, registration, register_next, register_back, register_save, choose_icon, stable };
+        battery_history, battery_clock, save_clock, reset, remove, registration, register_next, register_back, register_save, choose_icon, stable };
     struct Binding { View* view{}; Action action{}; int value{}; };
     lv_obj_t* button(lv_obj_t* parent, const char* text, int x, int y, int w, int h,
                      Action action, int value = 0, bool primary = false);
@@ -27,6 +31,9 @@ private:
     void draw_ready(lv_obj_t* root);
     void draw_brew(lv_obj_t* root, bool result);
     void draw_dialog(lv_obj_t* root);
+    void draw_history(lv_obj_t* parent);
+    void refresh_history();
+    void draw_clock(lv_obj_t* parent);
     void draw_registration(lv_obj_t* parent);
     void action(Action action, int value);
     static void clicked(lv_event_t* event);
@@ -36,6 +43,13 @@ private:
     void refresh_values();
     Controller& controller_;
     BatterySnapshot battery_;
+    BatteryHistoryData history_{};
+    bool history_clock_valid_{};
+    std::array<std::array<lv_obj_t*, 5>, 8> history_rows_{};
+    std::array<lv_obj_t*, 5> clock_fields_{};
+    lv_obj_t* history_status_{};
+    lv_obj_t* clock_error_{};
+    std::optional<std::time_t> clock_request_;
     lv_obj_t* battery_label_{};
     WeightDisplay weight_display_;
     WeightDisplay gross_display_;
@@ -70,3 +84,4 @@ private:
     std::string calibration_message_text_;
 };
 }
+
