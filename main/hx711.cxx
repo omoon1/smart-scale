@@ -30,6 +30,11 @@ esp_err_t HX711::init() {
     gpio_set_level(clock_, 0);
     return ESP_OK;
 }
+void HX711::power_down() {
+    gpio_set_level(clock_, 1);
+    esp_rom_delay_us(80);
+}
+void HX711::power_up() { gpio_set_level(clock_, 0); }
 std::optional<std::int32_t> HX711::read() {
     if (gpio_get_level(dout_)) return std::nullopt;
     std::uint32_t bits = 0;

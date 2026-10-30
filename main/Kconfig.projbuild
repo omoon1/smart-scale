@@ -1,0 +1,17 @@
+menu "Smart scale power"
+config SMART_SCALE_TOUCH_WAKE_VERIFIED
+    bool "Enable light sleep with a verified touch interrupt"
+    default n
+    help
+        Enable only after validating the touch IRQ wiring and low-level wake
+        behavior on this exact board. The default main board has no mapped IRQ.
+        Keep touch powered; no shared rails or panel sleep commands are changed.
+config SMART_SCALE_TOUCH_WAKE_GPIO
+    int "Verified active-low touch interrupt GPIO"
+    depends on SMART_SCALE_TOUCH_WAKE_VERIFIED
+    range 0 48
+    default 16
+    help
+        This is not a board pin assignment. Select the verified wiring; it must
+        not conflict with display, I2C, HX711, flash/PSRAM or the BOOT button.
+endmenu

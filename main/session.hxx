@@ -53,6 +53,7 @@ public:
     Scale& scale() { return scale_; }
     const Scale& scale() const { return scale_; }
     void sensor_fault();
+    void resume_measurement();
     void sensor_sample(std::optional<std::int32_t> raw, std::uint64_t now_ms);
     bool tare();
     bool start_brew();
@@ -98,6 +99,7 @@ private:
     std::optional<Calibration> vessel_calibration_;
     FlowStartDetector flow_start_;
     bool auto_brew_enabled_{true};
+    bool resuming_measurement_{};
     std::optional<std::uint64_t> auto_brew_origin_ms_;
     std::optional<std::uint32_t> auto_brew_epoch_;
     bool live_{};

@@ -8,6 +8,8 @@ namespace smart_scale::device::scale {
 class HX711 {
 public:
     esp_err_t init();
+    void power_down();
+    void power_up();
     std::optional<std::int32_t> read(); // Nonblocking when DOUT is not ready.
 private:
     gpio_num_t dout_{GPIO_NUM_17}, clock_{GPIO_NUM_18};

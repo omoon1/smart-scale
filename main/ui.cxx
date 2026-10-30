@@ -115,9 +115,10 @@ void View::deferred_draw(void* p) {
 }
 void View::init() { draw(); }
 void View::open(Dialog dialog) {
-    if (controller_.session().phase == Phase::brewing || controller_.session().phase == Phase::result) return;
+    if (dialog != Dialog::battery_history &&
+        (controller_.session().phase == Phase::brewing || controller_.session().phase == Phase::result)) return;
     dialog_ = dialog;
-    controller_.set_auto_brew_enabled(dialog == Dialog::none);
+    controller_.set_auto_brew_enabled(dialog == Dialog::none || dialog == Dialog::battery_history);
     if (dialog == Dialog::registration) {
         registration_measurement_.reset();
         registration_step_ = 0;
@@ -130,7 +131,7 @@ void View::open(Dialog dialog) {
 }
 void View::reset() { controller_.scale().cancel_calibration(); controller_.reset(); dialog_ = Dialog::none; schedule_draw(); }
 void View::update() {
-    controller_.set_auto_brew_enabled(dialog_ == Dialog::none);
+    controller_.set_auto_brew_enabled(dialog_ == Dialog::none || dialog_ == Dialog::battery_history);
     if (rendered_phase_ != controller_.session().phase) {
         dialog_ = Dialog::none; // Cancel unconfirmed edits when extraction starts.
         schedule_draw();
@@ -144,6 +145,7 @@ void View::draw() {
     lv_obj_set_style_radius(screen_, 0, 0);
     lv_obj_set_style_border_width(screen_, 0, 0);
     binding_count_ = 0;
+    history_plot_ = nullptr; history_revision_ = UINT64_MAX;
     weight_ = weight_unit_ = time_ = flow_ = status_ = object_text_ = dose_text_ = target_text_ = chart_ = nullptr;
     dose_value_ = icon_name_ = kind_input_ = chart_max_ = chart_time_ = current_point_ = object_weight_ = nullptr;
     start_button_ = tare_button_ = nullptr;
@@ -161,7 +163,12 @@ void View::draw() {
     } else label(screen_, phase == Phase::brewing ? "Running" : phase == Phase::result ? "Brew complete" : "Reset",
                  20, 19, 230, &lv_font_montserrat_22);
     if (phase == Phase::brewing) label(screen_, equipment_icons[9], 280, 19, 32, &lv_font_montserrat_22, mint);
-    label(screen_, controller_.live() ? "HX711  LIVE" : "DEMO   82% " LV_SYMBOL_BATTERY_3, 328, 24, 145, &lv_font_montserrat_14, mint);
+    auto* battery_button = button(screen_, "", 344, 8, 120, 44, Action::battery_history);
+    lv_obj_align(battery_button, LV_ALIGN_TOP_RIGHT, -16, 8);
+    lv_obj_set_style_border_width(battery_button, 0, 0);
+    lv_obj_set_style_bg_opa(battery_button, LV_OPA_TRANSP, 0);
+    battery_label_ = lv_obj_get_child(battery_button, 0);
+    lv_obj_set_style_text_align(battery_label_, LV_TEXT_ALIGN_RIGHT, 0);
     if (phase == Phase::brewing || phase == Phase::result) draw_brew(screen_, phase == Phase::result);
     else if (phase == Phase::remove_load) {
         label(screen_, LV_SYMBOL_REFRESH, 214, 82, 60, &lv_font_montserrat_48, amber);
@@ -266,6 +273,18 @@ void View::draw_brew(lv_obj_t* root, bool result) {
     }
 }
 void View::refresh_values() {
+    refresh_history();
+    if (battery_label_) {
+        const char* icon = !battery_.percent ? LV_SYMBOL_BATTERY_EMPTY :
+            *battery_.percent >= 90 ? LV_SYMBOL_BATTERY_FULL :
+            *battery_.percent >= 60 ? LV_SYMBOL_BATTERY_3 :
+            *battery_.percent >= 30 ? LV_SYMBOL_BATTERY_2 : LV_SYMBOL_BATTERY_1;
+        const auto text = controller_.live() ? std::string(icon) + " " + battery_text(battery_) : std::string("DEMO battery --");
+        set_text(battery_label_, text.c_str());
+        const auto battery_ink = color(controller_.live() ? battery_color(battery_) : 0xA6A6A6);
+        if (lv_obj_get_style_text_color(battery_label_, LV_PART_MAIN).full != battery_ink.full)
+            lv_obj_set_style_text_color(battery_label_, battery_ink, 0);
+    }
     const auto& s = controller_.session();
     const auto& scale = controller_.scale();
     // Independent caches for net grams, gross grams and uncalibrated counts.
@@ -506,11 +525,12 @@ void View::draw_dialog(lv_obj_t* root) {
     lv_obj_set_style_bg_opa(shade, LV_OPA_70, 0);
     auto* box = lv_obj_create(shade);
     style(box);
-    lv_obj_set_size(box, dialog_ == Dialog::registration ? 452 : 304, 304);
+    lv_obj_set_size(box, (dialog_ == Dialog::registration || dialog_ == Dialog::battery_history) ? 452 : 304, 304);
     lv_obj_center(box);
-    const int width = dialog_ == Dialog::registration ? 452 : 304;
+    const int width = (dialog_ == Dialog::registration || dialog_ == Dialog::battery_history) ? 452 : 304;
     button(box, LV_SYMBOL_CLOSE, width - 52, 4, 44, 44, Action::close);
-    if (dialog_ == Dialog::calibration) {
+    if (dialog_ == Dialog::battery_history) draw_history(box);
+    else if (dialog_ == Dialog::calibration) {
         label(box, "Calibrate scale", 16, 18, 230, &lv_font_montserrat_22);
         calibration_weight_label_ = label(box, "?", 16, 56, 272, &lv_font_montserrat_28);
         label(box, "1. Empty platform, capture zero.\n2. Add mass, wait, tap its value.", 16, 94, 272);
@@ -570,6 +590,93 @@ void View::draw_dialog(lv_obj_t* root) {
         for (int i = 0; i < 4; ++i) button(box, names[i], 12, 62 + i * 54, 280, 46, Action::choose_scenario, i);
     } else draw_registration(box);
 }
+namespace {
+unsigned usage_color(UsageState state) {
+    switch (state) {
+    case UsageState::charging: return 0x55C878;
+    case UsageState::active: return 0x4EA5FF;
+    case UsageState::sleep: return 0xFFA652;
+    default: return muted;
+    }
+}
+}
+void View::draw_history(lv_obj_t* box) {
+    label(box, "Battery Usage", 16, 15, 320, &lv_font_montserrat_22);
+    const unsigned ranges[] = {6, 24, 72};
+    const char* names[] = {"6hr", "1day", "3day"};
+    for (unsigned i = 0; i < 3; ++i)
+        button(box, names[i], 58 + i * 126, 55, 114, 38, Action::history_range, ranges[i], history_hours_ == ranges[i]);
+    history_plot_ = lv_obj_create(box);
+    style(history_plot_, bg);
+    lv_obj_set_pos(history_plot_, 58, 112); lv_obj_set_size(history_plot_, 374, 132);
+    lv_obj_set_style_radius(history_plot_, 0, 0);
+    lv_obj_set_style_border_width(history_plot_, 0, 0);
+    lv_obj_clear_flag(history_plot_, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(history_plot_, draw_history_plot, LV_EVENT_DRAW_MAIN, this);
+    label(box, "100%", 12, 106, 44, &lv_font_montserrat_14, muted);
+    label(box, "50%", 20, 172, 36, &lv_font_montserrat_14, muted);
+    label(box, "0%", 28, 237, 28, &lv_font_montserrat_14, muted);
+    const auto left = "-" + std::to_string(history_hours_) + "h";
+    const auto middle = "-" + std::to_string(history_hours_ / 2) + "h";
+    label(box, left.c_str(), 58, 250, 60, &lv_font_montserrat_14, muted);
+    label(box, middle.c_str(), 226, 250, 60, &lv_font_montserrat_14, muted);
+    label(box, "Now", 400, 250, 36, &lv_font_montserrat_14, muted);
+    label(box, "Charging", 58, 280, 110, &lv_font_montserrat_14, usage_color(UsageState::charging));
+    label(box, "Active", 200, 280, 90, &lv_font_montserrat_14, usage_color(UsageState::active));
+    label(box, "Sleep", 340, 280, 90, &lv_font_montserrat_14, usage_color(UsageState::sleep));
+    refresh_history();
+}
+void View::refresh_history() {
+    if (!history_plot_ || !history_ || history_revision_ == history_->revision()) return;
+    history_revision_ = history_->revision();
+    lv_obj_invalidate(history_plot_);
+}
+void View::draw_history_plot(lv_event_t* event) {
+    auto& view = *static_cast<View*>(lv_event_get_user_data(event));
+    auto* context = lv_event_get_draw_ctx(event);
+    lv_area_t area;
+    lv_obj_get_content_coords(lv_event_get_target(event), &area);
+    const auto w = lv_area_get_width(&area) - 1, h = lv_area_get_height(&area) - 1;
+    lv_draw_line_dsc_t grid;
+    lv_draw_line_dsc_init(&grid); grid.color = color(border); grid.width = 1;
+    for (int i = 0; i <= 2; ++i) {
+        const lv_point_t a{area.x1, static_cast<lv_coord_t>(area.y1 + h * i / 2)};
+        const lv_point_t b{area.x2, a.y};
+        lv_draw_line(context, &grid, &a, &b);
+    }
+    if (!view.history_) return;
+    view.history_->segments(view.history_hours_ * 3600, [&](double x1, double y1, double x2, double y2, UsageState state) {
+        lv_draw_line_dsc_t line;
+        lv_draw_line_dsc_init(&line); line.color = color(usage_color(state)); line.width = 3;
+        line.round_start = line.round_end = true;
+        const lv_point_t a{static_cast<lv_coord_t>(area.x1 + std::lround(x1 * w)),
+                           static_cast<lv_coord_t>(area.y2 - std::lround(y1 * h / 100))};
+        const lv_point_t b{static_cast<lv_coord_t>(area.x1 + std::lround(x2 * w)),
+                           static_cast<lv_coord_t>(area.y2 - std::lround(y2 * h / 100))};
+        if (state != UsageState::sleep) lv_draw_line(context, &line, &a, &b);
+        else {
+            // LVGL 8's native dashes only cover horizontal/vertical lines.
+            const double length = std::hypot(b.x - a.x, b.y - a.y);
+            auto along = [&](double distance) {
+                const auto t = length ? distance / length : 0;
+                return lv_point_t{static_cast<lv_coord_t>(a.x + std::lround((b.x - a.x) * t)),
+                                  static_cast<lv_coord_t>(a.y + std::lround((b.y - a.y) * t))};
+            };
+            for (double offset = 0; offset < length; offset += 10) {
+                const auto begin = along(offset), end = along(std::min(length, offset + 5));
+                lv_draw_line(context, &line, &begin, &end);
+            }
+        }
+    });
+    const auto& latest = view.history_->latest();
+    if (view.history_->size() && latest.percent <= 100 && latest.state != UsageState::unknown) {
+        const auto y = static_cast<lv_coord_t>(area.y2 - latest.percent * h / 100);
+        const lv_area_t dot{static_cast<lv_coord_t>(area.x2 - 4), static_cast<lv_coord_t>(y - 2), area.x2, static_cast<lv_coord_t>(y + 2)};
+        lv_draw_rect_dsc_t dsc; lv_draw_rect_dsc_init(&dsc);
+        dsc.bg_color = color(usage_color(latest.state)); dsc.radius = LV_RADIUS_CIRCLE;
+        lv_draw_rect(context, &dsc, &dot);
+    }
+}
 void View::draw_registration(lv_obj_t* box) {
     if (registration_step_ == 2) {
         const auto name = std::string(kind_name(registration_kind_)) + " " + equipment_icons[registration_icon_];
@@ -617,6 +724,11 @@ void View::draw_registration(lv_obj_t* box) {
 }
 void View::action(Action a, int value) {
     switch (a) {
+    case Action::battery_history: open(Dialog::battery_history); return;
+    case Action::history_range:
+        if (dialog_ != Dialog::battery_history || pending_draw_) return;
+        if (value == 6 || value == 24 || value == 72) { history_hours_ = value; schedule_draw(); }
+        return;
     case Action::tare: controller_.tare(); break;
     case Action::calibration:
         controller_.scale().cancel_calibration();
@@ -708,7 +820,8 @@ void View::action(Action a, int value) {
         break;
     }
     }
-    controller_.set_auto_brew_enabled(dialog_ == Dialog::none);
+    controller_.set_auto_brew_enabled(dialog_ == Dialog::none || dialog_ == Dialog::battery_history);
     schedule_draw();
 }
 }
+
