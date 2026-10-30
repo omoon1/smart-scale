@@ -282,10 +282,12 @@ esp_err_t Device::light_sleep(uint64_t& started_us, uint64_t& ended_us, bool& us
         error = esp_sleep_enable_gpio_wakeup();
         wake_enabled = error == ESP_OK;
     }
-    // No input-port reads after this check: they could acknowledge a new touch.
+    if (error == ESP_OK)
+        ESP_LOGI("power", "arming light sleep: wake_gpio=%d", static_cast<int>(pin));
+    // Check after logging, which may block on UART. No input-port reads after
+    // this check: they could acknowledge a new touch.
     if (error == ESP_OK && !gpio_get_level(pin)) error = ESP_ERR_INVALID_STATE;
     if (error == ESP_OK) {
-        ESP_LOGI("power", "entering light sleep: wake_gpio=%d", static_cast<int>(pin));
         const auto started = esp_timer_get_time();
         error = esp_light_sleep_start();
         if (error == ESP_OK) {
