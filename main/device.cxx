@@ -9,6 +9,8 @@
 #include "esp_lvgl_port.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_sleep.h"
+#include "sdkconfig.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -31,7 +33,7 @@ void Device::init() {
 
     // DCDC1 is the board's existing 3.3 V rail. Match the vendor's PWM fix;
     // leave other rail voltages and battery charging policy untouched.
-    i2c_master_dev_handle_t pmu{};
+    auto& pmu = pmu_;
     i2c_device_config_t pmu_config{};
     pmu_config.dev_addr_length = I2C_ADDR_BIT_LEN_7;
     pmu_config.device_address = 0x34;
@@ -42,7 +44,7 @@ void Device::init() {
     ESP_ERROR_CHECK(i2c_master_transmit_receive(pmu, &reg, 1, &pwm, 1, 100));
     const std::uint8_t write[] = {reg, static_cast<std::uint8_t>(pwm | (1U << 2))};
     ESP_ERROR_CHECK(i2c_master_transmit(pmu, write, sizeof(write), 100));
-    ESP_ERROR_CHECK(i2c_master_bus_rm_device(pmu));
+
 
     ESP_ERROR_CHECK(esp_io_expander_new_i2c_tca9554(bus_, ESP_IO_EXPANDER_I2C_TCA9554_ADDRESS_000, &expander_));
     ESP_ERROR_CHECK(esp_io_expander_set_dir(expander_, IO_EXPANDER_PIN_NUM_1, IO_EXPANDER_OUTPUT));
@@ -114,7 +116,13 @@ void Device::init() {
     lvgl_port_touch_cfg_t input{};
     input.disp = display_;
     input.handle = touch_;
-    ESP_ERROR_CHECK(lvgl_port_add_touch(&input) ? ESP_OK : ESP_ERR_NO_MEM);
+    input_ = lvgl_port_add_touch(&input);
+    ESP_ERROR_CHECK(input_ ? ESP_OK : ESP_ERR_NO_MEM);
+    if (lvgl_port_lock(0)) {
+        touch_read_ = input_->driver->read_cb;
+        input_->driver->read_cb = read_touch;
+        lvgl_port_unlock();
+    }
 
     ledc_timer_config_t timer{};
     timer.speed_mode = LEDC_LOW_SPEED_MODE;
@@ -156,6 +164,89 @@ esp_err_t Device::show() {
     if (error != ESP_OK) return error;
     return ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
 }
+
+void Device::read_touch(lv_indev_drv_t* driver, lv_indev_data_t* data) {
+    auto& self = device();
+    self.touch_read_(driver, data);
+    self.touch_down_ = data->state == LV_INDEV_STATE_PRESSED;
+    // Holding a finger is user activity; physical release is still required
+    // before delivering a second gesture after wake.
+    if (self.touch_down_) self.touch_activity_ = true;
+    if (!self.touch_gate_.filter(self.touch_down_, self.power_state_ == PowerState::screen_off))
+        data->state = LV_INDEV_STATE_RELEASED;
+}
+bool Device::take_touch_activity() {
+    const bool result = touch_activity_; touch_activity_ = false; return result;
+}
+esp_err_t Device::power_state(PowerState state) {
+    if (state == power_state_) return ESP_OK;
+    esp_err_t error;
+    if (state == PowerState::active && power_state_ == PowerState::screen_off) {
+        lv_timer_resume(display_->refr_timer);
+        error = show(); // full frame before backlight
+    } else {
+        const unsigned duty = state == PowerState::active ? 818 : state == PowerState::dimmed ? 409 : 0;
+        error = ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty);
+        if (error == ESP_OK) error = ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+        if (error == ESP_OK && state == PowerState::screen_off) lv_timer_pause(display_->refr_timer);
+    }
+    if (error == ESP_OK) power_state_ = state;
+    return error;
+}
+BatterySnapshot Device::battery() {
+    auto read = [this](std::uint8_t reg, std::uint8_t& value) {
+        return i2c_master_transmit_receive(pmu_, &reg, 1, &value, 1, 20) == ESP_OK;
+    };
+    std::uint8_t id{}, status0{}, status1{}, percent{};
+    if (!read(0x03, id) || id != 0x4a || !read(0x00, status0) || !read(0x01, status1)) return {};
+    const bool soc_valid = read(0xa4, percent);
+    auto value = decode_axp2101(status0, status1, soc_valid ? percent : 255);
+    return value;
+}
+bool Device::sleep_supported() const {
+#ifdef CONFIG_SMART_SCALE_TOUCH_WAKE_VERIFIED
+    constexpr int pin = CONFIG_SMART_SCALE_TOUCH_WAKE_GPIO;
+    // Only exposed GPIOs outside memory/USB and this adapter's existing pins.
+    return GPIO_IS_VALID_GPIO(pin) && pin != config::reset_button && pin != config::lcd_mosi &&
+        pin != config::lcd_clock && pin != config::lcd_dc && pin != config::lcd_backlight &&
+        pin != config::i2c_sda && pin != config::i2c_scl && pin != config::hx711_dout &&
+        pin != config::hx711_sck && pin != 19 && pin != 20 && !(pin >= 26 && pin <= 37);
+#else
+    return false;
+#endif
+}
+esp_err_t Device::light_sleep() {
+#ifdef CONFIG_SMART_SCALE_TOUCH_WAKE_VERIFIED
+    if (!sleep_supported() || touch_down_ || touch_activity_) return ESP_ERR_INVALID_STATE;
+    const auto pin = static_cast<gpio_num_t>(CONFIG_SMART_SCALE_TOUCH_WAKE_GPIO);
+    gpio_config_t cfg{};
+    cfg.pin_bit_mask = 1ULL << pin; cfg.mode = GPIO_MODE_INPUT;
+    cfg.pull_up_en = GPIO_PULLUP_ENABLE;
+    auto error = gpio_config(&cfg);
+    if (error != ESP_OK) return error;
+    if (!gpio_get_level(pin)) return ESP_ERR_INVALID_STATE;
+    error = gpio_wakeup_enable(pin, GPIO_INTR_LOW_LEVEL);
+    if (error != ESP_OK) return error;
+    error = esp_sleep_enable_gpio_wakeup();
+    if (error != ESP_OK) { gpio_wakeup_disable(pin); return error; }
+    // LVGL lock prevents touch I2C/rendering while the main task sleeps.
+    // Timer is stopped to avoid advancing animations during the pause.
+    error = lvgl_port_stop();
+    if (error == ESP_OK) {
+        if (gpio_get_level(pin)) error = esp_light_sleep_start();
+        else error = ESP_ERR_INVALID_STATE;
+        lvgl_port_resume();
+    }
+    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_GPIO);
+    gpio_wakeup_disable(pin);
+    // Suppress the waking press, even if the panel becomes bright before poll.
+    touch_gate_.filter(true, true);
+    return error;
+#else
+    return ESP_ERR_NOT_SUPPORTED;
+#endif
+}
+
 bool Device::reset_pressed() {
     // Called at 100 ms: two consecutive low samples, once per press.
     if (gpio_get_level(static_cast<gpio_num_t>(config::reset_button)) != 0) {

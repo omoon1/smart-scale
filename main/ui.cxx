@@ -161,7 +161,7 @@ void View::draw() {
     } else label(screen_, phase == Phase::brewing ? "Running" : phase == Phase::result ? "Brew complete" : "Reset",
                  20, 19, 230, &lv_font_montserrat_22);
     if (phase == Phase::brewing) label(screen_, equipment_icons[9], 280, 19, 32, &lv_font_montserrat_22, mint);
-    label(screen_, controller_.live() ? "HX711  LIVE" : "DEMO   82% " LV_SYMBOL_BATTERY_3, 328, 24, 145, &lv_font_montserrat_14, mint);
+    battery_label_ = label(screen_, "", 318, 24, 156, &lv_font_montserrat_14, mint);
     if (phase == Phase::brewing || phase == Phase::result) draw_brew(screen_, phase == Phase::result);
     else if (phase == Phase::remove_load) {
         label(screen_, LV_SYMBOL_REFRESH, 214, 82, 60, &lv_font_montserrat_48, amber);
@@ -266,6 +266,14 @@ void View::draw_brew(lv_obj_t* root, bool result) {
     }
 }
 void View::refresh_values() {
+    if (battery_label_) {
+        const char* icon = !battery_.percent ? LV_SYMBOL_BATTERY_EMPTY :
+            *battery_.percent >= 90 ? LV_SYMBOL_BATTERY_FULL :
+            *battery_.percent >= 60 ? LV_SYMBOL_BATTERY_3 :
+            *battery_.percent >= 30 ? LV_SYMBOL_BATTERY_2 : LV_SYMBOL_BATTERY_1;
+        const auto text = controller_.live() ? std::string(icon) + " " + battery_text(battery_) : std::string("DEMO battery --");
+        set_text(battery_label_, text.c_str());
+    }
     const auto& s = controller_.session();
     const auto& scale = controller_.scale();
     // Independent caches for net grams, gross grams and uncalibrated counts.

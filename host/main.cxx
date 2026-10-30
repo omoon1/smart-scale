@@ -138,6 +138,14 @@ int main(int argc, char** argv) {
     if (live_test) {
         std::filesystem::create_directories("build-host/screens");
         screenshot(view, "16-hx711-disconnected");
+        view.battery(smart_scale::decode_axp2101(0x28, 0x20, 100));
+        screenshot(view, "35-battery-charging");
+        require(has_label(lv_scr_act(), LV_SYMBOL_BATTERY_FULL " 100% Charging"), "battery charging header");
+        view.battery(smart_scale::decode_axp2101(0x28, 4, 100));
+        screenshot(view, "36-battery-full");
+        require(has_label(lv_scr_act(), LV_SYMBOL_BATTERY_FULL " 100% Full"), "full differs from charging");
+        view.battery({});
+        pump(view);
         click(view, 268, 286);
         screenshot(view, "17-hx711-calibrate");
         std::uint64_t now = 0;

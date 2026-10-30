@@ -3,6 +3,7 @@
 #include "weight_display.hxx"
 #include "registration_measurement.hxx"
 #include "lvgl.h"
+#include "battery.hxx"
 
 namespace smart_scale::ui {
 enum class Dialog { none, calibration, objects, dose, demo, registration, remove_equipment };
@@ -11,6 +12,8 @@ public:
     explicit View(Controller& controller) : controller_(controller) {}
     void init();
     void update();
+    void battery(const BatterySnapshot& value) { battery_ = value; }
+    bool power_inhibited() const { return dialog_ != Dialog::none || controller_.session().phase == Phase::brewing; }
     void open(Dialog dialog);
     void reset();
 private:
@@ -32,6 +35,8 @@ private:
     void schedule_draw();
     void refresh_values();
     Controller& controller_;
+    BatterySnapshot battery_;
+    lv_obj_t* battery_label_{};
     WeightDisplay weight_display_;
     WeightDisplay gross_display_;
     WeightDisplay counts_display_{1.0F, 150.0F, 0.0F};

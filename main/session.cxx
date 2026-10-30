@@ -46,6 +46,11 @@ void Controller::mark_brew_error(BrewError error) {
         brew_error_elapsed_s_ = 0;
     }
 }
+void Controller::resume_measurement() {
+    scale_.resume_measurement();
+    flow_start_.reset();
+    resuming_measurement_ = true;
+}
 void Controller::sensor_fault() {
     if (!live_) return;
     scale_.invalidate();
@@ -60,6 +65,11 @@ void Controller::sensor_sample(std::optional<std::int32_t> raw, std::uint64_t no
     if (!live_) return;
     if (raw) scale_.ingest(*raw, now);
     scale_.check_timeout(now);
+    if (resuming_measurement_) {
+        if (!scale_.ready() || !scale_.stable()) return;
+        resuming_measurement_ = false;
+        flow_start_.reset();
+    }
     if (auto_brew_epoch_ != scale_.display_epoch()) flow_start_.reset();
     auto_brew_epoch_ = scale_.display_epoch();
     if (session_.phase == Phase::result) return; // Keep archived result immutable.

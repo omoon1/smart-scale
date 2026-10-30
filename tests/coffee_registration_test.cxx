@@ -42,6 +42,17 @@ int main() {
         assert(c.set_dose(20)); // Edit does not tare or overwrite from scale.
         f.hold(518);
         assert(c.scale().display_epoch() == epoch && c.session().dose_g == 20);
+        const auto object_before = c.session().active_object->id;
+        const auto faults_before = c.scale().faults();
+        c.resume_measurement();
+        f.now += 360000; // sleep does not become a sensor timeout or brew duration
+        assert(!c.scale().ready());
+        f.hold(518);
+        assert(c.scale().ready() && c.scale().stable());
+        assert(c.scale().faults() == faults_before);
+        assert(c.session().phase == Phase::ready && c.session().dose_g == 20);
+        assert(c.session().active_object->id == object_before);
+        assert(std::abs(c.scale().net()) < .01F);
         f.flow(518); f.hold(528);
         assert(std::abs(c.session().net_g - 10) < .02F); // Coffee excluded, all water retained.
         assert(!c.save_coffee() && !c.set_dose(22));
