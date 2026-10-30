@@ -1,52 +1,56 @@
 #include "battery_history.hxx"
 #include <cassert>
+#include <cmath>
 #include <iostream>
 using namespace smart_scale;
-constexpr int64_t midnight = 1793318400; // 2026-10-30 UTC
-BatterySnapshot battery(unsigned p = 72, bool usb = false) { return {true, true, usb, usb, false, p}; }
-const BatteryDay& day(const BatteryHistory& h, int64_t wall) { return h.data().days[(wall/86400)%7]; }
+BatterySnapshot battery(unsigned p=72, bool usb=false) { return {true,true,usb,usb,false,p}; }
 int main() {
     BatteryHistory h;
-    h.update(0, midnight, UsageState::active, battery(80));
-    h.update(3600, midnight+3600, UsageState::sleep, battery(75));
-    h.update(7200, midnight+7200, UsageState::charging, battery(72), BatteryHistory::approximate);
-    h.update(10800, midnight+10800, UsageState::active, battery(90,true));
-    assert((day(h, midnight).seconds == std::array<uint32_t,3>{3600,3600,3600}));
-    assert(day(h,midnight).first == 80 && day(h,midnight).last == 90);
-    assert(day(h,midnight).minimum == 72 && day(h,midnight).maximum == 90);
-    assert(day(h,midnight).flags & BatteryHistory::approximate);
-    BatteryHistory crossing;
-    crossing.update(0, midnight-60, UsageState::sleep, battery());
-    crossing.update(120, midnight+60, UsageState::active, battery());
-    assert(day(crossing, midnight-60).seconds[2] == 60);
-    assert(day(crossing, midnight).seconds[2] == 60);
-    crossing.update(86400*10+120, midnight+86400*10+60, UsageState::active, battery());
-    for (const auto& d : crossing.data().days) assert(!d.day || d.day >= midnight/86400+4);
-    BatteryHistory undated;
-    undated.update(0, 0, UsageState::active, battery());
-    undated.update(120, 120, UsageState::sleep, {});
-    assert(undated.data().undated.seconds[1] == 120);
-    undated.update(120, midnight, UsageState::active, battery());
-    undated.update(180, midnight+60, UsageState::active, battery());
-    assert(day(undated, midnight).seconds[1] == 60);
-    assert(undated.data().undated.seconds[1] == 120);
-    BatteryHistory restored;
-    assert(restored.restore(h.data()));
-    restored.update(0, midnight+20000, UsageState::active, battery());
-    restored.update(60, midnight+20060, UsageState::unknown, {});
-    assert(day(restored,midnight).seconds[1] == 3660); // no reboot gap
-    restored.update(120,midnight+20120,UsageState::active,battery());
-    assert(day(restored,midnight).seconds[1] == 3660); // unknown source excluded
-    assert(day(restored,midnight).flags & BatteryHistory::incomplete);
-    auto invalid=h.data(); invalid.version=99; assert(!restored.restore(invalid));
-    invalid=h.data(); invalid.days[(midnight/86400)%7].seconds[0]=999999; assert(!restored.restore(invalid));
-    BatteryHistory jumped;
-    jumped.update(0,midnight,UsageState::active,battery());
-    jumped.update(60,midnight+3600,UsageState::active,battery());
-    assert(jumped.data().undated.seconds[1] == 60);
-    assert(day(jumped,midnight).seconds[1] == 0);
+    assert(h.size()==0);
+    h.update(0,UsageState::charging,battery(20,true));
+    h.update(3600,UsageState::active,battery(90));
+    h.update(7200,UsageState::sleep,battery(80));
+    h.update(14400,UsageState::active,battery(70));
+    unsigned n=0;
+    h.segments(21600,[&](double x1,double y1,double x2,double y2,UsageState s){
+        assert(x1>=0 && x1<x2 && x2<=1 && y1>=0 && y2<=100);
+        assert(s==static_cast<UsageState>(n)); ++n;
+    });
+    assert(n==3); // Charging, active, sleep intervals retain their distinct colors.
+    n=0;
+    h.segments(3600,[&](double x1,double y1,double x2,double y2,UsageState s){
+        assert(x1==0 && x2==1 && s==UsageState::sleep);
+        assert(std::abs(y1-75)<0.001 && y2==70); ++n;
+    });
+    assert(n==1); // Clip the sleep join to the requested trailing window.
+    h.update(14405,UsageState::unknown,{});
+    h.update(14500,UsageState::active,battery(69));
+    n=0;
+    h.segments(60,[&](double,double,double,double,UsageState){++n;});
+    assert(n==0); // Never draw a trace across unavailable telemetry.
+    BatteryHistory sampled;
+    for(uint64_t t=0;t<=4*86400;t+=5) sampled.update(t,UsageState::active,battery());
+    assert(sampled.size()<=866);
+    assert(sampled.at(1).seconds>sampled.now()-BatteryHistory::retention_seconds);
+    sampled.segments(3*86400,[&](double x1,double,double x2,double,UsageState){assert(x1>=0 && x2<=1);});
+    BatteryHistory chatter;
+    for(uint64_t t=0;t<10000;++t) chatter.update(t,t%2?UsageState::active:UsageState::charging,battery());
+    assert(chatter.size()==BatteryHistory::capacity);
+    assert(chatter.at(0).seconds==10000-BatteryHistory::capacity);
+    chatter.update(0,UsageState::active,battery()); // Reboot / reset monotonic clock.
+    assert(chatter.size()==1 && chatter.now()==0);
+    chatter.clear(); assert(chatter.size()==0);
+    assert(BatteryHistory{}.size()==0); // No NVS restoration.
+    BatteryHistory live;
+    live.update(100,UsageState::active,battery(80));
+    live.update(105,UsageState::active,battery(79));
+    assert(live.size()==1 && live.latest().percent==79);
+    n=0; live.segments(21600,[&](double x1,double,double x2,double,UsageState){assert(x1>0.99 && x2==1);++n;});
+    assert(n==1); // Empty pre-boot time is not fabricated.
+    live.update(105,UsageState::sleep,battery(79));
+    live.update(205,UsageState::active,battery(78));
+    n=0; live.segments(100,[&](double,double,double,double,UsageState s){assert(s==UsageState::sleep);++n;});
+    assert(n==1);
     assert(BatteryHistory::state(battery(100,true),true)==UsageState::charging);
-    assert(BatteryHistory::state(battery(),true)==UsageState::sleep);
-    assert(BatteryHistory::state({})==UsageState::unknown);
-    std::cout << "Battery history tests passed\n";
+    std::cout << "Volatile battery graph history tests passed\n";
 }

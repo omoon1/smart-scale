@@ -115,7 +115,7 @@ void View::deferred_draw(void* p) {
 }
 void View::init() { draw(); }
 void View::open(Dialog dialog) {
-    if (dialog != Dialog::battery_history && dialog != Dialog::battery_clock &&
+    if (dialog != Dialog::battery_history &&
         (controller_.session().phase == Phase::brewing || controller_.session().phase == Phase::result)) return;
     dialog_ = dialog;
     controller_.set_auto_brew_enabled(dialog == Dialog::none || dialog == Dialog::battery_history);
@@ -145,9 +145,7 @@ void View::draw() {
     lv_obj_set_style_radius(screen_, 0, 0);
     lv_obj_set_style_border_width(screen_, 0, 0);
     binding_count_ = 0;
-    for (auto& row : history_rows_) row.fill(nullptr);
-    clock_fields_.fill(nullptr);
-    history_status_ = clock_error_ = nullptr;
+    history_plot_ = nullptr; history_revision_ = UINT64_MAX;
     weight_ = weight_unit_ = time_ = flow_ = status_ = object_text_ = dose_text_ = target_text_ = chart_ = nullptr;
     dose_value_ = icon_name_ = kind_input_ = chart_max_ = chart_time_ = current_point_ = object_weight_ = nullptr;
     start_button_ = tare_button_ = nullptr;
@@ -527,12 +525,11 @@ void View::draw_dialog(lv_obj_t* root) {
     lv_obj_set_style_bg_opa(shade, LV_OPA_70, 0);
     auto* box = lv_obj_create(shade);
     style(box);
-    lv_obj_set_size(box, (dialog_ == Dialog::registration || dialog_ == Dialog::battery_history || dialog_ == Dialog::battery_clock) ? 452 : 304, 304);
+    lv_obj_set_size(box, (dialog_ == Dialog::registration || dialog_ == Dialog::battery_history) ? 452 : 304, 304);
     lv_obj_center(box);
-    const int width = (dialog_ == Dialog::registration || dialog_ == Dialog::battery_history || dialog_ == Dialog::battery_clock) ? 452 : 304;
+    const int width = (dialog_ == Dialog::registration || dialog_ == Dialog::battery_history) ? 452 : 304;
     button(box, LV_SYMBOL_CLOSE, width - 52, 4, 44, 44, Action::close);
     if (dialog_ == Dialog::battery_history) draw_history(box);
-    else if (dialog_ == Dialog::battery_clock) draw_clock(box);
     else if (dialog_ == Dialog::calibration) {
         label(box, "Calibrate scale", 16, 18, 230, &lv_font_montserrat_22);
         calibration_weight_label_ = label(box, "?", 16, 56, 272, &lv_font_montserrat_28);
@@ -593,83 +590,92 @@ void View::draw_dialog(lv_obj_t* root) {
         for (int i = 0; i < 4; ++i) button(box, names[i], 12, 62 + i * 54, 280, 46, Action::choose_scenario, i);
     } else draw_registration(box);
 }
+namespace {
+unsigned usage_color(UsageState state) {
+    switch (state) {
+    case UsageState::charging: return 0x55C878;
+    case UsageState::active: return 0x4EA5FF;
+    case UsageState::sleep: return 0xFFA652;
+    default: return muted;
+    }
+}
+}
 void View::draw_history(lv_obj_t* box) {
-    label(box, "Battery history", 16, 15, 300, &lv_font_montserrat_22);
-    history_status_ = label(box, "", 16, 45, 420, &lv_font_montserrat_14, muted);
-    const int columns[] = {4, 76, 160, 238, 316};
-    const int widths[] = {70, 84, 78, 78, 100};
-    const char* headers[] = {"Day", "Charging", "Active", "Sleep", "Battery"};
-    for (unsigned c = 0; c < 5; ++c) label(box, headers[c], 12 + columns[c], 70, widths[c]);
-    auto* list = lv_obj_create(box);
-    style(list); lv_obj_set_pos(list, 12, 92); lv_obj_set_size(list, 428, 136);
-    lv_obj_add_flag(list, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scroll_dir(list, LV_DIR_VER);
-    for (unsigned i = 0; i < history_rows_.size(); ++i)
-        for (unsigned c = 0; c < 5; ++c) {
-            auto* cell = label(list, "", columns[c], i * 29, widths[c]);
-            lv_label_set_long_mode(cell, LV_LABEL_LONG_CLIP);
-            history_rows_[i][c] = cell;
-        }
-    label(box, "Charging = plugged in; * partial / estimated", 16, 234, 424, &lv_font_montserrat_14, muted);
-    button(box, "Set UTC date / time", 16, 256, 230, 40, Action::battery_clock);
-    label(box, "Hours : minutes", 264, 269, 170, &lv_font_montserrat_14, muted);
+    label(box, "Battery Usage", 16, 15, 320, &lv_font_montserrat_22);
+    const unsigned ranges[] = {6, 24, 72};
+    const char* names[] = {"6hr", "1day", "3day"};
+    for (unsigned i = 0; i < 3; ++i)
+        button(box, names[i], 58 + i * 126, 55, 114, 38, Action::history_range, ranges[i], history_hours_ == ranges[i]);
+    history_plot_ = lv_obj_create(box);
+    style(history_plot_, bg);
+    lv_obj_set_pos(history_plot_, 58, 112); lv_obj_set_size(history_plot_, 374, 132);
+    lv_obj_set_style_radius(history_plot_, 0, 0);
+    lv_obj_set_style_border_width(history_plot_, 0, 0);
+    lv_obj_clear_flag(history_plot_, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(history_plot_, draw_history_plot, LV_EVENT_DRAW_MAIN, this);
+    label(box, "100%", 12, 106, 44, &lv_font_montserrat_14, muted);
+    label(box, "50%", 20, 172, 36, &lv_font_montserrat_14, muted);
+    label(box, "0%", 28, 237, 28, &lv_font_montserrat_14, muted);
+    const auto left = "-" + std::to_string(history_hours_) + "h";
+    const auto middle = "-" + std::to_string(history_hours_ / 2) + "h";
+    label(box, left.c_str(), 58, 250, 60, &lv_font_montserrat_14, muted);
+    label(box, middle.c_str(), 226, 250, 60, &lv_font_montserrat_14, muted);
+    label(box, "Now", 400, 250, 36, &lv_font_montserrat_14, muted);
+    label(box, "Charging", 58, 280, 110, &lv_font_montserrat_14, usage_color(UsageState::charging));
+    label(box, "Active", 200, 280, 90, &lv_font_montserrat_14, usage_color(UsageState::active));
+    label(box, "Sleep", 340, 280, 90, &lv_font_montserrat_14, usage_color(UsageState::sleep));
     refresh_history();
 }
 void View::refresh_history() {
-    if (!history_status_) return;
-    const auto status = battery_text(battery_) + (!history_clock_valid_ ? "  |  Clock not set - undated usage" : "  |  Last 7 days (UTC)");
-    set_text(history_status_, status.c_str());
-    for (unsigned i = 0; i < history_rows_.size(); ++i) {
-        const BatteryDay* d = nullptr;
-        char date[20] = "Undated";
-        const bool undated = history_.newest_day ? i == 7 : i == 0;
-        if (!history_.newest_day && i > 0) {
-            for (auto* cell : history_rows_[i]) set_text(cell, "");
-            continue;
-        }
-        if (undated) d = &history_.undated;
-        else {
-            const auto day = history_.newest_day - static_cast<int>(i);
-            const std::time_t epoch = int64_t(day) * 86400;
-            if (auto* t = std::gmtime(&epoch)) std::strftime(date, sizeof(date), "%m/%d", t);
-            const auto& entry = history_.days[day % 7];
-            if (entry.day == day) d = &entry;
-        }
-        const auto date_text = std::string(date) + (d && d->flags ? "*" : "");
-        set_text(history_rows_[i][0], date_text.c_str());
-        for (unsigned c = 0; c < 3; ++c) {
-            char text[32] = "--";
-            if (d) std::snprintf(text, sizeof(text), "%lu:%02lu", (unsigned long)(d->seconds[c]/3600),
-                                (unsigned long)(d->seconds[c]/60%60));
-            set_text(history_rows_[i][c+1], text);
-        }
-        char percent[24] = "--";
-        if (d && d->first <= 100 && d->last <= 100)
-            std::snprintf(percent, sizeof(percent), "%u>%u%%", d->first, d->last);
-        set_text(history_rows_[i][4], percent);
-    }
+    if (!history_plot_ || !history_ || history_revision_ == history_->revision()) return;
+    history_revision_ = history_->revision();
+    lv_obj_invalidate(history_plot_);
 }
-void View::draw_clock(lv_obj_t* box) {
-    label(box, "Set UTC date / time", 16, 16, 320, &lv_font_montserrat_22);
-    label(box, "Daily history uses UTC. Set again after power loss.", 16, 58, 420);
-    const char* names[] = {"Year", "Month", "Day", "Hour", "Minute"};
-    const int first[] = {2024, 1, 1, 0, 0}, count[] = {76, 12, 31, 24, 60};
-    auto now = std::time(nullptr);
-    std::tm current{}; current.tm_year = 126; current.tm_mday = 1;
-    if (BatteryHistory::dated(now)) if (auto* t = std::gmtime(&now)) current = *t;
-    const int selected[] = {current.tm_year - 124, current.tm_mon, current.tm_mday - 1, current.tm_hour, current.tm_min};
-    for (unsigned i = 0; i < clock_fields_.size(); ++i) {
-        label(box, names[i], 16 + i * 84, 106, 80);
-        auto* field = lv_dropdown_create(box); clock_fields_[i] = field;
-        std::string options;
-        for (int n = 0; n < count[i]; ++n) { if (n) options += '\n'; options += std::to_string(first[i] + n); }
-        lv_dropdown_set_options(field, options.c_str());
-        lv_dropdown_set_selected(field, selected[i]);
-        lv_obj_set_pos(field, 16 + i * 84, 132); lv_obj_set_size(field, 80, 44);
+void View::draw_history_plot(lv_event_t* event) {
+    auto& view = *static_cast<View*>(lv_event_get_user_data(event));
+    auto* context = lv_event_get_draw_ctx(event);
+    lv_area_t area;
+    lv_obj_get_content_coords(lv_event_get_target(event), &area);
+    const auto w = lv_area_get_width(&area) - 1, h = lv_area_get_height(&area) - 1;
+    lv_draw_line_dsc_t grid;
+    lv_draw_line_dsc_init(&grid); grid.color = color(border); grid.width = 1;
+    for (int i = 0; i <= 2; ++i) {
+        const lv_point_t a{area.x1, static_cast<lv_coord_t>(area.y1 + h * i / 2)};
+        const lv_point_t b{area.x2, a.y};
+        lv_draw_line(context, &grid, &a, &b);
     }
-    clock_error_ = label(box, "Earlier undated usage stays undated.", 16, 198, 420, &lv_font_montserrat_14, muted);
-    button(box, "Save", 16, 246, 180, 46, Action::save_clock, 0, true);
-    button(box, "Back", 212, 246, 180, 46, Action::battery_history);
+    if (!view.history_) return;
+    view.history_->segments(view.history_hours_ * 3600, [&](double x1, double y1, double x2, double y2, UsageState state) {
+        lv_draw_line_dsc_t line;
+        lv_draw_line_dsc_init(&line); line.color = color(usage_color(state)); line.width = 3;
+        line.round_start = line.round_end = true;
+        const lv_point_t a{static_cast<lv_coord_t>(area.x1 + std::lround(x1 * w)),
+                           static_cast<lv_coord_t>(area.y2 - std::lround(y1 * h / 100))};
+        const lv_point_t b{static_cast<lv_coord_t>(area.x1 + std::lround(x2 * w)),
+                           static_cast<lv_coord_t>(area.y2 - std::lround(y2 * h / 100))};
+        if (state != UsageState::sleep) lv_draw_line(context, &line, &a, &b);
+        else {
+            // LVGL 8's native dashes only cover horizontal/vertical lines.
+            const double length = std::hypot(b.x - a.x, b.y - a.y);
+            auto along = [&](double distance) {
+                const auto t = length ? distance / length : 0;
+                return lv_point_t{static_cast<lv_coord_t>(a.x + std::lround((b.x - a.x) * t)),
+                                  static_cast<lv_coord_t>(a.y + std::lround((b.y - a.y) * t))};
+            };
+            for (double offset = 0; offset < length; offset += 10) {
+                const auto begin = along(offset), end = along(std::min(length, offset + 5));
+                lv_draw_line(context, &line, &begin, &end);
+            }
+        }
+    });
+    const auto& latest = view.history_->latest();
+    if (view.history_->size() && latest.percent <= 100 && latest.state != UsageState::unknown) {
+        const auto y = static_cast<lv_coord_t>(area.y2 - latest.percent * h / 100);
+        const lv_area_t dot{static_cast<lv_coord_t>(area.x2 - 4), static_cast<lv_coord_t>(y - 2), area.x2, static_cast<lv_coord_t>(y + 2)};
+        lv_draw_rect_dsc_t dsc; lv_draw_rect_dsc_init(&dsc);
+        dsc.bg_color = color(usage_color(latest.state)); dsc.radius = LV_RADIUS_CIRCLE;
+        lv_draw_rect(context, &dsc, &dot);
+    }
 }
 void View::draw_registration(lv_obj_t* box) {
     if (registration_step_ == 2) {
@@ -719,23 +725,10 @@ void View::draw_registration(lv_obj_t* box) {
 void View::action(Action a, int value) {
     switch (a) {
     case Action::battery_history: open(Dialog::battery_history); return;
-    case Action::battery_clock: open(Dialog::battery_clock); return;
-    case Action::save_clock: {
-        if (dialog_ != Dialog::battery_clock || pending_draw_) return;
-        std::tm t{};
-        t.tm_year = 124 + lv_dropdown_get_selected(clock_fields_[0]);
-        t.tm_mon = lv_dropdown_get_selected(clock_fields_[1]);
-        t.tm_mday = 1 + lv_dropdown_get_selected(clock_fields_[2]);
-        t.tm_hour = lv_dropdown_get_selected(clock_fields_[3]);
-        t.tm_min = lv_dropdown_get_selected(clock_fields_[4]);
-        const auto entered = t;
-        const auto epoch = std::mktime(&t); // Firmware uses UTC0, explicitly shown in UI.
-        if (epoch < 0 || t.tm_year != entered.tm_year || t.tm_mon != entered.tm_mon || t.tm_mday != entered.tm_mday) {
-            set_text(clock_error_, "Invalid date"); return;
-        }
-        clock_request_ = epoch;
-        open(Dialog::battery_history); return;
-    }
+    case Action::history_range:
+        if (dialog_ != Dialog::battery_history || pending_draw_) return;
+        if (value == 6 || value == 24 || value == 72) { history_hours_ = value; schedule_draw(); }
+        return;
     case Action::tare: controller_.tare(); break;
     case Action::calibration:
         controller_.scale().cancel_calibration();

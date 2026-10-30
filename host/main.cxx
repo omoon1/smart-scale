@@ -145,27 +145,41 @@ int main(int argc, char** argv) {
         screenshot(view, "36-battery-full");
         require(has_label(lv_scr_act(), LV_SYMBOL_BATTERY_FULL " 100%"), "full battery retains percentage only");
         smart_scale::BatteryHistory history;
-        constexpr int64_t day = 1793318400;
-        history.update(0, day, smart_scale::UsageState::active, smart_scale::decode_axp2101(8, 0, 90));
-        history.update(4500, day + 4500, smart_scale::UsageState::sleep, smart_scale::decode_axp2101(8, 0, 84));
-        history.update(17700, day + 17700, smart_scale::UsageState::charging, smart_scale::decode_axp2101(8, 0, 72));
-        history.update(21300, day + 21300, smart_scale::UsageState::active, smart_scale::decode_axp2101(0x28, 0x20, 85));
-        view.battery(smart_scale::decode_axp2101(0x28, 0x20, 85));
-        view.history(history.data());
+        auto previous_usage = smart_scale::UsageState::unknown;
+        for (uint64_t t = 0; t <= 72 * 3600; t += 300) {
+            const double hour = (t % (12 * 3600)) / 3600.0;
+            const auto state = hour < 2 ? smart_scale::UsageState::charging : hour < 6 ? smart_scale::UsageState::active : smart_scale::UsageState::sleep;
+            const unsigned percent = hour < 2 ? 30 + hour * 30 : hour < 6 ? 90 - (hour-2)*12 : 42 - (hour-6)*2;
+            if (state == smart_scale::UsageState::sleep && previous_usage == state) continue;
+            previous_usage = state;
+            history.update(t, state, smart_scale::decode_axp2101(state == smart_scale::UsageState::charging ? 0x28 : 8,
+                state == smart_scale::UsageState::charging ? 0x20 : 0, percent));
+        }
+        view.battery(smart_scale::decode_axp2101(8, 0, 72));
+        view.history(history);
         click(view, 440, 30);
-        require(has_label(lv_scr_act(), "Battery history"), "top-right battery opens history");
+        require(has_label(lv_scr_act(), "Battery Usage"), "top-right battery opens usage graph");
         require(!view.power_inhibited(), "history panel permits idle power policy");
-        screenshot(view, "37-battery-history");
-        click(view, 100, 282);
-        require(has_label(lv_scr_act(), "Set UTC date / time"), "history opens clock setting");
-        screenshot(view, "38-battery-clock");
-        click(view, 100, 278);
-        require(view.take_clock_request().has_value(), "valid clock selection produces a clock request");
-        click(view, 432, 30);
-        view.history({}, false);
-        click(view, 440, 30);
-        require(has_label(lv_scr_act(), "Undated"), "undated history is explicit");
-        screenshot(view, "39-battery-undated");
+        require(view.history_hours()==6 && has_label(lv_scr_act(), "-6h"), "default six-hour range");
+        require(!has_label(lv_scr_act(), "Set UTC date / time"), "no clock controls");
+        screenshot(view, "37-battery-6hr");
+        click(view, 250, 80);
+        require(view.history_hours()==24 && has_label(lv_scr_act(), "-24h"), "one-day range");
+        screenshot(view, "38-battery-1day");
+        unsigned green_pixels=0, blue_pixels=0, orange_pixels=0;
+        for (int y=120; y<252; ++y) for (int x=72; x<447; ++x) {
+            const auto pixel=framebuffer[y*width+x];
+            const int r=(pixel>>16)&255, g=(pixel>>8)&255, b=pixel&255;
+            green_pixels += g>r+40 && g>b+20;
+            blue_pixels += b>r+40 && b>g+20;
+            orange_pixels += r>g+30 && g>b+40;
+        }
+        require(green_pixels>30 && blue_pixels>30 && orange_pixels>30, "graph renders all three state colors");
+        click(view, 380, 80);
+        require(view.history_hours()==72 && has_label(lv_scr_act(), "-72h"), "three-day range");
+        screenshot(view, "39-battery-3day");
+        history.clear(); pump(view);
+        screenshot(view, "40-battery-empty");
         click(view, 432, 30);
         view.battery({});
         pump(view);
@@ -242,7 +256,7 @@ int main(int argc, char** argv) {
         feed(25920);
         screenshot(view, "20-hx711-brewing");
         click(view, 440, 30);
-        require(has_label(lv_scr_act(), "Battery history"), "history accessible during brew");
+        require(has_label(lv_scr_act(), "Battery Usage"), "history accessible during brew");
         require(controller.session().phase == smart_scale::Phase::brewing && view.power_inhibited(), "history preserves brewing and its sleep inhibitor");
         click(view, 432, 30);
         feed(17260); // 110 g gross: liquid decreased, registered cup remains.

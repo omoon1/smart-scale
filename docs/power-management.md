@@ -57,78 +57,44 @@ Before enabling verified sleep on hardware:
 Physical battery, display, and sleep tests cannot be substituted by host tests. Do not enable this configuration for the 3.49 V2 merely because it exposes TP_INT.
 
 
-## Seven-day battery usage
+## Battery Usage graph
 
-Tap the battery indicator, aligned to the top-right with a 120 x 44 px touch target,
-from any main-screen phase to open Battery history. The scrollable table shows
-today and the previous six UTC dates, with Charging, Active and Sleep in hours:minutes,
-and the first/latest battery percentages for each day. Missing records show `--`.
-An additional Undated row retains usage that cannot be assigned to a date.
-There is no periodic sample chart or remaining-runtime estimate.
+Tap the top-right battery indicator to open **Battery Usage**. The only text in
+this panel is the title and graph-related controls, axes, and legend. Range
+buttons select **6hr**, **1day**, or **3day**. The vertical axis is battery percent
+(0–100%); the horizontal axis is elapsed time ending at Now. No UTC dates, clock
+settings, daily table, status prose, or extra summary labels are shown.
 
-Categories are mutually exclusive:
+Trace colors identify exclusive device states: green Charging (plugged in,
+including full battery), blue Active (on battery, including dimmed/screen-off),
+and orange Sleep (actual successful light sleep on battery). Header green still
+means actual charger activity. Sleep joins are dashed estimates between readings
+before and after sleep; no measurements are collected while asleep. Unavailable
+battery readings break the trace. Power changes during sleep cannot be timed,
+so the interval uses the pre-sleep power source. Before-boot time stays empty.
 
-- Charging means **plugged in**, including full battery and sleep on external power.
-  The table explains this; header green still means actual charger activity.
-- Active means on battery with CPU awake, including dimmed and screen-off.
-- Sleep means on battery during a successful light-sleep call only. Failed attempts
-  and setup/resume overhead are Active. Disabled sleep leaves Sleep at zero.
-- Unknown power source and powered-off intervals are not added to these totals.
+History uses only monotonic uptime, including light sleep, and never wall time.
+It survives light sleep in RAM and starts empty on every firmware boot, including
+power-off/on, reset, or watchdog restart. There is no NVS history read/write and
+no date/time setup. Legacy history blobs from earlier firmware are ignored;
+calibration persistence is unchanged.
 
-History is a read-only dialog: it permits idle dimming/screen-off/sleep and does
-not disable automatic brew detection. A brew phase transition closes the panel;
-opening it during a running brew leaves brewing intact. Clock editing inhibits
-idle transitions like other editing dialogs. The first dark-screen touch remains
-consumed by the existing global wake-touch gate.
+The bounded ring holds up to 2,048 endpoints (32 KiB plus small bookkeeping),
+allocated in PSRAM. It records five-minute samples plus state and telemetry
+validity transitions, and maintains a current live endpoint. Records older than
+72 hours are evicted, retaining one anchor for clipping an interval at the window
+boundary. If unusually frequent state transitions fill the ring, oldest records
+are evicted first; retention can be shorter than three days. Memory is bounded,
+and no flash writes or timer wakes are needed for history.
 
-### Clock and completeness
+The graph draws clipped line segments directly without creating an LVGL object
+for every point. Opening or switching ranges does not alter collection, timers,
+weighing, or brewing. The read-only panel permits idle dimming/screen-off/sleep
+and automatic brew detection; it remains accessible during a running brew.
+The first touch on a dark screen is still consumed by the global wake-touch gate.
 
-Main has no network/RTC synchronization. The panel includes **Set UTC date / time**
-with year/month/day/hour/minute selectors and calendar-date validation. Firmware
-uses UTC explicitly, without DST or local-time assumptions. A cold boot requires
-setting the clock again unless another platform clock source has supplied a valid
-2024–2099 timestamp. No timestamp is reconstructed from the last checkpoint.
-Previously undated usage stays undated after setting the clock.
-
-Elapsed time comes from the monotonic ESP timer, which accounts for light sleep;
-brew/session timers are not used. Continuous dated intervals are split at UTC
-midnight. Forward gaps expire old daily records. Clock jumps go to the undated
-summary; backward adjustments never resurrect expired records or overwrite a
-newer ring entry with an out-of-window date. The retained calendar window follows
-the latest observed date until a backwards-corrected clock catches up.
-
-`*` marks partial/estimated records. Restored history is conservatively marked
-partial because an interrupted interval may not have reached flash. A sleep
-interval is estimated because this board does not observe power-source changes
-while asleep. It is classified using the pre-sleep source; fresh status is read
-after wake. Source polling has up to roughly five seconds of detection latency.
-No exact plug/unplug time during sleep is claimed.
-
-### Storage and writes
-
-`BatteryHistory` owns fixed storage: seven 24-byte daily records, one 24-byte
-undated record, and an eight-byte header, **200 bytes total**. Each daily record
-stores epoch day, three second counters, first/latest/min/max battery percentage,
-and quality flags. Percentage 255 means unavailable. Runtime bookkeeping is
-separate and is not restored as a running/sleeping state.
-
-`BatteryHistoryStore` writes one versioned NVS blob (`battery_usage/history`).
-It loads after the existing NVS initialization, validates size/version/content,
-and checkpoints every 15 minutes while awake, on source/day/clock changes, before
-sleep, and after wake. Event bursts are coalesced for up to 60 seconds; pre-sleep
-checkpoints bypass that window (one-second minimum). Failed writes retry with a
-60-second minimum and leave RAM data dirty. The device never wakes just to save.
-NVS metadata and garbage collection add physical storage/write overhead beyond
-this payload. Unexpected power loss can discard up to 15 minutes of awake usage,
-or the uncheckpointed portion of a sleep interval. NVS failure leaves history
-functional in RAM and emits a warning; it does not stop weighing or erase calibration.
-
-### Validation
-
-`make test` includes history accounting, midnight split, seven-day expiry, long
-intervals, invalid/unknown readings, clock jumps, checkpoint restoration, and
-corrupt schema/counter rejection. A fake-NVS adapter test covers blob round trips, event coalescing, pre-sleep saves, and retry after commit failure. `make preview` exercises actual top-right touch
-navigation, history/clock/undated screens, and the read-only panel's idle policy.
-Physical acceptance still requires NVS power-cycle tests, clock retention checks,
-source transitions during sleep, battery gauge accuracy, and repeated sleep/wake
-cycles on the verified board.
+Validation covers all three ranges, state colors, clipping, unavailable readings,
+72-hour retention, capacity pressure, empty/new boot history, light-sleep joins,
+and top-right touch navigation. Host screenshots cover populated and empty graphs.
+Physical checks still require battery gauge validation and repeated sleep/wake
+and power-cycle tests on the verified board.

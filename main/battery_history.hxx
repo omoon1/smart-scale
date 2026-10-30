@@ -3,113 +3,75 @@
 #include <array>
 #include <algorithm>
 #include <cstdint>
-#include <cstdlib>
-#include <limits>
 
 namespace smart_scale {
-enum class UsageState { charging, active, sleep, unknown };
-struct BatteryDay {
-    int32_t day{}; // UTC epoch day; zero means undated
-    std::array<uint32_t, 3> seconds{};
-    uint8_t first{255}, last{255}, minimum{255}, maximum{255};
-    uint32_t flags{};
+enum class UsageState : uint8_t { charging, active, sleep, unknown };
+struct BatteryPoint {
+    uint64_t seconds{}; // Monotonic uptime, including light sleep; never wall time.
+    uint8_t percent{255};
+    UsageState state{UsageState::unknown}; // State of the interval AFTER this point.
 };
-struct BatteryHistoryData {
-    uint32_t version{1};
-    int32_t newest_day{};
-    std::array<BatteryDay, 7> days{};
-    BatteryDay undated{};
-};
-static_assert(sizeof(BatteryHistoryData) == 200);
 class BatteryHistory {
 public:
-    static constexpr uint32_t incomplete = 1, approximate = 2;
-    static bool dated(int64_t wall) { return wall >= 1704067200 && wall < 4102444800LL; }
+    static constexpr std::size_t capacity = 2048;
+    static constexpr uint64_t retention_seconds = 3 * 86400;
+    static constexpr uint64_t sample_seconds = 300;
     static UsageState state(const BatterySnapshot& b, bool sleeping = false) {
         if (!b.valid) return UsageState::unknown;
         if (b.external_power) return UsageState::charging;
         return b.present ? (sleeping ? UsageState::sleep : UsageState::active) : UsageState::unknown;
     }
-    const BatteryHistoryData& data() const { return data_; }
-    bool restore(const BatteryHistoryData& value) {
-        if (value.version != 1 || value.newest_day < 0 || value.newest_day > 47482) return false;
-        for (const auto& d : value.days) {
-            if (d.day < 0 || d.day > value.newest_day) return false;
-            uint64_t total = 0;
-            for (auto s : d.seconds) total += s;
-            if (total > 86400) return false;
-            for (auto p : {d.first, d.last, d.minimum, d.maximum}) if (p > 100 && p != 255) return false;
-        }
-        data_ = value;
-        for (auto& d : data_.days) if (d.day) d.flags |= incomplete;
-        data_.undated.flags |= incomplete;
-        dirty_ = true;
-        started_ = false; // Never account for unobserved time across a restart.
-        return true;
+    void update(uint64_t seconds, UsageState state, const BatterySnapshot& battery) {
+        if (started_ && seconds < live_.seconds) clear();
+        BatteryPoint point{seconds, 255, state};
+        if (battery.valid && battery.present && battery.percent && *battery.percent <= 100)
+            point.percent = static_cast<uint8_t>(*battery.percent);
+        if (started_ && point.seconds == live_.seconds && point.percent == live_.percent && point.state == live_.state) return;
+        const bool transition = started_ && (point.state != live_.state || (point.percent == 255) != (live_.percent == 255));
+        if (!started_ || transition || seconds - at(count_ - 1).seconds >= sample_seconds) append(point);
+        live_ = point; started_ = true; ++revision_;
+        // Keep one preceding anchor so an interval crossing the left boundary can be clipped.
+        const auto cutoff = seconds > retention_seconds ? seconds - retention_seconds : 0;
+        while (count_ > 1 && at(1).seconds <= cutoff) { first_ = (first_ + 1) % capacity; --count_; }
     }
-    void update(uint64_t seconds, int64_t wall, UsageState next, const BatterySnapshot& b,
-                uint32_t interval_flags = 0) {
-        if (dated(wall)) advance(static_cast<int32_t>(wall / 86400));
-        if (started_ && seconds >= previous_seconds_) {
-            const auto elapsed = seconds - previous_seconds_;
-            const bool continuous = dated(wall) && dated(previous_wall_) &&
-                std::abs((wall - previous_wall_) - static_cast<int64_t>(elapsed)) <= 2;
-            if (continuous) {
-                // Bound work after a very long sleep to the retained seven-day window.
-                int64_t cursor = std::max(previous_wall_, int64_t(data_.newest_day - 6) * 86400);
-                const int64_t end = previous_wall_ + static_cast<int64_t>(elapsed);
-                while (cursor < end) {
-                    const auto day = static_cast<int32_t>(cursor / 86400);
-                    const auto stop = std::min(end, int64_t(day + 1) * 86400);
-                    if (day >= data_.newest_day - 6 && day <= data_.newest_day)
-                        add(row(day), stop - cursor, current_, interval_flags);
-                    cursor = stop;
-                }
-            } else if (elapsed) add(data_.undated, elapsed, current_, interval_flags | incomplete);
-        }
-        if (b.valid && b.present && b.percent && *b.percent <= 100) {
-            auto& d = dated(wall) && wall / 86400 >= data_.newest_day - 6 ? row(wall / 86400) : data_.undated;
-            const auto p = static_cast<uint8_t>(*b.percent);
-            if (d.first == 255) d.first = p;
-            d.last = p; d.minimum = std::min(d.minimum, p);
-            d.maximum = d.maximum == 255 ? p : std::max(d.maximum, p);
-            dirty_ = true;
-        }
-        previous_seconds_ = seconds; previous_wall_ = wall; current_ = next; started_ = true;
+    void clear() { first_ = count_ = 0; live_ = {}; started_ = false; ++revision_; }
+    std::size_t size() const { return count_; }
+    uint64_t revision() const { return revision_; }
+    uint64_t now() const { return live_.seconds; }
+    const BatteryPoint& latest() const { return live_; }
+    const BatteryPoint& at(std::size_t i) const { return points_[(first_ + i) % capacity]; }
+    // Project measured endpoints into a trailing time window. Unknown telemetry
+    // breaks the trace. Sleep joins are estimates and the UI renders them dashed.
+    template<class Draw> void segments(uint64_t window, Draw draw) const {
+        if (!started_ || !window) return;
+        const double start = static_cast<double>(live_.seconds) - window;
+        auto segment = [&](const BatteryPoint& a, const BatteryPoint& b) {
+            if (b.seconds <= a.seconds || a.percent > 100 || b.percent > 100 || a.state == UsageState::unknown) return;
+            const double left = std::max(start, static_cast<double>(a.seconds));
+            const double right = std::min(static_cast<double>(live_.seconds), static_cast<double>(b.seconds));
+            if (left >= right) return;
+            auto level = [&](double t) { return a.percent + (static_cast<double>(b.percent) - a.percent) *
+                (t - a.seconds) / (b.seconds - a.seconds); };
+            draw((left - start) / window, level(left), (right - start) / window, level(right), a.state);
+        };
+        for (std::size_t i = 1; i < count_; ++i) segment(at(i-1), at(i));
+        if (count_) segment(at(count_-1), live_);
     }
-    bool dirty() const { return dirty_; }
-    void saved() { dirty_ = false; }
 private:
-    void advance(int32_t day) {
-        if (day <= data_.newest_day) return;
-        data_.newest_day = day;
-        for (auto& d : data_.days) if (d.day < day - 6) d = BatteryDay{};
-        dirty_ = true;
-    }
-    BatteryDay& row(int32_t day) {
-        auto& d = data_.days[day % 7];
-        if (d.day != day) { d = BatteryDay{}; d.day = day; }
-        return d;
-    }
-    void add(BatteryDay& d, uint64_t seconds, UsageState state, uint32_t flags) {
-        d.flags |= flags;
-        if (state == UsageState::unknown) d.flags |= incomplete;
-        else {
-            auto& total = d.seconds[static_cast<unsigned>(state)];
-            uint64_t limit = std::numeric_limits<uint32_t>::max();
-            if (d.day) {
-                uint64_t used = 0; for (auto s : d.seconds) used += s;
-                limit = used < 86400 ? 86400 - used : 0;
-                if (seconds > limit) d.flags |= incomplete;
-            }
-            total += static_cast<uint32_t>(std::min(seconds, std::min(limit, uint64_t(UINT32_MAX - total))));
+    void append(const BatteryPoint& point) {
+        if (count_ && at(count_-1).seconds == point.seconds) {
+            points_[(first_ + count_ - 1) % capacity] = point;
+            return;
         }
-        dirty_ = true;
+        if (count_ == capacity) { first_ = (first_ + 1) % capacity; --count_; }
+        points_[(first_ + count_) % capacity] = point; ++count_;
     }
-    BatteryHistoryData data_{};
-    uint64_t previous_seconds_{};
-    int64_t previous_wall_{};
-    UsageState current_{UsageState::unknown};
-    bool started_{}, dirty_{};
+    std::array<BatteryPoint, capacity> points_{};
+    BatteryPoint live_{};
+    std::size_t first_{}, count_{};
+    uint64_t revision_{};
+    bool started_{};
 };
+static_assert(sizeof(BatteryPoint) == 16);
+static_assert(sizeof(BatteryHistory) < 33 * 1024);
 }
