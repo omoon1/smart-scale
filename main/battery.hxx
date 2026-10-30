@@ -26,8 +26,13 @@ inline std::string battery_text(const BatterySnapshot& b) {
     if (!b.valid) return "Battery --";
     if (!b.present) return b.external_power ? "USB" : "No battery";
     std::string value = b.percent ? std::to_string(*b.percent) + "%" : "--%";
-    if (b.charging) return value + " Charging";
-    if (b.full) return value + " Full";
-    return value + (b.external_power ? " USB" : " Battery");
+    return value;
+}
+// Charging takes precedence over the low-battery threshold. Unknown/absent
+// telemetry stays neutral instead of implying an empty or charging battery.
+inline unsigned battery_color(const BatterySnapshot& b) {
+    if (b.valid && b.present && b.charging) return 0x55C878;
+    if (b.valid && b.present && b.percent && *b.percent < 20) return 0xF06464;
+    return 0xA6A6A6;
 }
 }

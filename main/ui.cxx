@@ -273,6 +273,8 @@ void View::refresh_values() {
             *battery_.percent >= 30 ? LV_SYMBOL_BATTERY_2 : LV_SYMBOL_BATTERY_1;
         const auto text = controller_.live() ? std::string(icon) + " " + battery_text(battery_) : std::string("DEMO battery --");
         set_text(battery_label_, text.c_str());
+        lv_obj_set_style_text_color(battery_label_,
+            color(controller_.live() ? battery_color(battery_) : 0xA6A6A6), 0);
     }
     const auto& s = controller_.session();
     const auto& scale = controller_.scale();

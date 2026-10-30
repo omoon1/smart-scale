@@ -140,10 +140,10 @@ int main(int argc, char** argv) {
         screenshot(view, "16-hx711-disconnected");
         view.battery(smart_scale::decode_axp2101(0x28, 0x20, 100));
         screenshot(view, "35-battery-charging");
-        require(has_label(lv_scr_act(), LV_SYMBOL_BATTERY_FULL " 100% Charging"), "battery charging header");
+        require(has_label(lv_scr_act(), LV_SYMBOL_BATTERY_FULL " 100%"), "charging uses color without a label");
         view.battery(smart_scale::decode_axp2101(0x28, 4, 100));
         screenshot(view, "36-battery-full");
-        require(has_label(lv_scr_act(), LV_SYMBOL_BATTERY_FULL " 100% Full"), "full differs from charging");
+        require(has_label(lv_scr_act(), LV_SYMBOL_BATTERY_FULL " 100%"), "full battery retains percentage only");
         view.battery({});
         pump(view);
         click(view, 268, 286);

@@ -185,7 +185,7 @@ esp_err_t Device::power_state(PowerState state) {
         lv_timer_resume(display_->refr_timer);
         error = show(); // full frame before backlight
     } else {
-        const unsigned duty = state == PowerState::active ? 818 : state == PowerState::dimmed ? 409 : 0;
+        const unsigned duty = state == PowerState::active ? 818 : state == PowerState::dimmed ? 245 : 0;
         error = ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty);
         if (error == ESP_OK) error = ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
         if (error == ESP_OK && state == PowerState::screen_off) lv_timer_pause(display_->refr_timer);

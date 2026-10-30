@@ -34,7 +34,15 @@ int main() {
     assert(!gate.filter(false,false)); assert(gate.filter(true,false));
     auto b = decode_axp2101(0x28,0x20,72);
     assert(b.valid && b.present && b.external_power && b.charging && b.percent == 72);
-    assert(battery_text(b) == "72% Charging");
+    assert(battery_text(b) == "72%");
+    assert(battery_color(b) == 0x55C878);
+    b = decode_axp2101(0x28, 0x20, 19); // charging overrides red
+    assert(battery_color(b) == 0x55C878);
+    b = decode_axp2101(8, 0x40, 19); assert(battery_color(b) == 0xF06464);
+    b = decode_axp2101(8, 0x40, 0); assert(battery_color(b) == 0xF06464);
+    b = decode_axp2101(8, 0x40, 20); assert(battery_color(b) == 0xA6A6A6);
+    b = decode_axp2101(8, 0x40, 100); assert(battery_color(b) == 0xA6A6A6);
+    assert(battery_color({}) == 0xA6A6A6);
     b = decode_axp2101(0x28,4,100); assert(b.full && !b.charging);
     b = decode_axp2101(0x20,0,75); assert(!b.present && !b.percent && battery_text(b)=="USB");
     b = decode_axp2101(8,0x40,255); assert(!b.percent && !b.external_power);

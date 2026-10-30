@@ -7,7 +7,7 @@ This change targets the current `main` **ESP32-S3-Touch-LCD-3.5 / ST7796 / FT633
 | Idle time | State | Behavior |
 | --- | --- | --- |
 | Under 30 s | Active | Existing normal backlight duty 818/1023 |
-| 30 s | Dimmed | Duty 409/1023, half of normal |
+| 30 s | Dimmed | Duty 245/1023, approximately 30% of normal |
 | 60 s | Screen off | Backlight zero, display refresh timer paused; touch and weighing continue |
 | 360 s | Sleep eligible | Five continuous minutes screen-off; light sleep only with verified touch IRQ configuration |
 
@@ -17,7 +17,7 @@ The first touch or application-button press on a dark screen only wakes it. Touc
 
 ## Battery header
 
-The header replaces HX711 LIVE and the fake demo 82% with a battery icon and actual PMU-reported percentage/status. Demo mode says `DEMO battery --`.
+The header replaces HX711 LIVE and the fake demo 82% with a battery icon and actual PMU-reported percentage. The icon and percentage are green while charging, gray at 20–100% when not charging, and red below 20% when not charging. Charging takes precedence even below 20%. No Charging or Full text label is displayed. Unknown and absent readings stay gray; USB/No battery labels remain for absent batteries. Demo mode says `DEMO battery --`.
 
 The existing AXP2101 is read every five seconds under the shared I2C/LVGL ownership lock: chip ID 0x03 must be 0x4A; status registers 0x00/0x01 distinguish battery presence, valid external power, charging, and charge completion; SOC is 0xA4. No charger, rail, fuel-gauge model, or charge-current settings are changed. Percentage is the PMU estimate, not a calibrated runtime claim. Battery removal and invalid SOC suppress the percentage; communication failure immediately displays unknown rather than keeping stale information. A failed SOC read does not erase successfully read charging status. The next wake forces a sample.
 
