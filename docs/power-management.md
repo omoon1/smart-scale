@@ -4,13 +4,15 @@ This change targets the current `main` **ESP32-S3-Touch-LCD-3.5 / ST7796 / FT633
 
 ## Behavior
 
+On battery:
+
 | Idle time | State | Behavior |
 | --- | --- | --- |
 | Under 30 s | Active | Existing normal backlight duty 818/1023 |
 | 30 s | Dimmed | Duty 245/1023, approximately 30% of normal |
 | 60 s | Screen off and sleep | Backlight zero, refresh paused, then light sleep immediately when a supported wake route is configured; no additional five-minute wait |
 
-Touch, the BOOT/application button, or a weight change of at least 0.5 g sustained for 300 ms resets idle. The weight anchor is retained so slow cumulative changes count; invalid readings and ordinary sensor noise do not. Brewing (including flow pauses) and editing dialogs keep the display bright; the read-only battery history panel does not inhibit idle transitions. This is deliberately stronger than only blocking sleep during calibration and registration. Releasing an inhibitor starts a fresh idle interval. While valid external power is connected (charging, full, or USB without a battery), idle stops at 30% dimming: the screen stays on and sleep is inhibited. Connecting or disconnecting power starts a fresh idle interval; brewing/editing still keeps full normal brightness. Source changes are detected by the existing five-second awake battery poll or the forced post-wake sample. A transient PMU read error retains the last valid power-source policy while telemetry displays unknown. Before any valid reading, the default is the battery idle policy.
+Touch, the BOOT/application button, or a weight change of at least 0.5 g sustained for 300 ms resets idle. The weight anchor is retained so slow cumulative changes count; invalid readings and ordinary sensor noise do not. Brewing (including flow pauses) and editing dialogs keep the display bright; the read-only battery history panel does not inhibit idle transitions. This is deliberately stronger than only blocking sleep during calibration and registration. Releasing an inhibitor starts a fresh idle interval. While valid external power is connected (charging, full, or USB without a battery), idle dims to 30% after 30 seconds and turns the screen off after 10 minutes total idle. Sleep remains inhibited, including while the screen is off. Touch restores the display and restarts the charging idle timer. Connecting or disconnecting power starts a fresh idle interval; brewing/editing still keeps full normal brightness. Source changes are detected by the existing five-second awake battery poll or the forced post-wake sample. A transient PMU read error retains the last valid power-source policy while telemetry displays unknown. Before any valid reading, the default is the battery idle policy.
 
 On battery, sleep becomes eligible at 60 seconds of total idle, in the same control-loop iteration as screen-off. Existing brewing/editing inhibitors and touch/IRQ checks still apply. Without a configured wake route, or when entry is deferred, the device remains screen-off and awake.
 
@@ -116,12 +118,13 @@ See [ESP-IDF ESP32-S3 sleep modes](https://docs.espressif.com/projects/esp-idf/e
 
 ## Validation
 
-Automated: `make test` exercises 30/60-second boundaries, inhibitor release, long uptime, noise, slow cumulative changes, invalid samples, wake-gesture consumption, PMU states, and preparation-session preservation after measurement resume. Existing brew, calibration, diagnostics, filtering, and recognition suites remain required. `make preview` compiles and renders the shared LVGL UI.
+Automated: `make test` exercises 30/60-second battery boundaries, the 599,999/600,000 ms charging screen-off boundary, charging touch recovery, inhibitor release, long uptime, noise, slow cumulative changes, invalid samples, wake-gesture consumption, PMU states, and preparation-session preservation after measurement resume. Existing brew, calibration, diagnostics, filtering, and recognition suites remain required. `make preview` compiles and renders the shared LVGL UI.
 
 Before shipping sleep support on hardware:
 
 - Confirm real battery percentage/status on battery, USB, charging, full, absent, and PMU failure cases.
-- Verify 30-second dim and 60-second screen-off; confirm no sleep during brewing or editing dialogs, and normal idle transitions in battery history.
+- Verify 30-second dim and 60-second screen-off on battery; confirm no sleep during brewing or editing dialogs, and normal idle transitions in battery history.
+- While plugged in (charging, full, or no battery), verify 30-second dim, 10-minute screen-off, no sleep even overnight, and touch recovery. Verify unplugging restarts the one-minute battery idle timer.
 - Touch each underlying control while dark: no tare, dose edit, selection, dropdown, or reset may occur. A second gesture must work.
 - Verify one-minute sleep and at least 100 touch-wake cycles with a loaded platform. No false auto-brew, lost tare, corrupted state, or flash of undefined panel RAM is acceptable.
 - Test an already-low IRQ, held/wet touch, HX711 absence, wake during sleep entry, and failed suspend. Failures must leave a usable device.

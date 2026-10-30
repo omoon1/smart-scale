@@ -100,8 +100,9 @@ See [power management](docs/power-management.md) for configuration, shared-inter
 handling, expected logs and physical validation. Sleep remains disabled by default
 until a board/wake route is selected.
 
-While external power is connected, including a full battery, idle only dims the screen
-to 30%; screen-off and sleep are disabled. Unplugging restarts the normal idle timers.
+While external power is connected, including a full battery, idle dims the screen
+to 30% after 30 seconds and turns it off after 10 minutes total idle. Sleep stays disabled;
+touch restores the display and restarts the idle timer. Unplugging restarts the normal idle timers.
 
 On battery, idle dims after 30 seconds and enters light sleep at 60 seconds total idle
 when the selected wake route is available. There is no extra five-minute screen-off wait.

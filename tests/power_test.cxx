@@ -54,9 +54,16 @@ int main() {
     assert(charging.update(29999, false, true) == PowerState::active);
     assert(charging.update(30000, false, true) == PowerState::dimmed);
     assert(charging.update(60000, false, true) == PowerState::dimmed);
-    assert(charging.update(9ULL*3600000, false, true) == PowerState::dimmed);
+    assert(charging.update(599999, false, true) == PowerState::dimmed);
+    assert(charging.update(600000, false, true) == PowerState::screen_off);
+    assert(!charging.sleep_due(600000));
+    assert(charging.update(9ULL*3600000, false, true) == PowerState::screen_off);
     assert(!charging.sleep_due(9ULL*3600000));
-    const auto unplug = 9ULL*3600000+1;
+    charging.activity(9ULL*3600000+1); // Touch wakes a charging screen and restarts its timer.
+    assert(charging.update(9ULL*3600000+1, false, true) == PowerState::active);
+    assert(charging.update(9ULL*3600000+30001, false, true) == PowerState::dimmed);
+    assert(charging.update(9ULL*3600000+600001, false, true) == PowerState::screen_off);
+    const auto unplug = 9ULL*3600000+600002;
     assert(charging.update(unplug, false, false) == PowerState::active);
     assert(charging.update(unplug+30000, false, false) == PowerState::dimmed);
     assert(charging.update(unplug+60000, false, false) == PowerState::screen_off);

@@ -19,12 +19,13 @@ public:
     }
     PowerState update(std::uint64_t now, bool inhibit, bool external_power = false) {
         // Keep dialogs and brewing bright; release starts a fresh idle period.
-        // Plug/unplug starts a fresh interval; plugged-in idle may only dim.
+        // Plug/unplug starts a fresh interval; external power prevents sleep.
         if (inhibit || inhibited_ || external_power != external_power_) activity(now);
         inhibited_ = inhibit;
         external_power_ = external_power;
         const auto idle = now - activity_ms_;
-        state_ = idle >= 60000 && !external_power_ ? PowerState::screen_off : idle >= 30000 ? PowerState::dimmed : PowerState::active;
+        const auto screen_off_ms = external_power_ ? 600000ULL : 60000ULL;
+        state_ = idle >= screen_off_ms ? PowerState::screen_off : idle >= 30000 ? PowerState::dimmed : PowerState::active;
         return state_;
     }
     bool sleep_due(std::uint64_t now) const { return !inhibited_ && !external_power_ && now >= retry_ms_ && now - activity_ms_ >= 60000; }
