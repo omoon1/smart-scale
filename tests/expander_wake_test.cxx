@@ -76,9 +76,9 @@ int main() {
     };
     bool connected{};
     assert(arm_charger_wake(read,write,connected)); assert(!connected);
-    assert(registers[0x41] == 0x95); // preserve existing enabled IRQs
+    assert(registers[0x41] == 0xd5); // preserve existing enabled IRQs
     assert(registers[0x49] == 0x0f); // preserve unrelated pending IRQs
-    assert((writes == std::vector<std::pair<unsigned,unsigned>>{{0x41,0x95},{0x49,0x80}}));
+    assert((writes == std::vector<std::pair<unsigned,unsigned>>{{0x41,0xd5},{0x49,0xc0}}));
     registers[0] = 0x20;
     assert(arm_charger_wake(read,write,connected)); assert(connected);
     registers[1] = 0x08; // VBUS present but not good
@@ -86,8 +86,11 @@ int main() {
     registers[0x49] = 0xc1;
     bool inserted{};
     assert(acknowledge_charger_wake(read,write,inserted)); assert(inserted);
-    assert(registers[0x49] == 0x41);
+    assert(registers[0x49] == 0x01);
     assert(acknowledge_charger_wake(read,write,inserted)); assert(!inserted);
+    registers[0x49] = 0x41; // unplug only must clear its own latch too
+    assert(acknowledge_charger_wake(read,write,inserted)); assert(!inserted);
+    assert(registers[0x49] == 0x01);
     auto failed_read = [](std::uint8_t, std::uint8_t&) { return false; };
     auto failed_write = [](std::uint8_t, std::uint8_t) { return false; };
     assert(!arm_charger_wake(failed_read,write,connected));

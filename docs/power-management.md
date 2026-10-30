@@ -56,8 +56,8 @@ The V2 sequence:
    down with acknowledgement (500 ms timeout).
 2. Configure GPIO4 as a pulled-up input and stop LVGL. Set expander P2 (touch) and P5 (PMU IRQ) to input,
    preserving other directions and all output latches, including LCD reset and power control.
-3. Enable AXP2101 VBUS-insertion IRQ (0x41 bit 7), preserving other enable bits,
-   acknowledge only its stale status (0x49 bit 7, write-one-to-clear), and check
+3. Enable AXP2101 VBUS insertion/removal IRQs (0x41 bits 7:6), preserving other enable bits,
+   acknowledge only their stale status (0x49 bits 7:6, write-one-to-clear), and check
    current external power. Connected power cancels entry. No charger voltage,
    current, battery model or rail setting is changed. Read FT6336 TD_STATUS, read the full expander input port to acknowledge shared
    interrupts and capture a baseline, then read TD_STATUS again. A held touch or low
@@ -82,7 +82,7 @@ The history marks only successful sleep-call intervals as Sleep; setup, failed e
 and retry backoff remain Active. Post-wake I2C errors do not erase a successful sleep interval.
 
 Charger insertion during V2 sleep is armed explicitly through AXP2101 IRQ → EXIO5
-→ GPIO4. The handler acknowledges only VBUS insertion and refreshes battery telemetry.
+→ GPIO4. The handler acknowledges only observed VBUS insertion/removal flags and refreshes battery telemetry.
 Unrelated PMU flags are preserved; a persistently low PMU IRQ blocks the next sleep
 attempt rather than hiding future charger events. Custom direct-touch wiring has no
 charger wake route in this implementation; it detects power on its next touch wake.
