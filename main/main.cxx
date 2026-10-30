@@ -173,11 +173,12 @@ extern "C" void app_main() {
             if (power.sleep_due(now_ms) && !save && applied_power == smart_scale::PowerState::screen_off &&
                 !display.touch_down() && power.report_sleep_once()) {
                 if (!display.sleep_supported()) {
-                    ESP_LOGW("power", "sleep blocked: touch wake wiring not verified; remaining screen-off");
+                    ESP_LOGW("power", "sleep blocked: select 3.5 V2 board or verified custom touch wiring; remaining screen-off");
                 } else {
                     const bool stopped = acquisition.suspend();
                     uint64_t sleep_start{}, sleep_end{};
-                    const auto error = stopped ? display.light_sleep(sleep_start, sleep_end) : ESP_ERR_TIMEOUT;
+                    bool user_wake = false;
+                    const auto error = stopped ? display.light_sleep(sleep_start, sleep_end, user_wake) : ESP_ERR_TIMEOUT;
                     const auto resumed_s = static_cast<uint64_t>(esp_timer_get_time() / 1000000);
                     if (error == ESP_OK) {
                         // Only the successful sleep call belongs to Sleep. Setup and failed attempts stay Active.
@@ -193,15 +194,18 @@ extern "C" void app_main() {
                     acquisition.resume(); // also cancel a timed-out suspend request
                     controller->resume_measurement();
                     const auto resumed = esp_timer_get_time();
-                    power.activity(resumed / 1000);
+                    if (user_wake) power.activity(resumed / 1000);
+                    else power.retry_sleep(resumed / 1000);
                     previous = resumed; // exclude sleep time from session clocks
                     last_diagnostic_ms = resumed / 1000;
                     previous_received = controller->scale().received();
                     battery_sampled = false;
                     ESP_LOGI("power", "sleep result=%s wake_cause=%d", esp_err_to_name(error), static_cast<int>(esp_sleep_get_wakeup_cause()));
                     view.update();
-                    const auto shown = display.power_state(smart_scale::PowerState::active);
-                    if (shown == ESP_OK) applied_power = smart_scale::PowerState::active;
+                    if (user_wake) {
+                        const auto shown = display.power_state(smart_scale::PowerState::active);
+                        if (shown == ESP_OK) applied_power = smart_scale::PowerState::active;
+                    }
                 }
             }
             lvgl_port_unlock();

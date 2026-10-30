@@ -9,7 +9,7 @@ enum class PowerState { active, dimmed, screen_off };
 class PowerPolicy {
 public:
     explicit PowerPolicy(std::uint64_t now = 0) : activity_ms_(now) {}
-    void activity(std::uint64_t now) { activity_ms_ = now; state_ = PowerState::active; sleep_reported_ = false; }
+    void activity(std::uint64_t now) { activity_ms_ = now; state_ = PowerState::active; sleep_reported_ = false; retry_ms_ = 0; }
     void weight(std::optional<float> grams, std::uint64_t now) {
         if (!grams || !std::isfinite(*grams)) { anchor_.reset(); candidate_.reset(); return; }
         if (!anchor_) { anchor_ = grams; return; }
@@ -25,11 +25,13 @@ public:
         state_ = idle >= 60000 ? PowerState::screen_off : idle >= 30000 ? PowerState::dimmed : PowerState::active;
         return state_;
     }
-    bool sleep_due(std::uint64_t now) const { return !inhibited_ && now - activity_ms_ >= 360000; }
+    bool sleep_due(std::uint64_t now) const { return !inhibited_ && now >= retry_ms_ && now - activity_ms_ >= 360000; }
+    // Keep the display dark and bound retries when a shared IRQ is noisy/stuck.
+    void retry_sleep(std::uint64_t now) { retry_ms_ = now + 30000; sleep_reported_ = false; }
     bool report_sleep_once() { if (sleep_reported_) return false; sleep_reported_ = true; return true; }
     PowerState state() const { return state_; }
 private:
-    std::uint64_t activity_ms_{};
+    std::uint64_t activity_ms_{}, retry_ms_{};
     std::optional<float> anchor_;
     std::optional<std::uint64_t> candidate_;
     PowerState state_{PowerState::active};

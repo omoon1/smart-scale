@@ -23,9 +23,12 @@ public:
     bool touch_down() const { return touch_down_; }
     BatterySnapshot battery(); // LVGL lock required; read-only PMU access
     bool sleep_supported() const;
-    esp_err_t light_sleep(uint64_t& started_us, uint64_t& ended_us); // acquisition stopped; LVGL lock held
+    // Timestamps cover successful sleep only, even if post-wake telemetry fails.
+    // user_wake=false means a known unrelated shared interrupt or an entry error.
+    esp_err_t light_sleep(uint64_t& started_us, uint64_t& ended_us, bool& user_wake);
 
 private:
+    esp_err_t touch_pressed(bool& pressed);
     static void read_touch(lv_indev_drv_t*, lv_indev_data_t*);
     void (*touch_read_)(lv_indev_drv_t*, lv_indev_data_t*){};
     lv_indev_t* input_{};

@@ -1,14 +1,23 @@
 menu "Smart scale power"
+config SMART_SCALE_BOARD_35_V2
+    bool "Waveshare ESP32-S3-Touch-LCD-3.5 V2 (Rev2.0)"
+    default n
+    help
+        Select only for the 3.5-inch V2 board: FT6336 TP_INT -> TCA9554 P2,
+        TCA9554 INT -> ESP32 GPIO4. This enables the expander-aware sleep path.
+        V1 has no ESP32 connection on the expander INT in its schematic.
+        This option does not support the 3.49-inch board.
 config SMART_SCALE_TOUCH_WAKE_VERIFIED
-    bool "Enable light sleep with a verified touch interrupt"
+    bool "Enable light sleep with a custom direct touch interrupt"
+    depends on !SMART_SCALE_BOARD_35_V2
     default n
     help
         Enable only after validating the touch IRQ wiring and low-level wake
-        behavior on this exact board. The default main board has no mapped IRQ.
+        behavior on custom wiring. For a stock 3.5 V2 use the board option above.
         Keep touch powered; no shared rails or panel sleep commands are changed.
 config SMART_SCALE_TOUCH_WAKE_GPIO
     int "Verified active-low touch interrupt GPIO"
-    depends on SMART_SCALE_TOUCH_WAKE_VERIFIED
+    depends on SMART_SCALE_TOUCH_WAKE_VERIFIED && !SMART_SCALE_BOARD_35_V2
     range 0 48
     default 16
     help

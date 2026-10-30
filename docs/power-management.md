@@ -25,19 +25,79 @@ Register semantics were checked against [XPowersLib AXP2101](https://github.com/
 
 ## Sleep configuration and limitations
 
-Default: `CONFIG_SMART_SCALE_TOUCH_WAKE_VERIFIED=n`. Main has no verified touch interrupt pin. At six minutes, the firmware logs the missing capability once per idle interval and remains screen-off. It does not enter sleep that cannot be exited by touch.
+Sleep is disabled by default because board revision cannot be detected reliably in software.
+For a **3.5-inch V2 / Rev2.0** board, run `make menuconfig` → **Smart scale power** →
+**Waveshare ESP32-S3-Touch-LCD-3.5 V2 (Rev2.0)**, save, then rebuild and flash.
+This sets `CONFIG_SMART_SCALE_BOARD_35_V2=y` and enables the expander-aware path.
+Existing sdkconfig files remain safe until this explicit board selection is made.
+The boot log must say `wake route: 3.5 V2 TP_INT -> TCA9554 P2 -> GPIO4`.
 
-After verifying the exact board wiring and active-low IRQ behavior with touch powered, use `make menuconfig` → Smart scale power. Enable verified touch wake and select the actual GPIO. The numerical default is a placeholder, **not a board mapping**. Runtime validation rejects conflicts with this adapter's display, HX711, I2C, BOOT, USB, and memory pins. Electrical validation of the selected exposed pin is still required.
+| Board | Touch interrupt | ESP32 wake connection |
+| --- | --- | --- |
+| Original/V1 schematic | FT6336 TP_INT → TCA9554 P2 / EXIO2 | Expander INT has a pull-up but no MCU connection shown |
+| V2 / Rev2.0 | FT6336 TP_INT → TCA9554 P2 / EXIO2 | Expander INT / EXIO_INT → GPIO4, active low |
 
-The enabled path:
+Sources: [Waveshare resources](https://docs.waveshare.com/ESP32-S3-Touch-LCD-3.5/Resources-And-Documents),
+[original schematic](https://files.waveshare.com/wiki/ESP32-S3-Touch-LCD-3.5/ESP32-S3-Touch-LCD-3.5-Schematic.pdf),
+[Rev2.0 schematic](https://files.waveshare.com/wiki/ESP32-S3-Touch-LCD-3.5/ESP32-S3-Touch-LCD-3.5_Rev2.0.pdf),
+[TI TCA9554 interrupt behavior, section 8.3.2](https://www.ti.com/lit/ds/symlink/tca9554.pdf).
+This is a schematic-verified mapping; electrical wake behavior still requires physical testing.
+Do not select V2 for V1, 3.49, or 3.5B. V1 needs a separate timer-polling/button-wake
+implementation or verified custom wiring; neither is added here.
 
-1. Hold application/LVGL ownership; reject pending or held touch and active operations.
-2. Ask the acquisition task to power HX711 down; wait at most 500 ms for acknowledgement. Reset the queued readings only after acknowledgement.
-3. Configure low-level GPIO wake; reject an already-low line. Stop the LVGL tick/handler and recheck the line before `esp_light_sleep_start()`.
-4. Resume LVGL, remove temporary wake configuration, suppress the waking gesture, restart HX711, and clear transient measurement filters without resetting calibration, tare, container, or dose.
-5. Resume session interpretation only after fresh stable samples. Exclude sleep time from session timing and redraw a complete frame before enabling the backlight.
+The custom direct-touch path remains available through
+`CONFIG_SMART_SCALE_TOUCH_WAKE_VERIFIED=y` when the V2 option is off.
+Its configurable GPIO16 default is only a placeholder, not a stock board mapping.
+Runtime validation rejects conflicts with display, HX711, I2C, BOOT, USB, and memory pins.
 
-Abort paths cancel acquisition suspension and restore active operation. A failed sleep attempt is logged and receives a fresh idle interval. The panel and touch controller stay powered: no unverified sleep command or shared rail is switched. Other onboard peripheral rails retain their existing settings. Savings therefore require battery-side measurement; this is not full board shutdown or a claim of chip-only standby current. No BLE/Wi-Fi service is active on this baseline; future radio/OTA integration must add explicit suspension/inhibition before using this path.
+The V2 sequence:
+
+1. Hold the LVGL lock, reject active/held touch, and ask acquisition to power HX711
+   down with acknowledgement (500 ms timeout).
+2. Configure GPIO4 as a pulled-up input and stop LVGL. Set only expander P2 to input,
+   preserving other directions and all output latches, including LCD reset and power control.
+3. Read FT6336 TD_STATUS, read the full expander input port to acknowledge shared
+   interrupts and capture a baseline, then read TD_STATUS again. A held touch or low
+   P2 defers sleep and wakes the display. An I2C failure or pending shared INT defers sleep.
+4. Arm low-level GPIO wake and recheck GPIO4 immediately before sleeping. Do not
+   read the expander again between that check and sleep, to avoid clearing a new event.
+5. On successful wake, record the actual sleep interval, read/acknowledge the expander
+   input port, and read TD_STATUS. Touch points, low P2, or a changed P2 mean touch.
+   A known change on other input pins alone is a shared peripheral event and stays dark.
+   An unchanged snapshot (possible short pulse) or an I2C failure wakes conservatively.
+6. Disable the wake source, resume LVGL and HX711, clear transient measurement filters,
+   and preserve calibration, tare, container and dose. Real/ambiguous wakes restart the
+   idle interval and consume the waking gesture before controls can see it. Known shared
+   events and entry failures retain screen-off and wait 30 seconds before another attempt.
+   Regular touch/button handling remains available during that backoff.
+
+Logs identify the selected route, sleep entry, wake source, elapsed sleep time and
+expander snapshots. Wake reason codes: 0 touch, 1 shared, 2 ambiguous, 3 I2C error.
+Preparation codes: 0 ready, 1 touch, 2 pending IRQ, 3 I2C error.
+The history marks only successful sleep-call intervals as Sleep; setup, failed entry,
+and retry backoff remain Active. Post-wake I2C errors do not erase a successful sleep interval.
+
+### Corner cases and hardware validation
+
+- A held/wet touch or stuck IRQ must not create an immediate sleep loop. Entry failures
+  and shared wakes retry at most once per 30 seconds, keeping the backlight off unless
+  touch is detected. Persistent noise can still consume significant power during backoff.
+- The expander interrupt is shared, not touch-specific. RTC/PMU/SD events can wake the
+  CPU. Do not drive those inputs as outputs to suppress their interrupts. Test charger
+  plug/unplug and other connected peripherals with touch absent and present.
+- The TCA9554 does not retain a per-source interrupt history. A short touch pulse that
+  coincides with a persistent unrelated change may be indistinguishable from that change;
+  a second tap may be required. Test quick taps, held touches and wake-entry races.
+- All input-port reads acknowledge the shared IRQ. Keep them serialized with the sleep
+  sequence; do not introduce an independent expander ISR/task reading the port during entry.
+- Verify repeated sleep/wake cycles, no unintended tare/dose changes, I2C-failure recovery,
+  orange history after wake, and battery-side current with USB disconnected. Compilation
+  and host tests cannot establish real current consumption or interrupt timing.
+
+The panel and touch controller stay powered; no shared rail is switched and no panel
+sleep command is sent. Other onboard peripheral rails retain their existing settings.
+This is not full board shutdown and does not claim chip-only standby current. No BLE/Wi-Fi
+service is active on this baseline; future radio/OTA integration must explicitly coordinate sleep.
 
 See [ESP-IDF ESP32-S3 sleep modes](https://docs.espressif.com/projects/esp-idf/en/v5.5/esp32s3/api-reference/system/sleep_modes.html). Light sleep preserves internal state; deep sleep and checkpoint restoration are not implemented.
 
@@ -45,7 +105,7 @@ See [ESP-IDF ESP32-S3 sleep modes](https://docs.espressif.com/projects/esp-idf/e
 
 Automated: `make test` exercises 30/60/360-second boundaries, inhibitor release, long uptime, noise, slow cumulative changes, invalid samples, wake-gesture consumption, PMU states, and preparation-session preservation after measurement resume. Existing brew, calibration, diagnostics, filtering, and recognition suites remain required. `make preview` compiles and renders the shared LVGL UI.
 
-Before enabling verified sleep on hardware:
+Before shipping sleep support on hardware:
 
 - Confirm real battery percentage/status on battery, USB, charging, full, absent, and PMU failure cases.
 - Verify 30-second dim and 60-second screen-off; confirm no sleep during brewing or editing dialogs, and normal idle transitions in battery history.
