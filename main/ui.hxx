@@ -30,6 +30,7 @@ private:
     struct Binding { View* view{}; Action action{}; int value{}; };
     lv_obj_t* button(lv_obj_t* parent, const char* text, int x, int y, int w, int h,
                      Action action, int value = 0, bool primary = false);
+    void action_rail(lv_obj_t* root, const char* text, Action action);
     void draw();
     bool wide() const;
     void draw_wide(lv_obj_t* root);
