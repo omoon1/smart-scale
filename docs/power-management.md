@@ -253,15 +253,17 @@ The decoder now distinguishes the **exact full-length all-A5 pattern** as
 release code. No arbitrary invalid count, mixed A5 packet, coordinate error,
 short packet or failed transaction qualifies as release.
 
-A shared qualifier used by UI polling and sleep probes infers release only
-following at least three successful all-A5 reads spanning 300 ms, with GPIO8
-high at each read and no interval between reads above 100 ms. A valid contact,
-malformed response, transaction error or sampled low IRQ resets qualification.
-A confirmed zero-contact packet still releases immediately. No additional
-expander reads are used. Sleep return resets qualification, so elapsed sleep
-time cannot complete a release window.
+UI and sleep use separate qualification state. Both require at least three
+successful all-A5 reads spanning 300 ms; explicit zero-contact releases immediately.
+UI qualification ignores GPIO8 (a shared wake interrupt, not a contact flag) and
+allows up to one second between samples to tolerate display refresh stalls.
+Sleep qualification still requires GPIO8 high at every sample and gaps no larger
+than 100 ms. Thus UI recovery cannot make an unsafe sleep precheck pass.
+Contacts, malformed responses, transaction errors, backwards time and stale
+samples reset the respective window. Both windows reset after a sleep attempt;
+elapsed sleep cannot release the gate. No additional expander reads acknowledge IRQs.
 
-Qualified idle clears wake suppression and permits sleep preparation. The
+UI-qualified idle clears wake suppression; only sleep-qualified idle permits sleep preparation. The
 existing physical expander input, touch rechecks and final GPIO checks remain
 required before CPU sleep. Unqualified/invalid responses retain the 30-second
 retry, screen-off state and uninterrupted acquisition. A tap within the 300 ms
@@ -270,7 +272,8 @@ before the next tap is the current expected behavior on the all-A5 path.
 
 Packet logs distinguish raw state from qualified state; look for
 `raw_state=3 state=0 reason=idle_a5_qualified`, then `gate=0`, and on the next tap
-`delivered=1`. For sleep, require `sleep_return result=ESP_OK` and
+`delivered=1`. Packet logs include `source`, `gpio8`, `ui_state` and
+`sleep_state` to distinguish release from sleep eligibility. For sleep, require `sleep_return result=ESP_OK` and
 `sleep_result slept=1`; screen-off or a successful precheck alone is not proof.
 
 **Hardware validation remains required:** hold a finger still for several
@@ -279,7 +282,7 @@ actual sleep/wake on battery and USB. GPIO8 is shared and its high level alone
 does not prove no finger is present. A controller that emits all-A5 for over
 300 ms during a held contact could cause an inferred release; this heuristic
 must be validated on the target board. Conversely, a stuck-low shared IRQ
-prevents qualification and sleep. The default verified-wake configuration gate
+prevents sleep qualification, but no longer blocks UI release. The default verified-wake configuration gate
 remains unchanged. Native regressions exercise qualification timing, brief gaps,
 contact resets, bus errors, malformed/mixed packets, low IRQ, stale samples,
 post-sleep reset, second-tap delivery, and the final sleep IRQ guard.

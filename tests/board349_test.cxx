@@ -137,5 +137,37 @@ int main() {
            == smart_scale::WakePreparation::pending_irq);
     idle.reset(); // resume starts a fresh interval even after a very long sleep
     assert(idle.update(no_data,true,true,90000000).state == b::TouchState::no_data);
+    // UI release must not depend on the shared wake IRQ or sub-100ms rendering.
+    b::TouchIdleQualifier ui_idle{b::TouchIdleQualifier::Use::ui};
+    idle.reset();
+    assert(!apply(ui_idle.update(press,true,false,0),true));
+    for (unsigned t : {30U, 180U, 330U}) {
+        report = ui_idle.update(no_data,true,false,t*1000);
+        assert(idle.update(no_data,true,false,t*1000).state == b::TouchState::no_data);
+        assert(!apply(report,false));
+    }
+    assert(!gate.suppressed());
+    assert(apply(ui_idle.update(press,true,false,360000),false));
+    assert(!apply(ui_idle.update({b::TouchState::released,0,{},"release"},true,false,390000),false));
+    ui_idle.reset(); idle.reset();
+    for (unsigned t : {0U, 150U, 300U}) {
+        report=ui_idle.update(no_data,true,true,t*1000);
+        assert(idle.update(no_data,true,true,t*1000).state == b::TouchState::no_data);
+    }
+    assert(report.state == b::TouchState::released);
+    // UI never clears suppression on a timer alone, error, invalid packet, or hold.
+    for (unsigned scenario=0; scenario<5; ++scenario) {
+        ui_idle.reset();
+        assert(!apply(ui_idle.update(press,true,false,0),true));
+        apply(ui_idle.update(no_data,true,false,30000),false);
+        apply(ui_idle.update(no_data,true,false,180000),false);
+        if (scenario==0) report=ui_idle.update(no_data,false,false,330000);
+        if (scenario==1) report=ui_idle.update({},true,false,330000);
+        if (scenario==2) report=ui_idle.update(press,true,false,330000);
+        if (scenario==3) report=ui_idle.update(no_data,true,false,2000000);
+        if (scenario==4) { ui_idle.reset(); report=ui_idle.update(no_data,true,false,330000); }
+        assert(!apply(report,false));
+        assert(gate.suppressed());
+    }
     std::puts("Rev1.1 frame rotation, DMA strip seams, touch bounds and release checks passed");
 }
