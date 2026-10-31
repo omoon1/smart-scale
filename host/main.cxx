@@ -80,9 +80,9 @@ void run_wide_checks(smart_scale::ui::View& view, smart_scale::Controller& contr
     screenshot(view, "wide-01-ready");
     click(view, 520, 70); screenshot(view, "wide-02-dose");
     require(has_label(lv_scr_act(), "+0.1"), "wide coffee card opens dose");
-    click(view, 328, 76); click(view, 386, 132);
+    click(view, 328, 76); click(view, 372, 132);
     require(std::abs(*controller.session().dose_g - 20.1F) < .01F, "wide preset and fine adjustment");
-    mouse_x = 386; mouse_y = 132; mouse_down = true;
+    mouse_x = 372; mouse_y = 132; mouse_down = true;
     for (int i = 0; i < 25; ++i) pump(view, 40);
     const auto held = *controller.session().dose_g;
     mouse_down = false; pump(view);
@@ -100,7 +100,7 @@ void run_wide_checks(smart_scale::ui::View& view, smart_scale::Controller& contr
     require(has_label(lv_scr_act(), "Unstable - wait"), "wide unstable registration blocked");
     click(view, 100, 138); click(view, 462, 100);
     require(has_label(lv_scr_act(), "Icon 3/3"), "wide stable registration advances");
-    for (int i = 0; i < 20; ++i) click(view, (40 + (i % 10) * 62) * 84 / 100, 90 + (i / 10) * 50);
+    for (int i = 0; i < 20; ++i) click(view, (40 + (i % 10) * 62) * 81 / 100, 90 + (i / 10) * 50);
     screenshot(view, "wide-07-icons");
     click(view, 449, 26);
     require(controller.equipment_count() == 4 && controller.equipment()[3].name == "Pour-over set 🦋",
@@ -138,8 +138,8 @@ void run_wide_checks(smart_scale::ui::View& view, smart_scale::Controller& contr
     require(!view.power_inhibited() || controller.session().phase == Phase::brewing,
             "battery history does not introduce an editor inhibitor");
     screenshot(view, "wide-24-battery-6hr");
-    click(view, 400, 24); screenshot(view, "wide-25-battery-1day");
-    click(view, 510, 24); screenshot(view, "wide-26-battery-3day");
+    click(view, 324, 24); screenshot(view, "wide-25-battery-1day");
+    click(view, 413, 24); screenshot(view, "wide-26-battery-3day");
     click(view, 610, 24);
     require(!has_label(lv_scr_act(), "Battery Usage"), "wide battery close returns to brew");
     std::cout << "Wide UI interaction checks passed\n";
@@ -163,7 +163,7 @@ void run_wide_live_checks(smart_scale::ui::View& view, smart_scale::Controller& 
     auto feed = [&](int raw) {
         for (int i = 0; i < 60; ++i) { controller.sensor_sample(raw, now += 100); controller.tick(.1F); pump(view, 100); }
     };
-    feed(10000); click(view, 450, 92); feed(110000); click(view, 483, 142);
+    feed(10000); click(view, 450, 92); feed(110000); click(view, 466, 142);
     require(controller.scale().ready() && std::abs(controller.scale().gross() - 100) < .01F,
             "wide touch calibration captures zero and 100 g mass");
     screenshot(view, "wide-17-calibrated"); click(view, 610, 26);
@@ -190,7 +190,7 @@ void run_wide_live_checks(smart_scale::ui::View& view, smart_scale::Controller& 
     // The former footer is now occupied by full-height cards.
     require(controller.session().phase == Phase::ready && controller.session().dose_g,
             "removed controls neither start nor reset a prepared brew");
-    click(view, 520, 70); click(view, 386, 132); click(view, 610, 26);
+    click(view, 520, 70); click(view, 372, 132); click(view, 610, 26);
     require(std::abs(*controller.session().dose_g - 18.1F) < .02F, "wide saved coffee manual edit");
     feed(528000);
     const auto epoch = controller.scale().display_epoch();
@@ -259,21 +259,29 @@ int main(int argc, char** argv) {
             view.open(ui::Dialog::registration); pump(view);
             for (int i = 0; i < step; ++i) click(view, rail_wide ? 470 : 320, rail_wide ? 100 : 284);
             screenshot(view, (prefix + "registration-" + std::to_string(step)).c_str());
-            require(has_label(lv_scr_act(), "Cancel"), "registration exposes cancellation");
+            require(has_label(lv_scr_act(), "Back"), "registration exposes cancellation");
             click(view, width - 2, step == 0 ? 2 : step == 1 ? height / 2 : height - 2);
-            require(!has_label(lv_scr_act(), "Cancel"), "rail corners and center close registration");
+            require(!has_label(lv_scr_act(), "Back"), "rail corners and center close registration");
             require(controller.equipment_count() == count, "cancel never persists equipment");
         }
         view.open(ui::Dialog::dose); pump(view);
         screenshot(view, (prefix + "dose").c_str());
         const auto dose = controller.session().dose_g;
         click(view, width - 2, height - 2);
-        require(controller.session().dose_g == dose && !has_label(lv_scr_act(), "Close"), "dose close preserves value");
+        require(controller.session().dose_g == dose && !has_label(lv_scr_act(), "Back"), "dose close preserves value");
         controller.load_scenario(Scenario::pour_over);
         controller.run_demo();
         for (int i = 0; i < 180; ++i) { controller.tick(.1F); pump(view, 100); }
         require(controller.session().phase == Phase::brewing, "brew starts");
         screenshot(view, (prefix + "brewing").c_str());
+        require(has_label(lv_scr_act(), LV_SYMBOL_OK), "finish has a completion icon");
+        view.open(ui::Dialog::battery_history); pump(view);
+        require(has_label(lv_scr_act(), "Back") && has_label(lv_scr_act(), LV_SYMBOL_LEFT) &&
+                !has_label(lv_scr_act(), LV_SYMBOL_CLOSE), "battery history uses icon Back instead of X");
+        screenshot(view, (prefix + "battery").c_str());
+        click(view, width - 2, height / 2);
+        require(!has_label(lv_scr_act(), "Battery Usage") && controller.session().phase == Phase::brewing,
+                "battery Back returns to extraction without finishing it");
         click(view, width - 2, 2);
         require(controller.session().phase == Phase::result, "rail corner finishes brew");
         return 0;
@@ -396,7 +404,7 @@ int main(int argc, char** argv) {
         require(view.history_hours()==6 && has_label(lv_scr_act(), "-6h"), "default six-hour range");
         require(!has_label(lv_scr_act(), "Set UTC date / time"), "no clock controls");
         screenshot(view, "37-battery-6hr");
-        click(view, 250, 80);
+        click(view, 205, 80);
         require(view.history_hours()==24 && has_label(lv_scr_act(), "-24h"), "one-day range");
         screenshot(view, "38-battery-1day");
         unsigned green_pixels=0, blue_pixels=0, orange_pixels=0;
@@ -408,7 +416,7 @@ int main(int argc, char** argv) {
             orange_pixels += r>g+30 && g>b+40;
         }
         require(green_pixels>30 && blue_pixels>30 && orange_pixels>30, "graph renders all three state colors");
-        click(view, 380, 80);
+        click(view, 314, 80);
         require(view.history_hours()==72 && has_label(lv_scr_act(), "-72h"), "three-day range");
         screenshot(view, "39-battery-3day");
         history.clear(); pump(view);
@@ -685,7 +693,7 @@ int main(int argc, char** argv) {
     require(!find_type(lv_scr_act(), &lv_keyboard_class) && !find_type(lv_scr_act(), &lv_textarea_class), "Icon picker has no keyboard or text input");
     auto* icon_screen = lv_scr_act();
     for (int i = 0; i < 20; ++i) {
-        click(view, 8 + (54 + (i % 5) * 84) * 392 / 452, 88 + (i / 5) * 46);
+        click(view, 8 + (54 + (i % 5) * 84) * 378 / 452, 88 + (i / 5) * 46);
         // Both picker and name fonts must cover every bundled identifier.
         uint32_t offset = 0;
         const auto codepoint = _lv_txt_encoded_next(ui::equipment_icons[i], &offset);
