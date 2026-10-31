@@ -73,8 +73,8 @@ int main() {
     sample(13000); assert(live.session().uncertain); // Do not silently resume broken brew.
     live.finish(); assert(live.record_count() == 1 && live.latest_record().session.uncertain);
     const float result = live.session().net_g;
-    sample(0); near(live.session().net_g, result);
-    live.next(); sample(0); assert(live.session().phase == Phase::ready);
+    sample(0); near(live.latest_record().session.net_g, result);
+    assert(live.session().phase == Phase::ready);
     sample(10000); assert(live.set_dose(18)); assert(live.start_brew()); sample(11000);
     sample(0); assert(live.session().uncertain); // Vessel removal invalidates result.
     live.reset(); sample(0);
@@ -168,3 +168,4 @@ int main() {
     assert(!registration.tare()); // Measurement operations retain the strict stability gate.
     std::cout << "HX711 calibration and live-session tests passed\n";
 }
+

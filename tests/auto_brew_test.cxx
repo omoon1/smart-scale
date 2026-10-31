@@ -128,6 +128,26 @@ int main() {
             assert(!c.session().brew_prepared);
             for (unsigned i = 0; i < 2000 / interval; ++i) feed(110);
             assert(c.session().phase == Phase::result);
+            const auto result = c.latest_record().session;
+            const auto records = c.record_count();
+            // Tared net zero with the container present is not physical removal.
+            for (unsigned i = 0; i < 1000 / interval; ++i) feed(100);
+            assert(c.session().phase == Phase::result);
+            assert(c.session().net_g == result.net_g && c.session().seconds == result.seconds);
+            c.finish(); // Repeated completion must not duplicate the archive.
+            assert(c.record_count() == records);
+            c.sensor_fault(); c.tick(600);
+            c.sensor_sample(std::nullopt, now += 1000);
+            assert(c.session().phase == Phase::result);
+            // Brief near-zero readings followed by replacement do not clear it.
+            for (unsigned i = 0; i < 200 / interval; ++i) feed(0);
+            assert(c.session().phase == Phase::result);
+            for (unsigned i = 0; i < 1000 / interval; ++i) feed(110);
+            assert(c.session().phase == Phase::result);
+            for (unsigned i = 0; i < 1500 / interval; ++i) feed(0);
+            assert(c.session().phase == Phase::ready && !c.session().dose_g);
+            assert(!c.session().active_object && !c.session().brew_prepared);
+            assert(c.record_count() == records && c.latest_record().session.net_g == result.net_g);
 
             Controller beans(true);
             assert(beans.scale().restore({0, polarity * 1000}));
@@ -162,3 +182,4 @@ int main() {
         }
     }
 }
+

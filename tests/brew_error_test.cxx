@@ -84,12 +84,14 @@ int main() {
         c.tick(1);
         assert(c.session().phase == Phase::ready && c.session().loaded);
         assert(c.record_count() == 2 && c.latest_record().aborted);
-        // Manual Finish on an error screen does not cancel automatic return or
-        // create an extra record when that return occurs.
+        // Manual Finish retains the result until physical removal, even after
+        // the former error timeout. Recovery never creates an extra record.
         sample(100); assert(c.set_dose(18)); assert(c.start_brew());
         c.sensor_fault(); c.tick(90); c.finish();
         const auto records = c.record_count();
         c.tick(90);
+        assert(c.session().phase == Phase::result && c.record_count() == records);
+        sample(0);
         assert(c.session().phase == Phase::ready && c.record_count() == records);
     }
     // Neither manual Start nor automatic flow may bypass container registration.
@@ -99,3 +101,4 @@ int main() {
     assert(!unknown.start_brew() && !unknown.session().brew_prepared);
     std::cout << "Brew removal threshold and 180-second return checks passed\n";
 }
+

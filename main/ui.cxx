@@ -30,11 +30,14 @@ const lv_font_t* icon_font(const lv_font_t* font) {
     return font;
 }
 // The device has one LVGL display, serialized by its UI task.
-unsigned bg, panel, border, ink, muted, mint, amber;
+unsigned bg, panel, border, ink, muted, mint, amber, finish_bg, finish_ink;
 void apply_palette(Theme theme) {
     const auto p = palette(theme);
     bg = p.bg; panel = p.panel; border = p.border; ink = p.ink;
     muted = p.muted; mint = p.accent; amber = p.target;
+    finish_bg = theme == Theme::espresso_amber ? 0xC69C72 :
+                theme == Theme::porcelain_gray ? 0x65716D : 0x88AA9B;
+    finish_ink = theme == Theme::porcelain_gray ? 0xFFFFFF : bg;
 }
 lv_color_t color(unsigned rgb) { return lv_color_hex(rgb); }
 std::string number(std::optional<float> value, const char* suffix = "") {
@@ -116,19 +119,17 @@ lv_obj_t* View::button(lv_obj_t* p, const char* text, int x, int y, int w, int h
 void View::action_rail(lv_obj_t* root, const char* text, Action action) {
     const int width = lv_disp_get_hor_res(nullptr);
     const int rail = width * 18 / 100;
-    auto* control = button(root, text, width - rail, 0, rail,
-                           lv_disp_get_ver_res(nullptr), action);
-    lv_obj_set_style_radius(control, 0, 0);
-    lv_obj_set_style_border_width(control, 0, 0);
+    auto* control = button(root, text, width - rail + 8, 8, rail - 16,
+                           lv_disp_get_ver_res(nullptr) - 16, action);
     const bool finish = action == Action::finish;
-    lv_obj_set_style_bg_color(control, color(finish ? 0x287A50 : 0xB83232), 0);
-    lv_obj_set_style_bg_color(control, color(finish ? 0x1B5738 : 0x882424), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(control, color(finish ? finish_bg : panel), 0);
+    lv_obj_set_style_bg_color(control, color(border), LV_STATE_PRESSED);
     auto* caption = lv_obj_get_child(control, 0);
-    lv_obj_set_style_text_color(caption, color(0xFFFFFF), 0);
+    lv_obj_set_style_text_color(caption, color(finish ? finish_ink : ink), 0);
     lv_obj_set_style_text_font(caption, &lv_font_montserrat_18, 0);
     lv_obj_align(caption, LV_ALIGN_CENTER, 0, 18);
-    auto* icon = label(control, finish ? LV_SYMBOL_OK : LV_SYMBOL_LEFT, 0, 0, rail,
-                       &lv_font_montserrat_28, 0xFFFFFF);
+    auto* icon = label(control, finish ? LV_SYMBOL_OK : LV_SYMBOL_LEFT, 0, 0, rail - 16,
+                       &lv_font_montserrat_28, finish ? finish_ink : ink);
     lv_obj_set_style_text_align(icon, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(icon, LV_ALIGN_CENTER, 0, -16);
     // A drag from a neighboring control must not release as a rail click.
@@ -336,8 +337,8 @@ void View::draw_wide(lv_obj_t* root) {
         title = label(rate, phase == Phase::result ? "Ratio" : "Flow (g/s)", 0, phase == Phase::brewing ? 39 : 49, phase == Phase::brewing ? 166 : 136, &lv_font_montserrat_14, muted);
         lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
         if (phase == Phase::result) {
-            auto* next = button(root, "Next brew", 350, 119, 282, 45, Action::next, 0, true);
-            lv_obj_set_style_text_font(lv_obj_get_child(next, 0), &lv_font_montserrat_28, 0);
+            label(root, LV_SYMBOL_UP "  Remove container", 354, 130, 278,
+                  &lv_font_montserrat_18, mint);
         }
         status_ = label(root, "", 8, 36, 332, &lv_font_montserrat_14, amber);
         lv_obj_set_style_bg_color(status_, color(bg), 0);
@@ -452,7 +453,7 @@ void View::draw_wide_dialog(lv_obj_t* root) {
                                          306, 48, Action::choose_scenario, i);
     } else draw_wide_registration(box);
     fit_width(box, 81, 100);
-    lv_obj_set_width(box, 525);
+    // Keep the modal backdrop full-width behind the inset action card.
     action_rail(root, "Back",
                 dialog_ == Dialog::remove_equipment ? Action::cancel_remove : Action::close);
 }
@@ -575,8 +576,8 @@ void View::draw_brew(lv_obj_t* root, bool result) {
     status_ = label(root, "", 32, 84, 430, &lv_font_montserrat_14, mint);
     target_text_ = label(root, "", 20, 244, 440, &lv_font_montserrat_14, muted);
     if (result) {
-        label(root, controller_.live() ? "Brew record: RAM only" : "Demo record: RAM only", 20, 282, 240, &lv_font_montserrat_14, mint);
-        button(root, "Next brew", 322, 270, 142, 44, Action::next, 0, true);
+        label(root, LV_SYMBOL_UP "  Remove container", 20, 280, 440,
+              &lv_font_montserrat_22, mint);
     } else {
         if (!controller_.live()) button(root, controller_.session().paused ? "Resume flow" : "Pause flow", 16, 270, 140, 44, Action::pause);
         lv_obj_set_width(object_text_, 338);
@@ -805,9 +806,12 @@ void View::refresh_values() {
     if (s.uncertain && controller_.live() && s.brew_error != BrewError::none) {
         char alert[96];
         const auto remaining = static_cast<unsigned>(std::ceil(controller_.error_remaining_s()));
-        std::snprintf(alert, sizeof(alert), "%s - home in %02u:%02u",
-                      s.brew_error == BrewError::object_removed ? "Object removed" : "Sensor unavailable",
-                      remaining / 60, remaining % 60);
+        if (s.phase == Phase::result)
+            std::snprintf(alert, sizeof(alert), "%s - result incomplete",
+                          s.brew_error == BrewError::object_removed ? "Object removed" : "Sensor unavailable");
+        else std::snprintf(alert, sizeof(alert), "%s - home in %02u:%02u",
+                          s.brew_error == BrewError::object_removed ? "Object removed" : "Sensor unavailable",
+                          remaining / 60, remaining % 60);
         status = alert;
     } else if (s.uncertain) status = "Baseline uncertain - weight unavailable";
     else if (s.target_g && s.net_g >= *s.target_g) status = "Target reached  +" + number(s.net_g - *s.target_g, " g");
@@ -1223,3 +1227,4 @@ void View::action(Action a, int value) {
     schedule_draw();
 }
 }
+

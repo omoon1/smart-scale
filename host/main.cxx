@@ -122,9 +122,12 @@ void run_wide_checks(smart_scale::ui::View& view, smart_scale::Controller& contr
     require(lv_scr_act() == brew, "wide brew locks editors");
     click(view, 570, 146); require(controller.session().phase == Phase::result, "wide finish");
     screenshot(view, "wide-12-result");
-    click(view, 560, 146); screenshot(view, "wide-13-remove-load");
-    require(controller.session().phase == Phase::remove_load, "wide next requires removal");
-    click(view, 540, 146); require(controller.session().phase == Phase::ready, "wide removal returns home");
+    require(!has_label(lv_scr_act(), "Next brew"), "wide completion has no next button");
+    click(view, 560, 146); // The removal prompt is not a button.
+    require(controller.session().phase == Phase::result, "wide completion waits for removal");
+    screenshot(view, "wide-13-remove-load");
+    controller.remove_object(); pump(view);
+    require(controller.session().phase == Phase::ready, "wide removal returns home");
     controller.load_scenario(Scenario::pour_over); controller.run_demo();
     for (int i = 0; i < 130; ++i) { controller.tick(.1F); pump(view, 100); }
     screenshot(view, "wide-14-pour-over");
@@ -260,14 +263,14 @@ int main(int argc, char** argv) {
             for (int i = 0; i < step; ++i) click(view, rail_wide ? 470 : 320, rail_wide ? 100 : 284);
             screenshot(view, (prefix + "registration-" + std::to_string(step)).c_str());
             require(has_label(lv_scr_act(), "Back"), "registration exposes cancellation");
-            click(view, width - 2, step == 0 ? 2 : step == 1 ? height / 2 : height - 2);
+            click(view, width - 24, step == 0 ? 24 : step == 1 ? height / 2 : height - 24);
             require(!has_label(lv_scr_act(), "Back"), "rail corners and center close registration");
             require(controller.equipment_count() == count, "cancel never persists equipment");
         }
         view.open(ui::Dialog::dose); pump(view);
         screenshot(view, (prefix + "dose").c_str());
         const auto dose = controller.session().dose_g;
-        click(view, width - 2, height - 2);
+        click(view, width - 24, height - 24);
         require(controller.session().dose_g == dose && !has_label(lv_scr_act(), "Back"), "dose close preserves value");
         controller.load_scenario(Scenario::pour_over);
         controller.run_demo();
@@ -279,10 +282,10 @@ int main(int argc, char** argv) {
         require(has_label(lv_scr_act(), "Back") && has_label(lv_scr_act(), LV_SYMBOL_LEFT) &&
                 !has_label(lv_scr_act(), LV_SYMBOL_CLOSE), "battery history uses icon Back instead of X");
         screenshot(view, (prefix + "battery").c_str());
-        click(view, width - 2, height / 2);
+        click(view, width - 24, height / 2);
         require(!has_label(lv_scr_act(), "Battery Usage") && controller.session().phase == Phase::brewing,
                 "battery Back returns to extraction without finishing it");
-        click(view, width - 2, 2);
+        click(view, width - 24, 24);
         require(controller.session().phase == Phase::result, "rail corner finishes brew");
         return 0;
     }
@@ -662,9 +665,10 @@ int main(int argc, char** argv) {
     require(controller.session().phase == Phase::result, "Finish opens results");
     screenshot(view, "05-result");
     click(view, 396, 290);
-    require(controller.session().phase == Phase::remove_load, "Next requires load removal");
+    require(controller.session().phase == Phase::result, "Completion waits for removal");
+    require(!has_label(lv_scr_act(), "Next brew"), "Completion has no next button");
     screenshot(view, "06-remove-load");
-    click(view, 240, 286);
+    controller.remove_object(); pump(view);
     require(controller.session().phase == Phase::ready, "Removal returns to ready");
     controller.load_scenario(Scenario::unknown);
     view.open(ui::Dialog::dose); pump(view); // Brew must dismiss unconfirmed edits.
@@ -725,3 +729,4 @@ int main(int argc, char** argv) {
     require(find_type(lv_scr_act(), &lv_dropdown_class), "Empty list still allows registration");
     std::cout << "UI interaction checks passed\n";
 }
+
