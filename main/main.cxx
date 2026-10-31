@@ -110,6 +110,8 @@ extern "C" void app_main() {
                 if (power.state() != smart_scale::PowerState::screen_off) view.reset();
                 power.activity(now_ms);
             }
+            // Wake-only button never invokes reset/tare; held input prevents idle.
+            if (display.wake_button_pressed()) power.activity(now_ms);
             if (display.take_touch_activity()) {
                 if (applied_power != smart_scale::PowerState::active)
                     logger.event("power", "event=activity reason=touch state=%d", static_cast<int>(applied_power));
@@ -191,7 +193,7 @@ extern "C" void app_main() {
                         bool user_wake = false;
                         const auto error = stopped ? display.light_sleep(sleep_start, sleep_end, user_wake, sleep_cycle) : ESP_ERR_TIMEOUT;
                         const auto resumed_s = static_cast<uint64_t>(esp_timer_get_time() / 1000000);
-                        if (error == ESP_OK) {
+                        if (sleep_end > sleep_start) {
                             // Only the successful sleep call belongs to Sleep. Setup and failed attempts stay Active.
                             const auto start_s = sleep_start / 1000000, end_s = sleep_end / 1000000;
                             const auto sleep_state = smart_scale::BatteryHistory::state(current_battery, true);
@@ -236,3 +238,4 @@ extern "C" void app_main() {
         }
     }
 }
+
