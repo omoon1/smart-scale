@@ -44,6 +44,9 @@ idf:
 	@./scripts/idf.sh $(ARGS)
 test:
 	@mkdir -p build-host
+	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main tests/lcd_sleep_test.cxx -o build-host/lcd_sleep_tests
+	@./build-host/lcd_sleep_tests
+	@mkdir -p build-host
 	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main main/session.cxx main/scale.cxx tests/brew_guide_test.cxx -o build-host/brew_guide_tests
 	@./build-host/brew_guide_tests
 	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -DESP_PLATFORM -I tests/fakes -I main main/theme.cxx tests/theme_storage_test.cxx -o build-host/theme_storage_tests
@@ -94,3 +97,4 @@ simulator-wide:
 .PHONY: preview-themes
 preview-themes:
 	@./scripts/host.sh --theme-screenshots
+
