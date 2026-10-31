@@ -1,7 +1,18 @@
 # Brew guide and appearance
 
-The 640×172 screen uses a tappable weight card while ready, a time-based guide
-beside the measured brew mass, and a 152×56 Finish button. There is no tare or
+The 640×172 screen uses an aligned mode/status/battery header and three full-height
+setup cards: a 304×125 weight card plus equal 150×125 Container and Coffee cards.
+Weight and units are centered and baseline-aligned. Empty cards show Select and
+Set dose; registered cards show saved mass/dose and retain coffee-save feedback.
+
+Brewing places the graph on the left, two equal metric cards on the right, and a
+282×45 Finish button spanning both metrics. The timer remains in the header.
+Actual mass is a solid line; targets are dashed with checkpoints, and a vertical
+cursor marks elapsed time. Axes adapt to the guide and measured mass, with
+bounded rendering of up to 120 historical points. Negative readings remain
+visible numerically but are clipped to the graph's zero boundary. Sensor errors
+hide the actual trace and show a visible error banner without blocking Finish.
+The line styles distinguish Actual and Target even in Porcelain Gray. There is no tare or
 Reset button during extraction. The controller also rejects tare outside ready.
 The 480×320 layout shares the themes, weight-card tare and target guide.
 
@@ -18,7 +29,7 @@ no new physical-button hardware is introduced here.
 An unavailable reading stays `?`; it is never represented as zero. No approximation
 prefix (`~`) is displayed. During brewing the mass is labeled **Water added** only
 for a pour-over set (dripper plus receiving vessel on the scale); otherwise it is
-beverage mass. Live flow remains g/s. The demo's ml/s assumes 1 g/ml.
+beverage mass. Live flow remains g/s. The simulator uses the same g/s flow unit.
 
 ## Theme integration
 
@@ -80,6 +91,9 @@ persistence and mobile recipe transfer are future work.
   and Finish interaction.
 - `make simulator` uses the configured device resolution, preserving the shared
   resolution and buffer checks from PR #17. Theme previews use that resolution too.
+  Wide-screen demo controls live outside the device display: Space runs the demo,
+  S opens scenarios, and R resets. These shortcuts are shown in the SDL window title.
+  The legacy 480×320 test screen retains its original simulator controls.
 
 Hardware checks still needed: physical touch targets, color/contrast on the LCD,
 NVS persistence across power cycles, and continued sample timing during a theme

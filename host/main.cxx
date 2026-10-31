@@ -113,8 +113,8 @@ void run_wide_checks(smart_scale::ui::View& view, smart_scale::Controller& contr
     click(view, 610, 26);
     view.open(ui::Dialog::calibration); screenshot(view, "wide-09-calibration");
     click(view, 610, 26);
-    click(view, 460, 146); screenshot(view, "wide-10-scenarios");
-    click(view, 150, 80); click(view, 320, 146);
+    view.open(ui::Dialog::demo); screenshot(view, "wide-10-scenarios");
+    click(view, 150, 80); controller.run_demo();
     for (int i = 0; i < 190; ++i) { controller.tick(.1F); pump(view, 100); }
     require(controller.session().phase == Phase::brewing, "wide run starts brewing");
     screenshot(view, "wide-11-brewing");
@@ -187,7 +187,7 @@ void run_wide_live_checks(smart_scale::ui::View& view, smart_scale::Controller& 
     require(controller.session().dose_source == DoseSource::measured, "wide card saves measured coffee");
     feed(528000); screenshot(view, "wide-21-ready-live");
     click(view, 300, 146); // Former Start brew position.
-    click(view, 580, 146); // Former Reset position.
+    // The former footer is now occupied by full-height cards.
     require(controller.session().phase == Phase::ready && controller.session().dose_g,
             "removed controls neither start nor reset a prepared brew");
     click(view, 520, 70); click(view, 460, 132); click(view, 610, 26);
@@ -263,7 +263,7 @@ int main(int argc, char** argv) {
             view.open(ui::Dialog::dose); pump(view);
             screenshot(view, (std::string(names[i]) + "-dose").c_str());
             view.open(ui::Dialog::none); pump(view);
-            controller.run_demo(); controller.tick(70); pump(view);
+            controller.run_demo(); for(int sample=0;sample<180;++sample){controller.tick(.1F);pump(view,100);}
             const auto before = controller.session();
             require(view.set_theme(static_cast<Theme>((i+1)%3)), "theme can change during brew");
             pump(view);
@@ -279,7 +279,10 @@ int main(int argc, char** argv) {
             click(view, 555, 140);
             require(controller.session().phase == Phase::result, "large Finish button");
             screenshot(view, (std::string(names[i]) + "-result").c_str());
-            controller.reset(); controller.remove_object(); pump(view);
+            controller.reset(); controller.remove_object(); view.open(ui::Dialog::none); pump(view);
+            require(has_label(lv_scr_act(), "Select") && has_label(lv_scr_act(), "Set dose"), "empty cards have clear actions");
+            require(!has_label(lv_scr_act(), "Run demo") && !has_label(lv_scr_act(), "Scenarios"), "simulator controls stay off device");
+            screenshot(view, (std::string(names[i]) + "-empty").c_str());
         }
         return 0;
     }
@@ -514,7 +517,7 @@ int main(int argc, char** argv) {
     if (interactive || wide_interactive || smoke) {
 #ifdef SMART_SCALE_SDL
         if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) { std::cerr << SDL_GetError(); return 1; }
-        auto* window = SDL_CreateWindow("Smart Scale | dummy data | R = Reset", SDL_WINDOWPOS_CENTERED,
+        auto* window = SDL_CreateWindow("Smart Scale | Space: Run demo | S: Scenarios | R: Reset", SDL_WINDOWPOS_CENTERED,
             SDL_WINDOWPOS_CENTERED, width * 2, height * 2, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
         auto* renderer = SDL_CreateRenderer(window, -1, 0);
         if (!window || !renderer) { std::cerr << SDL_GetError(); return 1; }
@@ -531,7 +534,11 @@ int main(int argc, char** argv) {
                 if (event.type == SDL_MOUSEMOTION) { mouse_x = event.motion.x; mouse_y = event.motion.y; }
                 if (event.type == SDL_MOUSEBUTTONDOWN) mouse_down = true;
                 if (event.type == SDL_MOUSEBUTTONUP) mouse_down = false;
-                if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_r) view.reset();
+                if (event.type == SDL_KEYDOWN) {
+                    if (event.key.keysym.sym == SDLK_r) view.reset();
+                    if (event.key.keysym.sym == SDLK_SPACE) controller.run_demo();
+                    if (event.key.keysym.sym == SDLK_s) view.open(smart_scale::ui::Dialog::demo);
+                }
             }
             const auto now = SDL_GetTicks(); const auto elapsed = now - previous; previous = now;
             controller.tick(static_cast<float>(elapsed) / 1000); pump(view, elapsed);

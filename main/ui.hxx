@@ -41,6 +41,8 @@ private:
     void draw_history(lv_obj_t* parent);
     void refresh_history();
     static void draw_history_plot(lv_event_t* event);
+    static void draw_brew_plot(lv_event_t* event);
+    static void draw_card_icon(lv_event_t* event);
     void draw_registration(lv_obj_t* parent);
     void action(Action action, int value);
     static void clicked(lv_event_t* event);
@@ -82,7 +84,7 @@ private:
     std::array<lv_obj_t*, 20> icon_buttons_{};
     std::string registration_error_;
     float registration_weight_{156.8F};
-    lv_obj_t *tare_button_{}, *weight_hint_{};
+    lv_obj_t *tare_button_{}, *weight_hint_{}, *object_pill_{}, *coffee_pill_{};
     lv_obj_t *coffee_card_{}, *coffee_hint_{}, *coffee_check_{}, *object_card_{}, *object_check_{}, *stage_text_{};
     int coffee_visual_state_{-1};
     bool object_visual_selected_{};
