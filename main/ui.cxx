@@ -165,11 +165,11 @@ void View::draw() {
     history_plot_ = nullptr; history_revision_ = UINT64_MAX;
     weight_ = weight_unit_ = time_ = flow_ = status_ = object_text_ = dose_text_ = target_text_ = chart_ = nullptr;
     dose_value_ = icon_name_ = kind_input_ = chart_max_ = chart_time_ = current_point_ = object_weight_ = nullptr;
-    start_button_ = tare_button_ = nullptr;
+    tare_button_ = weight_hint_ = nullptr;
     coffee_card_ = coffee_hint_ = coffee_check_ = object_card_ = object_check_ = stage_text_ = nullptr;
     coffee_visual_state_ = -1;
     object_visual_selected_ = false;
-    sensor_status_ = calibration_message_ = calibration_weight_label_ = registration_weight_label_ = registration_status_ = registration_next_ = nullptr;
+    calibration_message_ = calibration_weight_label_ = registration_weight_label_ = registration_status_ = registration_next_ = nullptr;
     icon_buttons_.fill(nullptr);
     series_ = target_series_ = nullptr;
     guide_ticks_.fill(nullptr);
@@ -218,11 +218,10 @@ void View::draw_wide(lv_obj_t* root) {
         button(root, controller_.session().mode == Mode::espresso ? "Espresso" : "Pour-over",
                8, 4, 140, 44, Action::toggle_mode);
         target_text_ = label(root, "", 158, 18, 92, &lv_font_montserrat_14, muted);
-        tare_button_ = button(root, "", 8, 50, 236, 80, Action::tare);
+        tare_button_ = button(root, "", 8, 50, 236, 118, Action::tare);
         weight_ = label(tare_button_, "0.0", 4, 0, 218, &weight_font_72);
-        label(root, "Tap weight to tare", 12, 153, 232, &lv_font_montserrat_14, muted);
+        weight_hint_ = label(tare_button_, "", 8, 90, 218, &lv_font_montserrat_14, muted);
         weight_unit_ = label(tare_button_, "g", 0, 0, 28, &lv_font_montserrat_22);
-        sensor_status_ = label(root, "", 12, 133, 230, &lv_font_montserrat_14, muted);
         stage_text_ = label(root, "", 260, 10, 252, &lv_font_montserrat_18, mint);
         object_card_ = button(root, "", 254, 36, 180, 82, Action::objects);
         object_text_ = label(object_card_, "", 10, 8, 142, &lv_font_montserrat_18);
@@ -235,14 +234,10 @@ void View::draw_wide(lv_obj_t* root) {
         coffee_check_ = label(coffee_card_, "", 164, 10, 22, &lv_font_montserrat_14, mint);
         dose_text_ = label(coffee_card_, "", 10, 30, 164, &lv_font_montserrat_22);
         coffee_hint_ = label(coffee_card_, "", 10, 58, 164, &lv_font_montserrat_14, muted);
-        if (controller_.live()) {
-            start_button_ = button(root, "Start brew", 254, 124, 110, 44, Action::run, 0, true);
-            button(root, "Calibrate", 446, 124, 100, 44, Action::calibration);
-        } else {
+        if (!controller_.live()) {
             button(root, "Run demo", 254, 124, 140, 44, Action::run, 0, true);
             button(root, "Scenarios", 402, 124, 144, 44, Action::demo);
         }
-        button(root, "Reset", 552, 124, 80, 44, Action::reset);
     } else if (phase == Phase::remove_load) {
         label(root, LV_SYMBOL_REFRESH " Remove objects", 16, 12, 490, &lv_font_montserrat_28, amber);
         label(root, "Session cleared. Equipment and records retained.\nThe current load will not become the empty zero.",
@@ -384,10 +379,9 @@ void View::draw_wide_registration(lv_obj_t* box) {
 void View::draw_ready(lv_obj_t* root) {
     tare_button_ = button(root, "", 16, 104, 248, 96, Action::tare);
     weight_ = label(tare_button_, "0.0", 6, 4, 218, &weight_font_72);
-    label(tare_button_, "Tap weight to tare", 8, 76, 230, &lv_font_montserrat_14, muted);
+    weight_hint_ = label(tare_button_, "", 8, 76, 230, &lv_font_montserrat_14, muted);
     weight_unit_ = label(tare_button_, "g", 0, 0, 28, &lv_font_montserrat_22);
     stage_text_ = label(root, "", 24, 70, 248, &lv_font_montserrat_22, mint);
-    sensor_status_ = label(root, "", 24, 208, 240, &lv_font_montserrat_14, muted);
     target_text_ = label(root, "", 24, 240, 240, &lv_font_montserrat_14, muted);
     auto* object = button(root, "", 280, 66, 184, 84, Action::objects);
     object_card_ = object;
@@ -417,14 +411,10 @@ void View::draw_ready(lv_obj_t* root) {
     lv_obj_set_style_line_rounded(seam, true, 0);
     lv_obj_clear_flag(seam, LV_OBJ_FLAG_CLICKABLE);
     dose_text_ = label(dose, "", 12, 34, 160, &lv_font_montserrat_18);
-    if (controller_.live()) {
-        start_button_ = button(root, "Start brew", 16, 266, 110, 44, Action::run, 0, true);
-        button(root, "Calibrate", 218, 266, 108, 44, Action::calibration);
-    } else {
+    if (!controller_.live()) {
         button(root, controller_.demo_running() ? "Demo running" : "Run demo", 16, 266, 140, 44, Action::run, 0, true);
         button(root, "Scenarios", 164, 266, 110, 44, Action::demo);
     }
-    button(root, "Reset", 364, 266, 100, 44, Action::reset);
 }
 void View::draw_brew(lv_obj_t* root, bool result) {
     // Draw a compact lock without relying on a font glyph absent from LVGL 8.
@@ -503,14 +493,12 @@ void View::refresh_values() {
         std::optional<float>{static_cast<float>(*scale.filtered_counts())} : std::nullopt,
         scale.sample_ms(), scale.quiet(), false, noise_counts);
     if (tare_button_) {
-        const bool enabled = controller_.live() && s.phase == Phase::ready && scale.ready() && scale.stable();
+        const bool needs_calibration = controller_.live() && !scale.calibration();
+        set_text(weight_hint_, needs_calibration ? "Tap to calibrate" : "Tap to tare");
+        const bool enabled = controller_.live() && s.phase == Phase::ready &&
+            (needs_calibration || (scale.ready() && scale.stable()));
         if (enabled) lv_obj_clear_state(tare_button_, LV_STATE_DISABLED);
         else lv_obj_add_state(tare_button_, LV_STATE_DISABLED);
-    }
-    if (start_button_) {
-        const bool ready = controller_.scale().ready() && controller_.scale().stable();
-        if (ready && s.brew_prepared) lv_obj_clear_state(start_button_, LV_STATE_DISABLED);
-        else lv_obj_add_state(start_button_, LV_STATE_DISABLED);
     }
     if (calibration_message_) set_text(calibration_message_,
         (calibration_message_text_ + "\n" + controller_.scale().status()).c_str());
@@ -638,30 +626,24 @@ void View::refresh_values() {
             lv_obj_set_style_border_width(object_card_, selected ? 2 : 1, 0);
         }
         if (object_check_) set_text(object_check_, selected ? LV_SYMBOL_OK : "");
-        std::string stage, hint;
-        if (controller_.live() && !scale.ready()) {
+        std::string stage;
+        if (controller_.live() && !scale.calibration()) {
+            stage = LV_SYMBOL_WARNING " Calibrate scale";
+        } else if (controller_.live() && !scale.ready()) {
             stage = LV_SYMBOL_WARNING " Check scale";
-            hint = scale.status();
         } else if (!selected) {
             stage = std::string(equipment_icons[1]) + " Load container";
-            hint = controller_.object_ambiguous() ? "Tap Container to choose." :
-                s.loaded ? "Select or register this container." : "Place a registered container.";
         } else if (!s.dose_g) {
             stage = std::string(equipment_icons[0]) + (candidate ? " Save coffee" : " Load coffee");
-            hint = candidate ? "Tap the flashing Coffee card." : "Add coffee, or tap Coffee to set.";
         } else if (item->kind == Kind::portafilter) {
             stage = std::string(equipment_icons[1]) + " Load container";
-            hint = "Coffee saved. Place the brew vessel.";
         } else if (controller_.live() && !s.brew_prepared) {
             stage = LV_SYMBOL_PAUSE " Wait for stable";
-            hint = "Keep the container still.";
         } else {
-            stage = LV_SYMBOL_PLAY " Start brew";
-            hint = "Water flow starts timer.";
+            stage = LV_SYMBOL_PLAY " Pour to start";
         }
         if (target_text_) set_text(target_text_, s.target_g ? (std::string(wide() ? "Target\n" : "Target ") + number(s.target_g, " g")).c_str() : "");
         if (stage_text_) set_text(stage_text_, stage.c_str());
-        if (sensor_status_) set_text(sensor_status_, hint.c_str());
         return;
     }
     if (s.phase != Phase::brewing && s.phase != Phase::result) return;
@@ -984,7 +966,16 @@ void View::action(Action a, int value) {
         if (dialog_ != Dialog::battery_history || pending_draw_) return;
         if (value == 6 || value == 24 || value == 72) { history_hours_ = value; schedule_draw(); }
         return;
-    case Action::tare: controller_.tare(); break;
+    case Action::tare:
+        if (!controller_.live() || controller_.session().phase != Phase::ready) return;
+        if (!controller_.scale().calibration()) {
+            controller_.scale().cancel_calibration();
+            calibration_message_text_.clear();
+            open(Dialog::calibration);
+            return;
+        }
+        controller_.tare();
+        break;
     case Action::calibration:
         controller_.scale().cancel_calibration();
         calibration_message_text_.clear(); open(Dialog::calibration); return;
@@ -1029,7 +1020,7 @@ void View::action(Action a, int value) {
     case Action::close: controller_.scale().cancel_calibration(); dialog_ = Dialog::none; break;
     case Action::choose_object: controller_.select_equipment(static_cast<std::size_t>(value)); dialog_ = Dialog::none; break;
     case Action::choose_scenario: controller_.load_scenario(static_cast<Scenario>(value)); dialog_ = Dialog::none; break;
-    case Action::run: if (controller_.live()) controller_.start_brew(); else controller_.run_demo(); break;
+    case Action::run: if (!controller_.live()) controller_.run_demo(); break;
     case Action::pause: controller_.pause_demo(); break;
     case Action::finish: controller_.finish(); break;
     case Action::next: controller_.next(); break;

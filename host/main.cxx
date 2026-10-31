@@ -150,7 +150,15 @@ void run_wide_live_checks(smart_scale::ui::View& view, smart_scale::Controller& 
     view.battery(decode_voltage_battery(3900));
     std::filesystem::create_directories("build-host/screens");
     screenshot(view, "wide-15-disconnected");
-    click(view, 496, 146); screenshot(view, "wide-16-live-calibration");
+    require(has_label(lv_scr_act(), "Tap to calibrate"), "missing calibration offers card action");
+    require(!has_label(lv_scr_act(), "Calibrate") && !has_label(lv_scr_act(), "Reset") &&
+            !has_label(lv_scr_act(), "Start brew") && !has_label(lv_scr_act(), "Place a registered container."),
+            "wide setup removes separate actions and placement hint");
+    click(view, 100, 90);
+    require(has_label(lv_scr_act(), "Calibrate scale"), "weight card opens calibration without sensor data");
+    click(view, 610, 26);
+    require(has_label(lv_scr_act(), "Tap to calibrate"), "cancelled calibration remains accessible");
+    click(view, 100, 90); screenshot(view, "wide-16-live-calibration");
     std::uint64_t now{};
     auto feed = [&](int raw) {
         for (int i = 0; i < 60; ++i) { controller.sensor_sample(raw, now += 100); controller.tick(.1F); pump(view, 100); }
@@ -159,6 +167,13 @@ void run_wide_live_checks(smart_scale::ui::View& view, smart_scale::Controller& 
     require(controller.scale().ready() && std::abs(controller.scale().gross() - 100) < .01F,
             "wide touch calibration captures zero and 100 g mass");
     screenshot(view, "wide-17-calibrated"); click(view, 610, 26);
+    require(has_label(lv_scr_act(), "Tap to tare") && !has_label(lv_scr_act(), "Tap to calibrate"),
+            "successful calibration changes card to tare");
+    controller.sensor_sample(std::nullopt, now += 1100); controller.tick(1.1F); pump(view);
+    click(view, 100, 90);
+    require(!has_label(lv_scr_act(), "Calibrate scale") && has_label(lv_scr_act(), "Tap to tare"),
+            "sensor fault with calibration cannot open calibration or tare");
+    feed(110000);
     require(controller.register_equipment({0, Kind::pour_over_set, "Pour-over set", "", 500.0F, {}}, true), "wide live profile");
     click(view, 70, 24);
     feed(10000); screenshot(view, "wide-18-load-container");
@@ -171,6 +186,10 @@ void run_wide_live_checks(smart_scale::ui::View& view, smart_scale::Controller& 
     screenshot(view, "wide-20-save-coffee"); click(view, 520, 70);
     require(controller.session().dose_source == DoseSource::measured, "wide card saves measured coffee");
     feed(528000); screenshot(view, "wide-21-ready-live");
+    click(view, 300, 146); // Former Start brew position.
+    click(view, 580, 146); // Former Reset position.
+    require(controller.session().phase == Phase::ready && controller.session().dose_g,
+            "removed controls neither start nor reset a prepared brew");
     click(view, 520, 70); click(view, 460, 132); click(view, 610, 26);
     require(std::abs(*controller.session().dose_g - 18.1F) < .02F, "wide saved coffee manual edit");
     feed(528000);
@@ -298,7 +317,7 @@ int main(int argc, char** argv) {
         require(controller.session().dose_source == DoseSource::measured, "click saves measured coffee");
         require(!has_label(lv_scr_act(), "+0.1"), "save does not open manual editor");
         feed(518000); screenshot(view, "32-start-brew");
-        require(has_label(lv_scr_act(), "Water flow starts timer."), "both registered shows ready guidance");
+        require(has_label(lv_scr_act(), LV_SYMBOL_PLAY " Pour to start"), "both registered shows ready guidance");
         const auto after_save = flush_count;
         for (unsigned i = 0; i < 15; ++i) pump(view, 100);
         require(flush_count == after_save, "saved card stops pulsing");
@@ -364,7 +383,10 @@ int main(int argc, char** argv) {
         click(view, 432, 30);
         view.battery({});
         pump(view);
-        click(view, 268, 286);
+        require(has_label(lv_scr_act(), "Tap to calibrate"), "legacy calibration prompt");
+        require(!has_label(lv_scr_act(), "Start brew") && !has_label(lv_scr_act(), "Reset") &&
+                !has_label(lv_scr_act(), "Calibrate"), "legacy setup has no separate actions");
+        click(view, 100, 145);
         screenshot(view, "17-hx711-calibrate");
         std::uint64_t now = 0;
         auto feed = [&](int raw) {
@@ -388,7 +410,8 @@ int main(int argc, char** argv) {
         screenshot(view, "19-hx711-live");
         // A tare changes the idle net reading, never the gross calibration or
         // registration readout. Both dialogs use the same timed presentation.
-        click(view, 268, 286);
+        // Exercise calibration rendering directly; it is no longer a setup button.
+        view.open(smart_scale::ui::Dialog::calibration); pump(view);
         require(has_label(lv_scr_act(), "100.0 g"), "calibration displays gross despite tare");
         screenshot(view, "22-hx711-calibration-gross");
         controller.sensor_sample(std::nullopt, now += 1100); controller.tick(1.1F); pump(view);
@@ -426,8 +449,10 @@ int main(int argc, char** argv) {
         click(view, 366, 32); // Close equipment list.
         feed(8254); // Actual placement ~99.6 g, registered mass ~100.12 g.
         require(controller.set_dose(18), "coffee required before manual brew");
-        click(view, 60, 286); // Start brew.
-        require(controller.session().phase == smart_scale::Phase::brewing, "touch starts real brew");
+        click(view, 60, 286); // Former Start brew position must do nothing.
+        require(controller.session().phase == smart_scale::Phase::ready, "no manual start control");
+        // Model-only fixture for the signed-weight regression below. Live UI starts via flow only.
+        require(controller.start_brew(), "signed-weight brew fixture"); pump(view);
         feed(8167); // -0.1 g net is noise, not cup removal.
         require(!controller.session().uncertain && controller.session().net_g < -.09F,
                 "negative tenth-gram reading stays in live brew despite registration offset");

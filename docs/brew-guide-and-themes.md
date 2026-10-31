@@ -5,7 +5,16 @@ beside the measured brew mass, and a 152×56 Finish button. There is no tare or
 Reset button during extraction. The controller also rejects tare outside ready.
 The 480×320 layout shares the themes, weight-card tare and target guide.
 
-The setup card only enables tare with a live, calibrated, ready, stable sensor.
+Setup has no Calibrate, Reset or Start brew buttons and no extra placement-hint
+label. The weight card contains **Tap to calibrate** when calibration data is
+missing, opening the existing calibration dialog even before the sensor is ready.
+After successful calibration it shows **Tap to tare**; tare is only enabled with
+a live, calibrated, ready, stable sensor. A sensor fault does not erase calibration
+or change the card into a calibration action. Cancelling calibration keeps the
+calibration prompt until valid calibration data is available. With registered
+container and dose, **Pour to start** indicates that sustained flow is the only
+live UI start path. Reset remains available through the existing physical action;
+no new physical-button hardware is introduced here.
 An unavailable reading stays `?`; it is never represented as zero. No approximation
 prefix (`~`) is displayed. During brewing the mass is labeled **Water added** only
 for a pour-over set (dripper plus receiving vessel on the scale); otherwise it is
