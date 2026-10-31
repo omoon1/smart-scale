@@ -15,6 +15,7 @@ inline constexpr int touch_sda = 17, touch_scl = 18;
 inline constexpr int lcd_cs = 9, lcd_clock = 10;
 inline constexpr int lcd_d0 = 11, lcd_d1 = 12, lcd_d2 = 13, lcd_d3 = 14;
 inline constexpr int lcd_backlight = 42;
+inline constexpr int expander_interrupt = 8;
 inline constexpr std::uint32_t backlight_enable = 1U << 1;
 inline constexpr std::uint32_t lcd_reset = 1U << 5;
 inline constexpr std::uint32_t system_enable = 1U << 6;

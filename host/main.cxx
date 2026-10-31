@@ -127,11 +127,26 @@ void run_wide_checks(smart_scale::ui::View& view, smart_scale::Controller& contr
     controller.load_scenario(Scenario::pour_over); controller.run_demo();
     for (int i = 0; i < 130; ++i) { controller.tick(.1F); pump(view, 100); }
     screenshot(view, "wide-14-pour-over");
+    static BatteryHistory history;
+    view.history(history);
+    history.update(0, UsageState::estimated, decode_voltage_battery(4000));
+    history.update(21600, UsageState::estimated, decode_voltage_battery(3800));
+    view.battery(decode_voltage_battery(3800));
+    click(view, 574, 18);
+    require(has_label(lv_scr_act(), "Battery Usage"), "wide battery accessible during brew");
+    require(!view.power_inhibited() || controller.session().phase == Phase::brewing,
+            "battery history does not introduce an editor inhibitor");
+    screenshot(view, "wide-24-battery-6hr");
+    click(view, 400, 24); screenshot(view, "wide-25-battery-1day");
+    click(view, 510, 24); screenshot(view, "wide-26-battery-3day");
+    click(view, 610, 24);
+    require(!has_label(lv_scr_act(), "Battery Usage"), "wide battery close returns to brew");
     std::cout << "Wide UI interaction checks passed\n";
 }
 
 void run_wide_live_checks(smart_scale::ui::View& view, smart_scale::Controller& controller) {
     using namespace smart_scale;
+    view.battery(decode_voltage_battery(3900));
     std::filesystem::create_directories("build-host/screens");
     screenshot(view, "wide-15-disconnected");
     click(view, 496, 146); screenshot(view, "wide-16-live-calibration");
@@ -254,6 +269,51 @@ int main(int argc, char** argv) {
     if (live_test) {
         std::filesystem::create_directories("build-host/screens");
         screenshot(view, "16-hx711-disconnected");
+        view.battery(smart_scale::decode_axp2101(0x28, 0x20, 100));
+        screenshot(view, "35-battery-charging");
+        require(has_label(lv_scr_act(), LV_SYMBOL_BATTERY_FULL " 100%"), "charging uses color without a label");
+        view.battery(smart_scale::decode_axp2101(0x28, 4, 100));
+        screenshot(view, "36-battery-full");
+        require(has_label(lv_scr_act(), LV_SYMBOL_BATTERY_FULL " 100%"), "full battery retains percentage only");
+        smart_scale::BatteryHistory history;
+        auto previous_usage = smart_scale::UsageState::unknown;
+        for (uint64_t t = 0; t <= 72 * 3600; t += 300) {
+            const double hour = (t % (12 * 3600)) / 3600.0;
+            const auto state = hour < 2 ? smart_scale::UsageState::charging : hour < 6 ? smart_scale::UsageState::active : smart_scale::UsageState::sleep;
+            const unsigned percent = hour < 2 ? 30 + hour * 30 : hour < 6 ? 90 - (hour-2)*12 : 42 - (hour-6)*2;
+            if (state == smart_scale::UsageState::sleep && previous_usage == state) continue;
+            previous_usage = state;
+            history.update(t, state, smart_scale::decode_axp2101(state == smart_scale::UsageState::charging ? 0x28 : 8,
+                state == smart_scale::UsageState::charging ? 0x20 : 0, percent));
+        }
+        view.battery(smart_scale::decode_axp2101(8, 0, 72));
+        view.history(history);
+        click(view, 440, 30);
+        require(has_label(lv_scr_act(), "Battery Usage"), "top-right battery opens usage graph");
+        require(!view.power_inhibited(), "history panel permits idle power policy");
+        require(view.history_hours()==6 && has_label(lv_scr_act(), "-6h"), "default six-hour range");
+        require(!has_label(lv_scr_act(), "Set UTC date / time"), "no clock controls");
+        screenshot(view, "37-battery-6hr");
+        click(view, 250, 80);
+        require(view.history_hours()==24 && has_label(lv_scr_act(), "-24h"), "one-day range");
+        screenshot(view, "38-battery-1day");
+        unsigned green_pixels=0, blue_pixels=0, orange_pixels=0;
+        for (int y=120; y<252; ++y) for (int x=72; x<447; ++x) {
+            const auto pixel=framebuffer[y*width+x];
+            const int r=(pixel>>16)&255, g=(pixel>>8)&255, b=pixel&255;
+            green_pixels += g>r+40 && g>b+20;
+            blue_pixels += b>r+40 && b>g+20;
+            orange_pixels += r>g+30 && g>b+40;
+        }
+        require(green_pixels>30 && blue_pixels>30 && orange_pixels>30, "graph renders all three state colors");
+        click(view, 380, 80);
+        require(view.history_hours()==72 && has_label(lv_scr_act(), "-72h"), "three-day range");
+        screenshot(view, "39-battery-3day");
+        history.clear(); pump(view);
+        screenshot(view, "40-battery-empty");
+        click(view, 432, 30);
+        view.battery({});
+        pump(view);
         click(view, 268, 286);
         screenshot(view, "17-hx711-calibrate");
         std::uint64_t now = 0;
@@ -326,6 +386,10 @@ int main(int argc, char** argv) {
         screenshot(view, "26-hx711-negative-net");
         feed(25920);
         screenshot(view, "20-hx711-brewing");
+        click(view, 440, 30);
+        require(has_label(lv_scr_act(), "Battery Usage"), "history accessible during brew");
+        require(controller.session().phase == smart_scale::Phase::brewing && view.power_inhibited(), "history preserves brewing and its sleep inhibitor");
+        click(view, 432, 30);
         feed(17260); // 110 g gross: liquid decreased, registered cup remains.
         require(!controller.session().uncertain, "decreasing net weight does not imply removal");
         for (unsigned i = 0; i < 6; ++i) {

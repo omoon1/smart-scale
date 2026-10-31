@@ -3,20 +3,26 @@
 #include "weight_display.hxx"
 #include "registration_measurement.hxx"
 #include "lvgl.h"
+#include "battery.hxx"
+#include "battery_history.hxx"
 
 namespace smart_scale::ui {
-enum class Dialog { none, calibration, objects, dose, demo, registration, remove_equipment };
+enum class Dialog { none, calibration, objects, dose, demo, registration, remove_equipment, battery_history };
 class View {
 public:
     explicit View(Controller& controller) : controller_(controller) {}
     void init();
     void update();
+    void battery(const BatterySnapshot& value) { battery_ = value; }
+    void history(const BatteryHistory& value) { if (history_ != &value) history_revision_ = UINT64_MAX; history_ = &value; }
+    unsigned history_hours() const { return history_hours_; }
+    bool power_inhibited() const { return (dialog_ != Dialog::none && dialog_ != Dialog::battery_history) || controller_.session().phase == Phase::brewing; }
     void open(Dialog dialog);
     void reset();
 private:
     enum class Action { tare, calibration, capture_zero, calibrate, objects, dose, toggle_mode, demo, close,
         request_remove, confirm_remove, cancel_remove, dose_adjust, dose_preset, choose_object, choose_scenario, run, pause, finish, next,
-        reset, remove, registration, register_next, register_back, register_save, choose_icon, stable };
+        battery_history, history_range, reset, remove, registration, register_next, register_back, register_save, choose_icon, stable };
     struct Binding { View* view{}; Action action{}; int value{}; };
     lv_obj_t* button(lv_obj_t* parent, const char* text, int x, int y, int w, int h,
                      Action action, int value = 0, bool primary = false);
@@ -28,6 +34,9 @@ private:
     void draw_ready(lv_obj_t* root);
     void draw_brew(lv_obj_t* root, bool result);
     void draw_dialog(lv_obj_t* root);
+    void draw_history(lv_obj_t* parent);
+    void refresh_history();
+    static void draw_history_plot(lv_event_t* event);
     void draw_registration(lv_obj_t* parent);
     void action(Action action, int value);
     static void clicked(lv_event_t* event);
@@ -36,6 +45,12 @@ private:
     void schedule_draw();
     void refresh_values();
     Controller& controller_;
+    BatterySnapshot battery_;
+    const BatteryHistory* history_{};
+    lv_obj_t* history_plot_{};
+    unsigned history_hours_{6};
+    uint64_t history_revision_{UINT64_MAX};
+    lv_obj_t* battery_label_{};
     WeightDisplay weight_display_;
     WeightDisplay gross_display_;
     WeightDisplay counts_display_{1.0F, 150.0F, 0.0F};

@@ -42,6 +42,7 @@ public:
     bool drift_guard_active() const { return drift_guard_; }
     void ingest(std::int32_t raw, std::uint64_t now_ms);
     void invalidate();
+    void resume_measurement() { connected_ = false; clear_window(); notify("measurement_resumed"); }
     std::optional<std::int32_t> last_raw() const { return last_raw_; }
     std::uint64_t sample_ms() const { return last_ms_; }
     float flow() const { return flow_g_s_; }

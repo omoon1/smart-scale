@@ -2,6 +2,9 @@
 #include <cstddef>
 #include <cstdint>
 #include "board349.hxx"
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
 
 namespace smart_scale::config {
 inline constexpr int screen_width = board349::width;
@@ -48,6 +51,20 @@ inline constexpr float auto_flow_backstep_g = 0.20F, auto_flow_jump_g = 3.0F;
 inline constexpr float display_hysteresis_g = 0.15F;
 inline constexpr float display_zero_deadband_g = 0.15F;
 // Header GPIO44/43 replace the old GPIO17/18 pair, now used by touch I2C.
+#ifdef ESP_PLATFORM
+inline constexpr int hx711_dout = CONFIG_SMART_SCALE_HX711_DOUT;
+inline constexpr int hx711_sck = CONFIG_SMART_SCALE_HX711_SCK;
+#else
 inline constexpr int hx711_dout = board349::hx711_dout, hx711_sck = board349::hx711_sck;
+#endif
+constexpr bool hx711_header_pin(int pin) {
+    return pin == 38 || pin == 39 || pin == 40 || pin == 41 || pin == 43 || pin == 44;
+}
+static_assert(hx711_header_pin(hx711_dout) && hx711_header_pin(hx711_sck), "Use an exposed HX711 header GPIO");
+static_assert(hx711_dout != hx711_sck, "HX711 DOUT and SCK must differ");
+#if defined(ESP_PLATFORM) && defined(CONFIG_ESP_CONSOLE_UART_DEFAULT)
+static_assert(hx711_dout != 43 && hx711_dout != 44 && hx711_sck != 43 && hx711_sck != 44,
+              "HX711 GPIO43/44 conflicts with UART0; select USB Serial/JTAG console");
+#endif
 inline constexpr int reset_button = 0; // BOOT, not the hardware EN/reset switch.
 }

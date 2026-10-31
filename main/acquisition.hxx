@@ -11,6 +11,8 @@ struct Reading { std::int32_t raw{}; std::uint64_t ms{}; bool gap{}; std::uint64
 class Acquisition {
 public:
     esp_err_t start();
+    bool suspend();
+    void resume();
     bool receive(Reading& reading) { return xQueueReceive(queue_, &reading, 0) == pdTRUE; }
     unsigned overflows() const { return overflows_.load(std::memory_order_relaxed); }
     unsigned dropped() const { return dropped_.load(std::memory_order_relaxed); }
@@ -19,6 +21,7 @@ public:
 private:
     static void run(void* context);
     std::atomic<unsigned> overflows_{}, dropped_{}, high_water_{};
+    std::atomic<bool> suspend_requested_{}, suspended_{};
     HX711 sensor_;
     QueueHandle_t queue_{};
     TaskHandle_t task_{};

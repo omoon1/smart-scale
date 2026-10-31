@@ -8,6 +8,11 @@
 #include "esp_lvgl_port.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "driver/ledc.h"
+#include "esp_timer.h"
+#include "esp_sleep.h"
+#include "sdkconfig.h"
+#include "esp_adc/adc_cali_scheme.h"
 #include "freertos/task.h"
 
 namespace smart_scale::device::display {
@@ -29,7 +34,7 @@ void Device::init() {
     ESP_ERROR_CHECK(gpio_reset_pin(backlight));
     ESP_ERROR_CHECK(gpio_set_level(backlight, 1));
     // gpio_config routes the pad to the GPIO output, with input enabled for
-    // pad-level diagnostics. Never attach LEDC in this bring-up build.
+    // pad-level diagnostics. PWM attaches later, while EXIO1 is still off.
     gpio_config_t light{};
     light.pin_bit_mask = 1ULL << board::lcd_backlight;
     light.mode = GPIO_MODE_INPUT_OUTPUT;
@@ -139,8 +144,40 @@ void Device::init() {
     button.mode = GPIO_MODE_INPUT;
     button.pull_up_en = GPIO_PULLUP_ENABLE;
     ESP_ERROR_CHECK(gpio_config(&button));
+    // V2: BAT_ADC = GPIO4 / ADC1 channel 3, 200k/100k divider.
+    adc_oneshot_unit_init_cfg_t adc_config{};
+    adc_config.unit_id = ADC_UNIT_1;
+    auto adc_error = adc_oneshot_new_unit(&adc_config, &adc_);
+    adc_oneshot_chan_cfg_t channel{};
+    channel.atten = ADC_ATTEN_DB_12; channel.bitwidth = ADC_BITWIDTH_12;
+    if (adc_error == ESP_OK) adc_error = adc_oneshot_config_channel(adc_, ADC_CHANNEL_3, &channel);
+    adc_cali_curve_fitting_config_t calibration{};
+    calibration.unit_id = ADC_UNIT_1; calibration.chan = ADC_CHANNEL_3;
+    calibration.atten = ADC_ATTEN_DB_12; calibration.bitwidth = ADC_BITWIDTH_12;
+    if (adc_error == ESP_OK) adc_error = adc_cali_create_scheme_curve_fitting(&calibration, &adc_calibration_);
+    if (adc_error != ESP_OK) ESP_LOGW(tag, "Battery ADC unavailable: %s", esp_err_to_name(adc_error));
+
+    // Active-low brightness: zero duty is full brightness, not off.
+    ledc_timer_config_t timer{};
+    timer.speed_mode = LEDC_LOW_SPEED_MODE; timer.timer_num = LEDC_TIMER_0;
+    timer.duty_resolution = LEDC_TIMER_10_BIT; timer.freq_hz = 20000; timer.clk_cfg = LEDC_AUTO_CLK;
+    ESP_ERROR_CHECK(ledc_timer_config(&timer));
+    ledc_channel_config_t pwm{};
+    pwm.gpio_num = board::lcd_backlight; pwm.speed_mode = LEDC_LOW_SPEED_MODE;
+    pwm.channel = LEDC_CHANNEL_0; pwm.timer_sel = LEDC_TIMER_0; pwm.duty = 0;
+    ESP_ERROR_CHECK(ledc_channel_config(&pwm));
+    ESP_ERROR_CHECK(gpio_input_enable(backlight)); // retain actual pad readback after PWM routing
+    ESP_ERROR_CHECK(esp_io_expander_set_dir(expander_, 1U << 0, IO_EXPANDER_INPUT));
+    i2c_device_config_t expander_config{};
+    expander_config.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+    expander_config.device_address = 0x20; expander_config.scl_speed_hz = 400000;
+    ESP_ERROR_CHECK(i2c_master_bus_add_device(bus_, &expander_config, &expander_input_));
+    gpio_config_t wake{};
+    wake.pin_bit_mask = 1ULL << board::expander_interrupt;
+    wake.mode = GPIO_MODE_INPUT; wake.pull_up_en = GPIO_PULLUP_ENABLE;
+    ESP_ERROR_CHECK(gpio_config(&wake));
     initialized_ = true;
-    ESP_LOGI(tag, "expander SDA=47 SCL=48; touch SDA=17 SCL=18; HX711 DOUT=44 SCK=43");
+    ESP_LOGI(tag, "expander SDA=47 SCL=48; touch SDA=17 SCL=18; HX711 DOUT=%d SCK=%d", config::hx711_dout, config::hx711_sck);
 }
 bool Device::transfer_done(esp_lcd_panel_io_handle_t, esp_lcd_panel_io_event_data_t*, void* context) {
     auto& self = *static_cast<Device*>(context);
@@ -173,7 +210,8 @@ void Device::read_touch(lv_indev_drv_t* driver, lv_indev_data_t* data) {
     if (result != ESP_OK) {
         if (!self.touch_failed_) ESP_LOGW(tag, "Touch read failed on SDA=17 SCL=18 addr=0x3b: %s", esp_err_to_name(result));
         self.touch_failed_ = true;
-        return; // A disconnect must release a held dose button, not reboot.
+        self.touch_down_ = false;
+        return; // Release widgets without clearing the wake gesture gate.
     }
     if (self.touch_failed_) ESP_LOGI(tag, "Touch communication recovered");
     self.touch_failed_ = false;
@@ -182,6 +220,14 @@ void Device::read_touch(lv_indev_drv_t* driver, lv_indev_data_t* data) {
         self.last_touch_ = {static_cast<lv_coord_t>(point.x), static_cast<lv_coord_t>(point.y)};
         data->point = self.last_touch_;
         data->state = LV_INDEV_STATE_PRESSED;
+    }
+    self.touch_down_ = data->state == LV_INDEV_STATE_PRESSED;
+    if (self.touch_down_) self.touch_activity_ = true;
+    // Only an explicit zero-contact packet clears suppression. Malformed or
+    // multi-touch reports must not turn a waking gesture into a widget press.
+    if (packet[1] == 0 || self.touch_down_) {
+        if (!self.touch_gate_.filter(self.touch_down_, self.power_state_ == PowerState::screen_off))
+            data->state = LV_INDEV_STATE_RELEASED;
     }
 }
 esp_err_t Device::show() {
@@ -192,9 +238,11 @@ esp_err_t Device::show() {
     lv_obj_invalidate(lv_disp_get_scr_act(display_));
     lv_refr_now(display_);
     ESP_LOGI(tag, "First frame refresh complete; forcing backlight ON");
-    // GPIO42 is already LOW (vendor maximum-brightness duty=0). Only release
-    // the EXIO1 backlight gate; driving GPIO42 HIGH here darkens the display.
-    auto error = esp_io_expander_set_level(expander_, board::backlight_enable, 1);
+    // Restore active-low full brightness behind EXIO1 before releasing the gate.
+    // GPIO42 HIGH would darken this panel.
+    auto error = ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 0);
+    if (error == ESP_OK) error = ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+    if (error == ESP_OK) error = esp_io_expander_set_level(expander_, board::backlight_enable, 1);
     if (error != ESP_OK) {
         ESP_LOGE(tag, "Backlight EXIO1 enable failed: %s", esp_err_to_name(error));
         return error;
@@ -235,6 +283,88 @@ esp_err_t Device::show() {
     }
     return error;
 }
+
+bool Device::take_touch_activity() {
+    const bool result = touch_activity_; touch_activity_ = false; return result;
+}
+esp_err_t Device::power_state(PowerState state) {
+    if (state == power_state_) return ESP_OK;
+    esp_err_t error;
+    if (state == PowerState::active && power_state_ == PowerState::screen_off) {
+        lv_timer_resume(display_->refr_timer);
+        error = show(); // full frame before backlight
+    } else {
+        const unsigned duty = state == PowerState::active ? 0 : state == PowerState::dimmed ? 716 : 1023;
+        error = ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty);
+        if (error == ESP_OK) error = ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+        if (error == ESP_OK && state == PowerState::screen_off)
+            error = esp_io_expander_set_level(expander_, board::backlight_enable, 0);
+        if (error == ESP_OK && state == PowerState::screen_off) lv_timer_pause(display_->refr_timer);
+    }
+    if (error == ESP_OK) power_state_ = state;
+    return error;
+}
+BatterySnapshot Device::battery() {
+    if (!adc_ || !adc_calibration_) return {};
+    int total = 0;
+    for (int i = 0; i < 16; ++i) {
+        int raw{}, mv{};
+        if (adc_oneshot_read(adc_, ADC_CHANNEL_3, &raw) != ESP_OK ||
+            adc_cali_raw_to_voltage(adc_calibration_, raw, &mv) != ESP_OK) return {};
+        total += mv;
+    }
+    return decode_voltage_battery(total * 3 / 16);
+}
+bool Device::sleep_supported() const {
+#ifdef CONFIG_SMART_SCALE_TOUCH_WAKE_VERIFIED
+    return expander_input_ != nullptr;
+#else
+    return false;
+#endif
+}
+bool Device::wake_line_idle() {
+    // Read physical input register: cached getters cannot acknowledge TCA9554 INT.
+    const uint8_t reg = 0; uint8_t inputs{};
+    if (i2c_master_transmit_receive(expander_input_, &reg, 1, &inputs, 1, 20) != ESP_OK) return false;
+    return (inputs & 1U) && gpio_get_level(static_cast<gpio_num_t>(board::expander_interrupt));
+}
+esp_err_t Device::light_sleep(uint64_t& started_us, uint64_t& ended_us) {
+    started_us = ended_us = 0;
+#ifdef CONFIG_SMART_SCALE_TOUCH_WAKE_VERIFIED
+    if (!sleep_supported() || touch_down_ || touch_activity_) return ESP_ERR_INVALID_STATE;
+    const auto pin = static_cast<gpio_num_t>(board::expander_interrupt);
+    gpio_config_t cfg{};
+    cfg.pin_bit_mask = 1ULL << pin; cfg.mode = GPIO_MODE_INPUT;
+    cfg.pull_up_en = GPIO_PULLUP_ENABLE;
+    auto error = gpio_config(&cfg);
+    if (error != ESP_OK) return error;
+    if (!wake_line_idle()) return ESP_ERR_INVALID_STATE;
+    error = gpio_wakeup_enable(pin, GPIO_INTR_LOW_LEVEL);
+    if (error != ESP_OK) return error;
+    error = esp_sleep_enable_gpio_wakeup();
+    if (error != ESP_OK) { gpio_wakeup_disable(pin); return error; }
+    // LVGL lock prevents touch I2C/rendering while the main task sleeps.
+    // Timer is stopped to avoid advancing animations during the pause.
+    error = lvgl_port_stop();
+    if (error == ESP_OK) {
+        if (wake_line_idle() && gpio_get_level(pin)) {
+            started_us = esp_timer_get_time();
+            error = esp_light_sleep_start();
+            ended_us = esp_timer_get_time();
+        }
+        else error = ESP_ERR_INVALID_STATE;
+        lvgl_port_resume();
+    }
+    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_GPIO);
+    gpio_wakeup_disable(pin);
+    // Suppress the waking press, even if the panel becomes bright before poll.
+    touch_gate_.filter(true, true);
+    return error;
+#else
+    return ESP_ERR_NOT_SUPPORTED;
+#endif
+}
+
 bool Device::reset_pressed() {
     if (gpio_get_level(static_cast<gpio_num_t>(config::reset_button)) != 0) {
         button_ticks_ = 0;

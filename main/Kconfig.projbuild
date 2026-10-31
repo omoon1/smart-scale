@@ -1,0 +1,23 @@
+menu "Smart scale power"
+config SMART_SCALE_TOUCH_WAKE_VERIFIED
+    bool "Enable verified 3.49 V2 expander touch wake"
+    default n
+    help
+        Rev1.1: touch INT -> TCA9554 EXIO0 -> GPIO8. Enable after physical
+        validation. Screen-off touch wake works without enabling light sleep.
+        The shared interrupt can also wake for IMU/RTC changes.
+endmenu
+menu "Smart scale HX711"
+config SMART_SCALE_HX711_DOUT
+    int "HX711 DOUT GPIO (38,39,40,41,43,44)"
+    range 38 44
+    default 44
+config SMART_SCALE_HX711_SCK
+    int "HX711 SCK GPIO (38,39,40,41,43,44)"
+    range 38 44
+    default 43
+    help
+        Select a different pin from DOUT. GPIO42 is reserved for backlight.
+        GPIO38-41 share SD; remove the SD card. GPIO39-41 also share JTAG.
+        GPIO43/44 must not be used by UART0. Use USB Serial/JTAG console.
+endmenu

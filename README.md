@@ -97,3 +97,15 @@ Use `make preview-wide` to validate/render the **640×172 landscape** layout, or
 for actual screenshots and board integration details. `make build` targets Rev1.1.
 **Rewire HX711 to IO44/IO43: GPIO17/18 are now the touch I²C bus.**
 The legacy 480×320 UI remains available in the host regression tests only.
+
+## Battery, idle power and HX711 pins (wide-panel integration)
+
+The 3.49 V2 adapter now includes main's battery usage graph and 30s dim / 60s
+off / 360s sleep-eligible policy. Voltage-based battery SOC is marked `~`;
+charging/USB state cannot be read on this board. Screen-off touch wake is on;
+light sleep requires enabling the verified EXIO0 → GPIO8 path in menuconfig.
+See [power management](docs/power-management.md).
+
+Use `make menuconfig` → **Smart scale HX711** to select two distinct pins from
+38, 39, 40, 41, 43, 44. Defaults remain DOUT=44 / SCK=43. See the
+[pin-sharing constraints and wiring procedure](docs/hx711.md#select-alternative-header-gpios-349-v2).

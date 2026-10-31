@@ -4,6 +4,10 @@
 #include "esp_lcd_panel_ops.h"
 #include "esp_io_expander.h"
 #include "lvgl.h"
+#include "power.hxx"
+#include "battery.hxx"
+#include "esp_adc/adc_oneshot.h"
+#include "esp_adc/adc_cali.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
@@ -17,6 +21,13 @@ public:
     // Call with the LVGL port lock held, after constructing the initial UI.
     esp_err_t show();
     bool reset_pressed();
+    esp_err_t power_state(PowerState state); // LVGL lock required
+    bool take_touch_activity(); // LVGL lock required
+    bool touch_down() const { return touch_down_; }
+    BatterySnapshot battery(); // LVGL lock required; calibrated ADC voltage estimate
+    bool sleep_supported() const;
+    esp_err_t light_sleep(uint64_t& started_us, uint64_t& ended_us); // acquisition stopped; LVGL lock held
+
 private:
     static bool transfer_done(esp_lcd_panel_io_handle_t, esp_lcd_panel_io_event_data_t*, void*);
     static void flush(lv_disp_drv_t*, const lv_area_t*, lv_color_t*);
@@ -30,6 +41,13 @@ private:
     lv_indev_drv_t touch_driver_{};
     lv_point_t last_touch_{};
     bool touch_failed_{};
+    WakeTouchGate touch_gate_;
+    PowerState power_state_{PowerState::active};
+    bool touch_activity_{}, touch_down_{};
+    adc_oneshot_unit_handle_t adc_{};
+    adc_cali_handle_t adc_calibration_{};
+    i2c_master_dev_handle_t expander_input_{};
+    bool wake_line_idle();
     esp_io_expander_handle_t expander_{};
     esp_lcd_panel_io_handle_t panel_io_{};
     esp_lcd_panel_handle_t panel_{};

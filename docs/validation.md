@@ -110,3 +110,25 @@ On-device acceptance:
 - Repeat cold power-on, EN reset, and software restart; the panel should remain dark until the complete initial UI appears, without noise or partially painted areas.
 - Confirm touch, BOOT-button reset, and normal screen updates still work at the original brightness.
 - Check the interval before `app_main()` separately: firmware cannot guarantee backlight-off during ROM/bootloader execution. If noise remains there, verify the board's backlight enable bias and consider a hardware default-off circuit.
+
+## Main integration: battery, idle and touch wake
+
+The wide branch includes main commit `7578c45` and retains the 3.49 V2 BSP.
+Run `make test`, `make preview-wide`, and `make preview`. Wide interaction tests
+cover opening battery history while brewing, 6h/1d/3d range controls and close.
+Voltage tests reject implausible ADC input and ensure estimated SOC never claims
+charging/full/external power. Configuration compilation checks accept all 30
+ordered distinct pairs from 38/39/40/41/43/44 and reject duplicates or GPIO42.
+
+Review the hardware checklist in [power-management.md](power-management.md)
+before enabling `CONFIG_SMART_SCALE_TOUCH_WAKE_VERIFIED`. Firmware compilation
+must cover both its default-disabled and enabled paths. Physically measure
+backlight polarity, wake behavior, battery voltage and power draw on Rev1.1.
+
+Integration validation completed with ESP-IDF 5.5.2: full bootloader, partition
+and application builds pass with defaults (DOUT44/SCK43, light sleep disabled)
+and with light sleep enabled plus DOUT40/SCK41. The generic managed LVGL touch
+adapter emits its existing deprecated API warning; application sources have no
+compiler warnings. The container needed a local-only Python environment repair
+and component-manager PID fallback; neither workaround is part of the repository.
+Physical validation is still pending.

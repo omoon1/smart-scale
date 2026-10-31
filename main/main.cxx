@@ -2,12 +2,14 @@
 #include "device.hxx"
 #include "session.hxx"
 #include "ui.hxx"
+#include "battery_history.hxx"
 #include "acquisition.hxx"
 #include "diagnostic_logger.hxx"
 #include "esp_app_desc.h"
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
 #include "esp_timer.h"
+#include "esp_sleep.h"
 #include "esp_heap_caps.h"
 #include <memory>
 #include <cstdio>
@@ -35,6 +37,10 @@ struct Diagnostics {
 }
 
 extern "C" void app_main() {
+    // Volatile history belongs in PSRAM and starts empty on every boot.
+    void* history_storage = heap_caps_malloc(sizeof(smart_scale::BatteryHistory), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    ESP_ERROR_CHECK(history_storage ? ESP_OK : ESP_ERR_NO_MEM);
+    auto& history = *new (history_storage) smart_scale::BatteryHistory;
     auto& logger = smart_scale::device::DiagnosticLogger::instance();
     logger.start();
     // Large capture history belongs in PSRAM, never on app_main's stack.
@@ -80,6 +86,12 @@ extern "C" void app_main() {
     unsigned max_batch = 0;
     std::uint64_t acquisition_seq = 0;
     unsigned started_trace = 0;
+    smart_scale::PowerPolicy power(previous / 1000);
+    auto applied_power = smart_scale::PowerState::active;
+    std::uint64_t battery_sample_ms = 0;
+    bool battery_sampled = false;
+    bool battery_valid = false;
+    smart_scale::BatterySnapshot current_battery;
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(smart_scale::config::ui_period_ms));
         const auto now = esp_timer_get_time();
@@ -104,9 +116,33 @@ extern "C" void app_main() {
             }
             controller->sensor_sample(std::nullopt, static_cast<std::uint64_t>(esp_timer_get_time() / 1000));
             max_batch = std::max(max_batch, batch);
-            if (display.reset_pressed()) view.reset();
+            if (display.reset_pressed()) {
+                if (power.state() != smart_scale::PowerState::screen_off) view.reset();
+                power.activity(now_ms);
+            }
+            if (display.take_touch_activity()) power.activity(now_ms);
+            power.weight(controller->scale().ready() ? std::optional<float>{controller->scale().gross()} : std::nullopt, now_ms);
+            if (!battery_sampled || now_ms - battery_sample_ms >= 5000) {
+                const auto battery = display.battery();
+                current_battery = battery;
+                view.battery(battery);
+                if (!battery_sampled || battery.valid != battery_valid)
+                    ESP_LOGI("power", "battery telemetry %s", battery.valid ? "available" : "unavailable");
+                battery_valid = battery.valid;
+                battery_sample_ms = now_ms; battery_sampled = true;
+            }
+            history.update(now_ms / 1000, smart_scale::BatteryHistory::state(current_battery), current_battery);
+            view.history(history);
             controller->tick(elapsed);
             view.update();
+            const auto desired = power.update(now_ms, view.power_inhibited());
+            if (desired != applied_power) {
+                const auto error = display.power_state(desired);
+                if (error == ESP_OK) {
+                    ESP_LOGI("power", "state %d -> %d", static_cast<int>(applied_power), static_cast<int>(desired));
+                    applied_power = desired;
+                } else ESP_LOGW("power", "display transition failed: %s", esp_err_to_name(error));
+            }
             save = controller->scale().take_pending_save();
             if (now_ms - last_diagnostic_ms >= 5000) {
                 const auto& scale = controller->scale();
@@ -132,6 +168,41 @@ extern "C" void app_main() {
                     static_cast<unsigned long long>(scale.faults()), factor, calibration ? calibration->zero : 0,
                     static_cast<unsigned>(controller->equipment_count()), controller->recognition_status());
                 last_diagnostic_ms = now_ms; previous_received = scale.received(); max_age_ms = 0; max_batch = 0;
+            }
+            // Save requests and dialog/brew operations must finish before sleep.
+            if (power.sleep_due(now_ms) && !save && applied_power == smart_scale::PowerState::screen_off &&
+                !display.touch_down() && power.report_sleep_once()) {
+                if (!display.sleep_supported()) {
+                    ESP_LOGW("power", "sleep blocked: touch wake wiring not verified; remaining screen-off");
+                } else {
+                    const bool stopped = acquisition.suspend();
+                    uint64_t sleep_start{}, sleep_end{};
+                    const auto error = stopped ? display.light_sleep(sleep_start, sleep_end) : ESP_ERR_TIMEOUT;
+                    const auto resumed_s = static_cast<uint64_t>(esp_timer_get_time() / 1000000);
+                    if (error == ESP_OK) {
+                        // Only the successful sleep call belongs to Sleep. Setup and failed attempts stay Active.
+                        const auto start_s = sleep_start / 1000000, end_s = sleep_end / 1000000;
+                        const auto sleep_state = smart_scale::BatteryHistory::state(current_battery, true);
+                        history.update(start_s, sleep_state, current_battery);
+                        current_battery = display.battery();
+                        history.update(end_s, smart_scale::BatteryHistory::state(current_battery), current_battery);
+                    } else current_battery = display.battery();
+                    history.update(resumed_s, smart_scale::BatteryHistory::state(current_battery), current_battery);
+                    view.battery(current_battery);
+                    view.history(history);
+                    acquisition.resume(); // also cancel a timed-out suspend request
+                    controller->resume_measurement();
+                    const auto resumed = esp_timer_get_time();
+                    power.activity(resumed / 1000);
+                    previous = resumed; // exclude sleep time from session clocks
+                    last_diagnostic_ms = resumed / 1000;
+                    previous_received = controller->scale().received();
+                    battery_sampled = false;
+                    ESP_LOGI("power", "sleep result=%s wake_cause=%d", esp_err_to_name(error), static_cast<int>(esp_sleep_get_wakeup_cause()));
+                    view.update();
+                    const auto shown = display.power_state(smart_scale::PowerState::active);
+                    if (shown == ESP_OK) applied_power = smart_scale::PowerState::active;
+                }
             }
             lvgl_port_unlock();
         }
