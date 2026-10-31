@@ -26,7 +26,7 @@ public:
     bool touch_down() const { return touch_down_; }
     BatterySnapshot battery(); // LVGL lock required; calibrated ADC voltage estimate
     bool sleep_supported() const;
-    esp_err_t light_sleep(uint64_t& started_us, uint64_t& ended_us); // acquisition stopped; LVGL lock held
+    esp_err_t light_sleep(uint64_t& started_us, uint64_t& ended_us, bool& user_wake); // acquisition stopped; LVGL lock held
 
 private:
     static bool transfer_done(esp_lcd_panel_io_handle_t, esp_lcd_panel_io_event_data_t*, void*);
@@ -47,7 +47,7 @@ private:
     adc_oneshot_unit_handle_t adc_{};
     adc_cali_handle_t adc_calibration_{};
     i2c_master_dev_handle_t expander_input_{};
-    bool wake_line_idle();
+    esp_err_t touch_pressed(bool& pressed);
     esp_io_expander_handle_t expander_{};
     esp_lcd_panel_io_handle_t panel_io_{};
     esp_lcd_panel_handle_t panel_{};

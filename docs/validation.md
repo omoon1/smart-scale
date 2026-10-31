@@ -132,3 +132,13 @@ adapter emits its existing deprecated API warning; application sources have no
 compiler warnings. The container needed a local-only Python environment repair
 and component-manager PID fallback; neither workaround is part of the repository.
 Physical validation is still pending.
+
+### Main dd72309 re-integration
+
+Native tests and wide UI interactions pass after integrating PR #15. Added
+3.49 EXIO0 tests cover held touch, touch arriving during acknowledgement,
+non-touch shared IRQs, ambiguous pulses and read errors without assuming a PMU
+on EXIO5. Firmware builds pass with ESP-IDF 5.5.2 for default wake-disabled
+DOUT44/SCK43 and wake-enabled DOUT40/SCK41. CI now uses those two 3.49 modes
+instead of the upstream 3.5/custom-direct mappings. Physical wake tests remain
+pending; the new common policy permits sleep at 60 seconds total idle.

@@ -8,7 +8,7 @@ AXS15231B + TCA9554 + ETA6098; **never access AXP2101 registers at 0x34**.
 | --- | --- |
 | 30 seconds | Dim to about 30% (main policy); active-low GPIO42 duty 716/1023 |
 | 60 seconds | Gate backlight off at EXIO1 and pause display refresh; touch/scale continue |
-| 360 seconds | Light sleep if explicitly enabled after board validation; otherwise stay screen-off |
+| 60 seconds | Light sleep if explicitly enabled after board validation; otherwise stay screen-off |
 
 Full brightness uses GPIO42 PWM duty 0. Initialization holds EXIO1 low until a
 complete frame has reached the panel. Wake redraws before enabling EXIO1.
@@ -109,3 +109,23 @@ Validation covers all three ranges, state colors, clipping, unavailable readings
 and top-right touch navigation. Host screenshots cover populated and empty graphs.
 Physical checks still require battery gauge validation and repeated sleep/wake
 and power-cycle tests on the verified board.
+
+## Main update dd72309 (PR #15)
+
+The common policy now makes sleep eligible at **60 seconds total idle**, rather
+than 360 seconds. With the verified-wake option disabled the board stays screen-off.
+The generic policy supports external-power dim at 30s, off at 10 minutes and no
+sleep, but 3.49 V2 has no power-source telemetry: its adapter cannot select that
+charging policy or detect USB insertion. It retains the 60-second policy on USB.
+No AXP2101 charger register accesses or 3.5 V2 pin assignments are used.
+
+Sleep preparation reads touch before and after acknowledging the physical
+expander input port. A held contact, I2C error or pending GPIO8 interrupt defers
+sleep. After logging, GPIO8 is checked again immediately before sleep without
+another acknowledgement. Wake classification uses EXIO0: a known non-touch
+change stays dark and retries after 30 seconds; touch, ambiguous pulses and
+post-wake read errors wake conservatively. Entry failures also retry after 30
+seconds without illuminating the screen. Sleep timestamps only describe an
+actually successful sleep. The host helper retains its upstream 3.5 defaults
+for regression tests; the 3.49 adapter explicitly supplies touch mask 0x01 and
+pending-PMU mask 0x00.

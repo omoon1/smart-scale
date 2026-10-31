@@ -1,6 +1,7 @@
 #include "device.hxx"
 #include "config.hxx"
 #include "board349.hxx"
+#include "expander_wake.hxx"
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 #include "esp_io_expander_tca9554.h"
@@ -322,43 +323,68 @@ bool Device::sleep_supported() const {
     return false;
 #endif
 }
-bool Device::wake_line_idle() {
-    // Read physical input register: cached getters cannot acknowledge TCA9554 INT.
-    const uint8_t reg = 0; uint8_t inputs{};
-    if (i2c_master_transmit_receive(expander_input_, &reg, 1, &inputs, 1, 20) != ESP_OK) return false;
-    return (inputs & 1U) && gpio_get_level(static_cast<gpio_num_t>(board::expander_interrupt));
+esp_err_t Device::touch_pressed(bool& pressed) {
+    uint8_t packet[board::touch_packet_bytes]{};
+    const auto error = i2c_master_transmit_receive(touch_, board::touch_command,
+        sizeof(board::touch_command), packet, sizeof(packet), 20);
+    // Any reported contact blocks sleep, including multi-touch/invalid coordinates.
+    pressed = error == ESP_OK && packet[1] != 0;
+    return error;
 }
-esp_err_t Device::light_sleep(uint64_t& started_us, uint64_t& ended_us) {
+esp_err_t Device::light_sleep(uint64_t& started_us, uint64_t& ended_us, bool& user_wake) {
     started_us = ended_us = 0;
+    user_wake = false;
 #ifdef CONFIG_SMART_SCALE_TOUCH_WAKE_VERIFIED
     if (!sleep_supported() || touch_down_ || touch_activity_) return ESP_ERR_INVALID_STATE;
-    const auto pin = static_cast<gpio_num_t>(board::expander_interrupt);
-    gpio_config_t cfg{};
-    cfg.pin_bit_mask = 1ULL << pin; cfg.mode = GPIO_MODE_INPUT;
-    cfg.pull_up_en = GPIO_PULLUP_ENABLE;
-    auto error = gpio_config(&cfg);
+    constexpr auto pin = static_cast<gpio_num_t>(board::expander_interrupt);
+    auto error = lvgl_port_stop();
     if (error != ESP_OK) return error;
-    if (!wake_line_idle()) return ESP_ERR_INVALID_STATE;
-    error = gpio_wakeup_enable(pin, GPIO_INTR_LOW_LEVEL);
-    if (error != ESP_OK) return error;
-    error = esp_sleep_enable_gpio_wakeup();
-    if (error != ESP_OK) { gpio_wakeup_disable(pin); return error; }
-    // LVGL lock prevents touch I2C/rendering while the main task sleeps.
-    // Timer is stopped to avoid advancing animations during the pause.
-    error = lvgl_port_stop();
-    if (error == ESP_OK) {
-        if (wake_line_idle() && gpio_get_level(pin)) {
-            started_us = esp_timer_get_time();
-            error = esp_light_sleep_start();
-            ended_us = esp_timer_get_time();
-        }
-        else error = ESP_ERR_INVALID_STATE;
-        lvgl_port_resume();
+    bool gpio_armed = false, wake_enabled = false;
+    uint32_t baseline{};
+    auto read_port = [this](uint32_t& value) {
+        const uint8_t reg = 0; uint8_t inputs{};
+        const auto result = i2c_master_transmit_receive(expander_input_, &reg, 1, &inputs, 1, 20);
+        value = inputs;
+        return result == ESP_OK;
+    };
+    auto read_touch = [this](bool& pressed) { return touch_pressed(pressed) == ESP_OK; };
+    // V2 has EXIO0 touch and no PMU IRQ. Never treat EXIO5 (LCD reset) as PMU.
+    const auto preparation = prepare_expander_wake(read_port, read_touch,
+        [pin] { return gpio_get_level(pin) != 0; }, baseline, 1U, 0U);
+    if (preparation != WakePreparation::ready) {
+        user_wake = preparation == WakePreparation::touch;
+        error = preparation == WakePreparation::io_error ? ESP_FAIL : ESP_ERR_INVALID_STATE;
     }
-    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_GPIO);
-    gpio_wakeup_disable(pin);
-    // Suppress the waking press, even if the panel becomes bright before poll.
-    touch_gate_.filter(true, true);
+    if (error == ESP_OK) {
+        error = gpio_wakeup_enable(pin, GPIO_INTR_LOW_LEVEL);
+        gpio_armed = error == ESP_OK;
+    }
+    if (error == ESP_OK) {
+        error = esp_sleep_enable_gpio_wakeup();
+        wake_enabled = error == ESP_OK;
+    }
+    if (error == ESP_OK) ESP_LOGI("power", "arming light sleep: wake_gpio=%d", static_cast<int>(pin));
+    // No expander read after this check: it could acknowledge a newly arrived touch.
+    if (error == ESP_OK && !gpio_get_level(pin)) error = ESP_ERR_INVALID_STATE;
+    if (error == ESP_OK) {
+        const auto started = esp_timer_get_time();
+        error = esp_light_sleep_start();
+        if (error == ESP_OK) {
+            started_us = started; ended_us = esp_timer_get_time();
+            uint32_t inputs{}; bool pressed{};
+            const bool port_ok = read_port(inputs);
+            const bool touch_ok = read_touch(pressed);
+            const auto reason = classify_expander_wake(baseline, inputs, pressed, port_ok && touch_ok, 1U);
+            user_wake = reason != ExpanderWake::shared;
+            ESP_LOGI("power", "expander wake: reason=%d before=0x%02x after=0x%02x touch=%d",
+                static_cast<int>(reason), static_cast<unsigned>(baseline), static_cast<unsigned>(inputs), pressed);
+        }
+    }
+    if (wake_enabled) esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_GPIO);
+    if (gpio_armed) gpio_wakeup_disable(pin);
+    const auto resumed = lvgl_port_resume();
+    if (resumed != ESP_OK) ESP_LOGE("power", "LVGL resume failed: %s", esp_err_to_name(resumed));
+    if (user_wake) touch_gate_.filter(true, true);
     return error;
 #else
     return ESP_ERR_NOT_SUPPORTED;

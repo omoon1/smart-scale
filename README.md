@@ -101,7 +101,7 @@ The legacy 480×320 UI remains available in the host regression tests only.
 ## Battery, idle power and HX711 pins (wide-panel integration)
 
 The 3.49 V2 adapter now includes main's battery usage graph and 30s dim / 60s
-off / 360s sleep-eligible policy. Voltage-based battery SOC is marked `~`;
+off / 60s sleep-eligible policy. Voltage-based battery SOC is marked `~`;
 charging/USB state cannot be read on this board. Screen-off touch wake is on;
 light sleep requires enabling the verified EXIO0 → GPIO8 path in menuconfig.
 See [power management](docs/power-management.md).
