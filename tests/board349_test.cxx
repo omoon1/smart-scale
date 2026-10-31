@@ -1,4 +1,6 @@
 #include "board349.hxx"
+#include "power.hxx"
+#include "expander_wake.hxx"
 #include <array>
 #include <cassert>
 #include <cstdio>
@@ -22,7 +24,7 @@ int main() {
         for (int x = 0; x < b::width; ++x)
             assert(physical[x * b::native_width + (b::height - 1 - y)] == logical[y * b::width + x]);
 
-    std::array<std::uint8_t, 32> packet{};
+    std::array<std::uint8_t, b::touch_packet_bytes> packet{};
     auto sample = [&](int x, int y, unsigned count) {
         packet[1] = count; packet[2] = (x >> 8) & 15; packet[3] = x & 255;
         packet[4] = (y >> 8) & 15; packet[5] = y & 255;
@@ -33,15 +35,59 @@ int main() {
         assert(b::decode_touch(packet.data(), packet.size(), point));
         assert(point.x == 639 - x && point.y == 171 - y);
     }
-    sample(319, 85, 1); assert(b::decode_touch(packet.data(), 32, point));
+    sample(319, 85, 1); assert(b::decode_touch(packet.data(), packet.size(), point));
     assert(point.x == 320 && point.y == 86);
     for (const auto count : {0, 2, 4, 255}) {
-        sample(10, 10, count); assert(!b::decode_touch(packet.data(), 32, point));
+        sample(10, 10, count); assert(!b::decode_touch(packet.data(), packet.size(), point));
     }
-    sample(640, 0, 1); assert(!b::decode_touch(packet.data(), 32, point));
-    sample(0, 172, 1); assert(!b::decode_touch(packet.data(), 32, point));
-    sample(4095, 4095, 1); assert(!b::decode_touch(packet.data(), 32, point));
-    sample(0, 0, 1); assert(!b::decode_touch(packet.data(), 31, point));
-    assert(!b::decode_touch(nullptr, 32, point));
+    sample(640, 0, 1); assert(!b::decode_touch(packet.data(), packet.size(), point));
+    sample(0, 172, 1); assert(!b::decode_touch(packet.data(), packet.size(), point));
+    sample(4095, 4095, 1); assert(!b::decode_touch(packet.data(), packet.size(), point));
+    sample(0, 0, 1); assert(!b::decode_touch(packet.data(), packet.size()-1, point));
+    assert(!b::decode_touch(nullptr, packet.size(), point));
+    // The request length must match the response size (old code requested 14/read 32).
+    assert(b::touch_command[7] == packet.size());
+    sample(0, 0, 0);
+    assert(b::decode_touch_report(packet.data(), packet.size()).state == b::TouchState::released);
+    sample(10, 10, 2); // Valid second contact: single-touch UI ignores it; sleep must not.
+    packet[8] = 0; packet[9] = 20; packet[10] = 0; packet[11] = 20;
+    auto report = b::decode_touch_report(packet.data(), packet.size());
+    assert(report.state == b::TouchState::pressed && report.contacts == 2);
+    assert(!b::decode_touch(packet.data(), packet.size(), point));
+    packet[10] = 1; // Second contact outside panel bounds invalidates entire report.
+    assert(b::decode_touch_report(packet.data(), packet.size()).state == b::TouchState::invalid);
+
+    // Reproduce all 20 false-wake cycles: malformed contact count is an error,
+    // never a touch/release, and must not acknowledge the expander IRQ.
+    smart_scale::PowerPolicy policy(0);
+    smart_scale::WakeTouchGate gate;
+    gate.filter(true, true);
+    unsigned port_reads = 0;
+    auto read_port = [&](uint32_t& value) { ++port_reads; value = 0xff; return true; };
+    auto read_touch = [&](bool& pressed) {
+        const auto r = b::decode_touch_report(packet.data(), packet.size());
+        pressed = r.state == b::TouchState::pressed;
+        return r.state != b::TouchState::invalid;
+    };
+    for (unsigned cycle = 0; cycle < 20; ++cycle) {
+        const uint64_t now = 60000 + cycle * 30000;
+        sample(0, 0, 0xa5);
+        uint32_t baseline{};
+        assert(smart_scale::prepare_expander_wake(read_port, read_touch, []{return true;}, baseline, 1U, 0U)
+               == smart_scale::WakePreparation::io_error);
+        assert(policy.update(now, false) == smart_scale::PowerState::screen_off);
+        policy.retry_sleep(now);
+        assert(!policy.sleep_due(now + 29999));
+        assert(policy.sleep_due(now + 30000));
+        assert(gate.suppressed()); // invalid input cannot clear a waking gesture
+    }
+    assert(port_reads == 0);
+    sample(0, 0, 0);
+    assert(b::decode_touch_report(packet.data(), packet.size()).state == b::TouchState::released);
+    gate.filter(false, true); assert(!gate.suppressed());
+    sample(10, 10, 1);
+    uint32_t baseline{};
+    assert(smart_scale::prepare_expander_wake(read_port, read_touch, []{return true;}, baseline, 1U, 0U)
+           == smart_scale::WakePreparation::touch);
     std::puts("Rev1.1 frame rotation, DMA strip seams, touch bounds and release checks passed");
 }

@@ -27,6 +27,8 @@ public:
     BatterySnapshot battery(); // LVGL lock required; calibrated ADC voltage estimate
     bool sleep_supported() const;
     void log_touch_health();
+    void suppress_wake_touch(); // LVGL lock required
+    esp_err_t touch_pressed(bool& pressed); // LVGL lock required; no expander acknowledgement
     esp_err_t light_sleep(uint64_t& started_us, uint64_t& ended_us, bool& user_wake, unsigned cycle = 0); // acquisition stopped; LVGL lock held
 
 private:
@@ -48,13 +50,16 @@ private:
     bool last_delivered_{}, touch_resume_pending_{};
     unsigned wake_cycle_{};
     uint64_t touch_resume_us_{};
+    uint64_t packet_log_us_{}, gate_since_us_{};
+    int packet_log_state_{-1};
+    unsigned packet_log_count_{};
+    esp_err_t read_touch_packet(uint8_t* packet);
     WakeTouchGate touch_gate_;
     PowerState power_state_{PowerState::active};
     bool touch_activity_{}, touch_down_{};
     adc_oneshot_unit_handle_t adc_{};
     adc_cali_handle_t adc_calibration_{};
     i2c_master_dev_handle_t expander_input_{};
-    esp_err_t touch_pressed(bool& pressed);
     esp_io_expander_handle_t expander_{};
     esp_lcd_panel_io_handle_t panel_io_{};
     esp_lcd_panel_handle_t panel_{};

@@ -167,45 +167,61 @@ extern "C" void app_main() {
                     ESP_LOGW("power", "sleep blocked: enable verified 3.49 V2 expander touch wake; remaining screen-off");
                 } else {
                     ++sleep_cycle;
-                    logger.event("power", "event=suspend_begin cycle=%u", sleep_cycle);
-                    const auto suspend_at = esp_timer_get_time();
-                    const bool stopped = acquisition.suspend();
-                    logger.event("power", "event=suspend_end cycle=%u ok=%d elapsed_us=%llu", sleep_cycle, stopped,
-                        static_cast<unsigned long long>(esp_timer_get_time() - suspend_at));
-                    uint64_t sleep_start{}, sleep_end{};
-                    bool user_wake = false;
-                    const auto error = stopped ? display.light_sleep(sleep_start, sleep_end, user_wake, sleep_cycle) : ESP_ERR_TIMEOUT;
-                    const auto resumed_s = static_cast<uint64_t>(esp_timer_get_time() / 1000000);
-                    if (error == ESP_OK) {
-                        // Only the successful sleep call belongs to Sleep. Setup and failed attempts stay Active.
-                        const auto start_s = sleep_start / 1000000, end_s = sleep_end / 1000000;
-                        const auto sleep_state = smart_scale::BatteryHistory::state(current_battery, true);
-                        history.update(start_s, sleep_state, current_battery);
-                        current_battery = display.battery();
-                        history.update(end_s, smart_scale::BatteryHistory::state(current_battery), current_battery);
-                    } else current_battery = display.battery();
-                    history.update(resumed_s, smart_scale::BatteryHistory::state(current_battery), current_battery);
-                    view.battery(current_battery);
-                    view.history(history);
-                    logger.event("power", "event=measurement_resume cycle=%u", sleep_cycle);
-                    acquisition.resume(); // also cancel a timed-out suspend request
-                    controller->resume_measurement();
-                    const auto resumed = esp_timer_get_time();
-                    if (user_wake) power.activity(resumed / 1000);
-                    else power.retry_sleep(resumed / 1000);
-                    previous = resumed; // exclude sleep time from session clocks
-                    resume_ms = resumed / 1000; awaiting_stable = true;
-                    battery_sampled = false;
-                    logger.event("power", "event=sleep_result cycle=%u result=%s slept=%d sleep_us=%llu wake_cause=%d user_wake=%d retry_ms=%d",
-                        sleep_cycle, esp_err_to_name(error), sleep_end > sleep_start,
-                        static_cast<unsigned long long>(sleep_end > sleep_start ? sleep_end - sleep_start : 0),
-                        sleep_end > sleep_start ? static_cast<int>(esp_sleep_get_wakeup_cause()) : -1, user_wake, user_wake ? 0 : 30000);
-                    view.update();
-                    if (user_wake) {
-                        const auto shown = display.power_state(smart_scale::PowerState::active);
-                        logger.event("power", "event=display_restore cycle=%u result=%s", sleep_cycle, esp_err_to_name(shown));
-                        if (shown == ESP_OK) applied_power = smart_scale::PowerState::active;
-                    }
+                    bool precheck_pressed{};
+                    const auto precheck = display.touch_pressed(precheck_pressed);
+                    logger.event("power", "event=sleep_precheck cycle=%u result=%s pressed=%d", sleep_cycle,
+                        esp_err_to_name(precheck), precheck_pressed);
+                    if (precheck != ESP_OK || precheck_pressed) {
+                        const auto checked_ms = static_cast<uint64_t>(esp_timer_get_time() / 1000);
+                        if (precheck == ESP_OK && precheck_pressed) {
+                            display.suppress_wake_touch();
+                            power.activity(checked_ms);
+                        }
+                        else power.retry_sleep(checked_ms);
+                        logger.event("power", "event=sleep_deferred cycle=%u result=%s user_wake=%d acquisition_untouched=1 retry_ms=%d",
+                            sleep_cycle, esp_err_to_name(precheck), precheck == ESP_OK && precheck_pressed,
+                            precheck == ESP_OK && precheck_pressed ? 0 : 30000);
+                    } else {
+                        logger.event("power", "event=suspend_begin cycle=%u", sleep_cycle);
+                        const auto suspend_at = esp_timer_get_time();
+                        const bool stopped = acquisition.suspend();
+                        logger.event("power", "event=suspend_end cycle=%u ok=%d elapsed_us=%llu", sleep_cycle, stopped,
+                            static_cast<unsigned long long>(esp_timer_get_time() - suspend_at));
+                        uint64_t sleep_start{}, sleep_end{};
+                        bool user_wake = false;
+                        const auto error = stopped ? display.light_sleep(sleep_start, sleep_end, user_wake, sleep_cycle) : ESP_ERR_TIMEOUT;
+                        const auto resumed_s = static_cast<uint64_t>(esp_timer_get_time() / 1000000);
+                        if (error == ESP_OK) {
+                            // Only the successful sleep call belongs to Sleep. Setup and failed attempts stay Active.
+                            const auto start_s = sleep_start / 1000000, end_s = sleep_end / 1000000;
+                            const auto sleep_state = smart_scale::BatteryHistory::state(current_battery, true);
+                            history.update(start_s, sleep_state, current_battery);
+                            current_battery = display.battery();
+                            history.update(end_s, smart_scale::BatteryHistory::state(current_battery), current_battery);
+                        } else current_battery = display.battery();
+                        history.update(resumed_s, smart_scale::BatteryHistory::state(current_battery), current_battery);
+                        view.battery(current_battery);
+                        view.history(history);
+                        logger.event("power", "event=measurement_resume cycle=%u", sleep_cycle);
+                        acquisition.resume(); // also cancel a timed-out suspend request
+                        controller->resume_measurement();
+                        const auto resumed = esp_timer_get_time();
+                        if (user_wake) power.activity(resumed / 1000);
+                        else power.retry_sleep(resumed / 1000);
+                        previous = resumed; // exclude sleep time from session clocks
+                        resume_ms = resumed / 1000; awaiting_stable = true;
+                        battery_sampled = false;
+                        logger.event("power", "event=sleep_result cycle=%u result=%s slept=%d sleep_us=%llu wake_cause=%d user_wake=%d retry_ms=%d",
+                            sleep_cycle, esp_err_to_name(error), sleep_end > sleep_start,
+                            static_cast<unsigned long long>(sleep_end > sleep_start ? sleep_end - sleep_start : 0),
+                            sleep_end > sleep_start ? static_cast<int>(esp_sleep_get_wakeup_cause()) : -1, user_wake, user_wake ? 0 : 30000);
+                        view.update();
+                        if (user_wake) {
+                            const auto shown = display.power_state(smart_scale::PowerState::active);
+                            logger.event("power", "event=display_restore cycle=%u result=%s", sleep_cycle, esp_err_to_name(shown));
+                            if (shown == ESP_OK) applied_power = smart_scale::PowerState::active;
+                        }
+                    } // precheck passed; acquisition was interrupted
                 }
             }
             lvgl_port_unlock();

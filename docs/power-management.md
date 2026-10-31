@@ -136,8 +136,7 @@ pending-PMU mask 0x00.
 The 3.49 V2 firmware emits queued `power`, `touch`, and `battery` events for
 intermittent touch failures after sleep. `scale_trace` capture/dumps and the
 five-second `hx711_diag` stream are disabled; ordinary `scale_event` transitions
-and startup scale configuration remain available. Sleep policy and the verified
-wake configuration gate are unchanged by this instrumentation.
+and startup scale configuration remain available. The verified wake configuration gate remains in place.
 
 Capture the complete serial output from boot through a failure, including the
 startup `power event=config` (`sleep_enabled`, firmware/IDF version, reset reason).
@@ -197,3 +196,45 @@ Formatting/queue insertion occurs in the application/LVGL path; serial output
 runs in the logger task. `log_dropped` is cumulative and `queue_hwm` is the queue
 high-water mark (capacity 32). Logging can still affect timing. Diagnostic logs
 add no TCA9554 input reads: those could acknowledge and clear a wake interrupt.
+
+
+### Invalid touch response / false screen restoration fix
+
+A capture showed 20 cancelled sleep attempts (`slept=0`), each classified as a
+user touch, with `raw_contact_byte=165` (0xA5). All UI touch polls were invalid.
+This did not demonstrate HX711 noise waking a sleeping CPU.
+
+The transport now sends the command with STOP and performs a separate I2C read,
+matching the vendor driver. The request and receive sizes both equal 14 bytes
+(two six-byte contact records plus the two-byte header), instead of requesting
+14 and reading 32. The vendor source documents `max_contacts * 6 + 2` (8 bytes
+for one contact, 14 for two) and separate write/read transactions:
+[Waveshare V2 driver, pinned reference](https://github.com/waveshareteam/ESP32-S3-Touch-LCD-3.49-V2/blob/1c157e6e8e68b89fd4dc400f46bf1724cb64a57e/Arduino/examples/09_LVGL_V8_Test/src/axs15231b/esp_lcd_axs15231b.c).
+Byte offsets and coordinate orientation have not been guessed or shifted.
+Whether the transport mismatch caused the observed 0xA5 requires device testing.
+
+UI reads and sleep probes share a decoder: zero contacts is release, one/two
+in-range contacts is pressed, and invalid count/coordinates/length is invalid.
+Both contacts are checked. Multi-touch prevents sleep but is not delivered to
+single-touch widgets. Invalid packets cannot clear the wake gesture gate or be
+reported as a pre-sleep user touch; I2C success alone is not valid input.
+
+Before HX711 suspension, `sleep_precheck` reads touch without acknowledging the
+expander. An invalid response or I2C error produces `sleep_deferred`, retains the
+dark screen and measurement state, and retries after 30 seconds. A valid touch
+restarts the idle timer, restores the screen on the next policy update, and
+consumes that gesture through release. Neither precheck rejection suspends or
+resets acquisition. Final touch/IRQ checks still run after acquisition suspension
+to handle a touch arriving after the precheck. If acquisition was interrupted,
+measurement reset/warm-up is retained, including on a final preparation failure.
+The existing conservative screen-restoration fallback after an actual CPU wake
+with ambiguous/error classification is unchanged.
+
+`touch event=packet` includes decoder state (0 release, 1 press, 2 invalid),
+reason, raw contact byte, validated contact count and the full response in hex.
+It logs state/contact changes and persistent invalid responses at most once per
+second, plus a 30-second heartbeat. `post_resume_read` labels the unvalidated
+byte `raw_contact_byte`; `gate_age_us` in touch health exposes prolonged
+suppression. Capture idle, press, release and repeated sleep/wake on the device.
+Native tests cover the repeated 0xA5 preparation-error/backoff sequence,
+release/press/multi-touch, second-contact bounds, and matching request length.
