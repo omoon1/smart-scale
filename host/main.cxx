@@ -173,6 +173,10 @@ void run_wide_live_checks(smart_scale::ui::View& view, smart_scale::Controller& 
     click(view, 520, 70); click(view, 460, 132); click(view, 610, 26);
     require(std::abs(*controller.session().dose_g - 18.1F) < .02F, "wide saved coffee manual edit");
     feed(528000);
+    const auto epoch = controller.scale().display_epoch();
+    click(view, 100, 90);
+    require(controller.scale().display_epoch() != epoch && std::abs(controller.session().net_g) < .01F,
+            "wide weight card tares ready stable scale");
     for (unsigned i = 1; i <= 25 && controller.session().phase == Phase::ready; ++i) {
         controller.sensor_sample(528000 + i * 200, now += 100); controller.tick(.1F); pump(view, 100);
     }
@@ -193,10 +197,13 @@ void run_wide_live_checks(smart_scale::ui::View& view, smart_scale::Controller& 
 
 }
 int main(int argc, char** argv) {
+    const bool interactive = argc > 1 && std::string(argv[1]) == "--interactive";
+    const bool theme_test = argc > 1 && std::string(argv[1]) == "--theme-screenshots";
     const bool wide_test = argc > 1 && std::string(argv[1]) == "--wide-screenshots";
     const bool wide_live = argc > 1 && std::string(argv[1]) == "--wide-live-screenshots";
     const bool wide_interactive = argc > 1 && std::string(argv[1]) == "--wide-interactive";
-    if (wide_test || wide_interactive || wide_live) { width = 640; height = 172; }
+    if (wide_test || wide_interactive || wide_live || theme_test) { width = 640; height = 172; }
+    if (interactive) { width = smart_scale::config::screen_width; height = smart_scale::config::screen_height; }
     lv_init();
     static lv_disp_draw_buf_t draw_buffer;
     lv_disp_draw_buf_init(&draw_buffer, buffer.data(), nullptr, buffer.size());
@@ -214,6 +221,41 @@ int main(int argc, char** argv) {
     if (coffee_test) controller.set_mode(smart_scale::Mode::pour_over);
     smart_scale::ui::View view(controller);
     view.init();
+    if (theme_test) {
+        using namespace smart_scale;
+        std::filesystem::create_directories("build-host/screens");
+        require(view.theme() == Theme::sage_green, "default Sage Green");
+        require(!view.set_theme(static_cast<Theme>(255)), "invalid theme rejected");
+        const char* names[] = {"sage-green", "espresso-amber", "porcelain-gray"};
+        for (unsigned i = 0; i < 3; ++i) {
+            controller.load_scenario(Scenario::pour_over);
+            view.open(ui::Dialog::none);
+            require(view.set_theme(static_cast<Theme>(i)), "theme changes");
+            pump(view);
+            screenshot(view, (std::string(names[i]) + "-ready").c_str());
+            view.open(ui::Dialog::dose); pump(view);
+            screenshot(view, (std::string(names[i]) + "-dose").c_str());
+            view.open(ui::Dialog::none); pump(view);
+            controller.run_demo(); controller.tick(70); pump(view);
+            const auto before = controller.session();
+            require(view.set_theme(static_cast<Theme>((i+1)%3)), "theme can change during brew");
+            pump(view);
+            require(controller.session().net_g == before.net_g && controller.session().seconds == before.seconds &&
+                    controller.session().phase == before.phase, "theme preserves running session");
+            require(view.set_theme(static_cast<Theme>(i)), "restore theme"); pump(view);
+            require(!controller.tare(), "controller rejects tare during brew");
+            const float net = controller.session().net_g;
+            click(view, 355, 90);
+            require(controller.session().net_g == net, "brew weight tap does not tare");
+            require(!has_label(lv_scr_act(), "Tare"), "no brew tare control");
+            screenshot(view, (std::string(names[i]) + "-brewing").c_str());
+            click(view, 555, 140);
+            require(controller.session().phase == Phase::result, "large Finish button");
+            screenshot(view, (std::string(names[i]) + "-result").c_str());
+            controller.reset(); controller.remove_object(); pump(view);
+        }
+        return 0;
+    }
     if (wide_live) {
         run_wide_live_checks(view, controller);
         return 0;
@@ -333,7 +375,7 @@ int main(int argc, char** argv) {
         screenshot(view, "18-hx711-calibrated");
         click(view, 366, 32); // Close dialog.
         feed(8600); // 100 g vessel.
-        click(view, 172, 286); // Tare.
+        click(view, 100, 145); // Tap weight to tare.
         require(std::abs(controller.scale().net()) < 0.01F, "touch tare");
         screenshot(view, "19-hx711-live");
         // A tare changes the idle net reading, never the gross calibration or

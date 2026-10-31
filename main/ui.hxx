@@ -1,5 +1,6 @@
 #pragma once
 #include "session.hxx"
+#include "theme.hxx"
 #include "weight_display.hxx"
 #include "registration_measurement.hxx"
 #include "lvgl.h"
@@ -12,6 +13,9 @@ class View {
 public:
     explicit View(Controller& controller) : controller_(controller) {}
     void init();
+    // Invoke on the serialized UI task / under the LVGL lock. Persists before applying.
+    bool set_theme(Theme theme);
+    Theme theme() const { return theme_; }
     void update();
     void battery(const BatterySnapshot& value) { battery_ = value; }
     void history(const BatteryHistory& value) { if (history_ != &value) history_revision_ = UINT64_MAX; history_ = &value; }
@@ -45,6 +49,7 @@ private:
     void schedule_draw();
     void refresh_values();
     Controller& controller_;
+    Theme theme_{Theme::sage_green};
     BatterySnapshot battery_;
     const BatteryHistory* history_{};
     lv_obj_t* history_plot_{};
@@ -63,6 +68,7 @@ private:
     lv_obj_t *screen_{}, *weight_{}, *weight_unit_{}, *time_{}, *flow_{}, *status_{}, *object_text_{}, *dose_text_{},
              *target_text_{}, *chart_{}, *dose_value_{}, *icon_name_{}, *kind_input_{},
              *chart_max_{}, *chart_time_{}, *current_point_{}, *object_weight_{};
+    std::array<lv_obj_t*, 12> guide_ticks_{};
     lv_chart_series_t *series_{}, *target_series_{};
     Phase rendered_phase_{Phase::ready};
     Dialog dialog_{Dialog::none};

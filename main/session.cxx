@@ -344,8 +344,14 @@ void Controller::weigh_beans(float grams) {
         session_.active_object->kind != Kind::portafilter || !session_.loaded) return;
     if (set_dose(grams, DoseSource::measured)) session_.net_g = grams;
 }
+bool Controller::set_brew_guide(const BrewGuide& guide) {
+    if (session_.phase != Phase::ready || !guide.valid()) return false;
+    session_.guide = guide;
+    return true;
+}
 bool Controller::set_mode(Mode mode) {
     if (session_.phase != Phase::ready) return false;
+    if (session_.mode != mode) session_.guide.reset();
     session_.mode = mode;
     target();
     return true;

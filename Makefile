@@ -44,6 +44,11 @@ idf:
 	@./scripts/idf.sh $(ARGS)
 test:
 	@mkdir -p build-host
+	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main main/session.cxx main/scale.cxx tests/brew_guide_test.cxx -o build-host/brew_guide_tests
+	@./build-host/brew_guide_tests
+	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -DESP_PLATFORM -I tests/fakes -I main main/theme.cxx tests/theme_storage_test.cxx -o build-host/theme_storage_tests
+	@./build-host/theme_storage_tests
+	@mkdir -p build-host
 	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main tests/board349_test.cxx -o build-host/board349_tests
 	@./build-host/board349_tests
 	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main main/session.cxx main/scale.cxx tests/session_test.cxx -o build-host/session_tests
@@ -85,3 +90,7 @@ preview-wide:
 	@./scripts/host.sh --wide-live-screenshots
 simulator-wide:
 	@./scripts/host.sh --wide-interactive
+
+.PHONY: preview-themes
+preview-themes:
+	@./scripts/host.sh --theme-screenshots

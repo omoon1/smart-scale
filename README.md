@@ -109,3 +109,13 @@ See [power management](docs/power-management.md).
 Use `make menuconfig` → **Smart scale HX711** to select two distinct pins from
 38, 39, 40, 41, 43, 44. Defaults remain DOUT=44 / SCK=43. See the
 [pin-sharing constraints and wiring procedure](docs/hx711.md#select-alternative-header-gpios-349-v2).
+
+### Brew guide and color themes
+
+The ready weight card supports tap-to-tare; extraction shows actual mass against
+window targets and a larger Finish button. Sage Green is the default, with
+Espresso Amber and Porcelain Gray available through the firmware theme interface
+for future mobile selection. There is no on-scale settings page.
+Run `make preview-themes` for all three palettes. See
+[brew guide and theme integration](docs/brew-guide-and-themes.md) for stable theme
+IDs, persistence, default windows, and the future mobile integration contract.
