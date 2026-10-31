@@ -8,6 +8,7 @@
 #include "board349.hxx"
 #include "battery.hxx"
 #include "lcd_sleep.hxx"
+#include "peripheral_sleep.hxx"
 #include "esp_adc/adc_oneshot.h"
 #include "esp_adc/adc_cali.h"
 #include "freertos/FreeRTOS.h"
@@ -37,6 +38,13 @@ public:
 private:
     bool lcd_command(uint8_t command);
     esp_err_t restore_lcd();
+    esp_err_t prepare_peripherals();
+    esp_err_t restore_peripherals();
+    bool peripheral_read(uint8_t address, uint8_t reg, uint8_t& value);
+    bool peripheral_write(uint8_t address, uint8_t reg, uint8_t value);
+    PeripheralSleep peripheral_sleep_;
+    i2c_master_dev_handle_t imu_{}, rtc_{};
+    bool peripherals_quiet_{};
     LcdSleep lcd_sleep_;
     static bool transfer_done(esp_lcd_panel_io_handle_t, esp_lcd_panel_io_event_data_t*, void*);
     static void flush(lv_disp_drv_t*, const lv_area_t*, lv_color_t*);

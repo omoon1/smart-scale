@@ -44,6 +44,8 @@ idf:
 	@./scripts/idf.sh $(ARGS)
 test:
 	@mkdir -p build-host
+	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main tests/peripheral_sleep_test.cxx -o build-host/peripheral_sleep_tests
+	@./build-host/peripheral_sleep_tests
 	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main tests/lcd_sleep_test.cxx -o build-host/lcd_sleep_tests
 	@./build-host/lcd_sleep_tests
 	@mkdir -p build-host

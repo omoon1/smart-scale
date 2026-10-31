@@ -15,6 +15,16 @@ config SMART_SCALE_LCD_SLEEP
         Validate touch IRQ after Sleep In on Rev1.1 hardware. Disable this
         option to retain backlight-only blanking if touch wake stops working.
         Touch sleep, shared reset and system power-off are not used.
+config SMART_SCALE_PERIPHERAL_SLEEP
+    bool "Quiesce Rev1.1 IMU and RTC during light sleep"
+    depends on SMART_SCALE_TOUCH_WAKE_VERIFIED
+    default y
+    help
+        Snapshot and power down QMI8658, mask its interrupt outputs, and mask
+        PCF85063 interrupts/CLKOUT while preserving timekeeping and flags.
+        Restore on wake or aborted sleep. Missing devices/readback errors
+        block sleep. Validate on Rev1.1; disable for LCD-only fallback.
+        Touch, expander and SYS_EN remain powered. No SD/audio rail cutoff.
 config SMART_SCALE_WAKE_BUTTON
     bool "Additional wake-only button (active low)"
     depends on SMART_SCALE_TOUCH_WAKE_VERIFIED
