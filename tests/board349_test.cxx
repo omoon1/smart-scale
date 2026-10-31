@@ -67,7 +67,7 @@ int main() {
     auto read_touch = [&](bool& pressed) {
         const auto r = b::decode_touch_report(packet.data(), packet.size());
         pressed = r.state == b::TouchState::pressed;
-        return r.state != b::TouchState::invalid;
+        return r.state == b::TouchState::pressed || r.state == b::TouchState::released;
     };
     for (unsigned cycle = 0; cycle < 20; ++cycle) {
         const uint64_t now = 60000 + cycle * 30000;
@@ -89,5 +89,53 @@ int main() {
     uint32_t baseline{};
     assert(smart_scale::prepare_expander_wake(read_port, read_touch, []{return true;}, baseline, 1U, 0U)
            == smart_scale::WakePreparation::touch);
+    // Replay device evidence: valid contact -> all-A5 idle -> next contact.
+    b::TouchIdleQualifier idle;
+    packet.fill(0xa5);
+    const auto no_data = b::decode_touch_report(packet.data(), packet.size());
+    assert(no_data.state == b::TouchState::no_data);
+    packet[5] = 0; // A near-match is still malformed, never idle.
+    assert(b::decode_touch_report(packet.data(), packet.size()).state == b::TouchState::invalid);
+    packet.fill(0xa5);
+    auto press = b::TouchReport{b::TouchState::pressed, 1, {10,10}, "contact"};
+    auto apply = [&](b::TouchReport r, bool dark) {
+        return (r.state == b::TouchState::released || r.state == b::TouchState::pressed)
+            ? gate.filter(r.state == b::TouchState::pressed, dark) : false;
+    };
+    assert(!apply(idle.update(press, true, true, 0), true));
+    for (unsigned t = 30; t <= 300; t += 30) {
+        assert(!apply(idle.update(no_data, true, true, t*1000), false));
+        assert(gate.suppressed());
+    }
+    // A held/contact report resets the entire idle qualification window.
+    assert(!apply(idle.update(press, true, true, 310000), false));
+    for (unsigned t = 340; t <= 610; t += 30) {
+        assert(!apply(idle.update(no_data, true, true, t*1000), false));
+        assert(gate.suppressed());
+    }
+    assert(!apply(idle.update(no_data, true, true, 640000), false));
+    assert(!gate.suppressed());
+    assert(apply(idle.update(press, true, true, 670000), false));
+    // IRQ low, read failure, malformed packets, and stale samples cannot release.
+    for (unsigned scenario = 0; scenario < 4; ++scenario) {
+        idle.reset();
+        for (unsigned t=0; t<=240; t+=30) idle.update(no_data,true,true,t*1000);
+        if (scenario == 0) idle.update(no_data,true,false,270000);
+        if (scenario == 1) idle.update(no_data,false,true,270000);
+        if (scenario == 2) idle.update({},true,true,270000);
+        const auto r = idle.update(no_data,true,true,scenario==3 ? 500000 : 300000);
+        assert(r.state == b::TouchState::no_data);
+    }
+    idle.reset();
+    for (unsigned t=0; t<=300; t+=30) report=idle.update(no_data,true,true,t*1000);
+    assert(report.state == b::TouchState::released);
+    auto idle_read = [&](bool& pressed) { pressed=false; return report.state==b::TouchState::released; };
+    assert(smart_scale::prepare_expander_wake(read_port,idle_read,[]{return true;},baseline,1U,0U)
+           == smart_scale::WakePreparation::ready);
+    // A new pending IRQ still blocks entry after the touch checks.
+    assert(smart_scale::prepare_expander_wake(read_port,idle_read,[]{return false;},baseline,1U,0U)
+           == smart_scale::WakePreparation::pending_irq);
+    idle.reset(); // resume starts a fresh interval even after a very long sleep
+    assert(idle.update(no_data,true,true,90000000).state == b::TouchState::no_data);
     std::puts("Rev1.1 frame rotation, DMA strip seams, touch bounds and release checks passed");
 }

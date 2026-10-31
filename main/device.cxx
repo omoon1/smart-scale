@@ -212,8 +212,8 @@ void Device::read_touch(lv_indev_drv_t* driver, lv_indev_data_t* data) {
     data->state = LV_INDEV_STATE_RELEASED;
     data->point = self.last_touch_;
     std::uint8_t packet[board::touch_packet_bytes]{};
-    const auto result = self.read_touch_packet(packet);
-    const auto report = board::decode_touch_report(packet, sizeof(packet));
+    board::TouchReport report;
+    const auto result = self.read_touch_packet(packet, report);
     if (self.touch_resume_pending_) {
         log().event("touch", "event=post_resume_read cycle=%u result=%s latency_us=%llu raw_contact_byte=%u",
             self.wake_cycle_, esp_err_to_name(result),
@@ -244,7 +244,7 @@ void Device::read_touch(lv_indev_drv_t* driver, lv_indev_data_t* data) {
     if (self.touch_down_) self.touch_activity_ = true;
     // Invalid data never releases the wake gate. Valid multi-touch blocks sleep
     // but is not delivered to single-touch widgets.
-    if (report.state != board::TouchState::invalid) {
+    if (report.state == board::TouchState::released || report.state == board::TouchState::pressed) {
         if (!self.touch_gate_.filter(self.touch_down_, self.power_state_ == PowerState::screen_off))
             data->state = LV_INDEV_STATE_RELEASED;
     }
@@ -382,14 +382,16 @@ bool Device::sleep_supported() const {
     return false;
 #endif
 }
-esp_err_t Device::read_touch_packet(uint8_t* packet) {
+esp_err_t Device::read_touch_packet(uint8_t* packet, board::TouchReport& report) {
     // Match the vendor driver: STOP after command, then a separate read;
     // request and receive exactly two six-byte records plus the two-byte header.
     auto error = i2c_master_transmit(touch_, board::touch_command, sizeof(board::touch_command), 20);
     if (error == ESP_OK) error = i2c_master_receive(touch_, packet, board::touch_packet_bytes, 20);
-    if (error != ESP_OK) return error;
-    const auto report = board::decode_touch_report(packet, board::touch_packet_bytes);
     const auto now = static_cast<uint64_t>(esp_timer_get_time());
+    const auto raw = board::decode_touch_report(packet, board::touch_packet_bytes);
+    report = touch_idle_.update(raw, error == ESP_OK,
+        gpio_get_level(static_cast<gpio_num_t>(board::expander_interrupt)) != 0, now);
+    if (error != ESP_OK) return error;
     const auto state = static_cast<int>(report.state);
     const bool changed = state != packet_log_state_ || report.contacts != packet_log_count_;
     if (!packet_log_us_ || ((changed || report.state == board::TouchState::invalid) && now - packet_log_us_ >= 1000000) ||
@@ -397,8 +399,8 @@ esp_err_t Device::read_touch_packet(uint8_t* packet) {
         char hex[board::touch_packet_bytes * 3 + 1]{};
         for (unsigned i = 0; i < board::touch_packet_bytes; ++i)
             std::snprintf(hex + i * 3, 4, "%02x ", static_cast<unsigned>(packet[i]));
-        log().event("touch", "event=packet state=%d reason=%s raw_contact_byte=%u contacts=%u hex=%s",
-            state, report.reason, static_cast<unsigned>(packet[1]), report.contacts, hex);
+        log().event("touch", "event=packet state=%d reason=%s raw_state=%d raw_contact_byte=%u contacts=%u hex=%s",
+            state, report.reason, static_cast<int>(raw.state), static_cast<unsigned>(packet[1]), report.contacts, hex);
         packet_log_us_ = now; packet_log_state_ = state; packet_log_count_ = report.contacts;
     }
     return ESP_OK;
@@ -406,10 +408,11 @@ esp_err_t Device::read_touch_packet(uint8_t* packet) {
 esp_err_t Device::touch_pressed(bool& pressed) {
     uint8_t packet[board::touch_packet_bytes]{};
     pressed = false;
-    const auto error = read_touch_packet(packet);
+    board::TouchReport report;
+    const auto error = read_touch_packet(packet, report);
     if (error != ESP_OK) return error;
-    const auto report = board::decode_touch_report(packet, sizeof(packet));
-    if (report.state == board::TouchState::invalid) return ESP_ERR_INVALID_RESPONSE;
+    if (report.state == board::TouchState::invalid || report.state == board::TouchState::no_data)
+        return ESP_ERR_INVALID_RESPONSE;
     pressed = report.state == board::TouchState::pressed;
     return ESP_OK;
 }
@@ -491,6 +494,7 @@ esp_err_t Device::light_sleep(uint64_t& started_us, uint64_t& ended_us, bool& us
     wake_cycle_ = cycle;
     touch_resume_us_ = esp_timer_get_time();
     touch_resume_pending_ = true;
+    touch_idle_.reset(); // Sleep time cannot qualify an idle/release interval.
     const auto resumed = lvgl_port_resume();
     log().event("power", "event=lvgl_resume cycle=%u result=%s user_wake=%d", cycle, esp_err_to_name(resumed), user_wake);
     if (user_wake) suppress_wake_touch();

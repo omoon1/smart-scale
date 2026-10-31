@@ -238,3 +238,48 @@ byte `raw_contact_byte`; `gate_age_us` in touch health exposes prolonged
 suppression. Capture idle, press, release and repeated sleep/wake on the device.
 Native tests cover the repeated 0xA5 preparation-error/backoff sequence,
 release/press/multi-touch, second-contact bounds, and matching request length.
+
+
+### Sleep blocked by all-A5 idle responses and stuck wake gate
+
+Later device captures contain valid contact packets between all-A5 responses.
+The old decoder classified every all-A5 response as invalid. This blocked all
+sleep prechecks, while the wake gate never received a release and suppressed
+subsequent valid presses for more than 114 seconds. The weight acquisition path
+was not causing these screen restorations.
+
+The decoder now distinguishes the **exact full-length all-A5 pattern** as
+`no_data` (state 3). This is a board-observed pattern, not a datasheet-confirmed
+release code. No arbitrary invalid count, mixed A5 packet, coordinate error,
+short packet or failed transaction qualifies as release.
+
+A shared qualifier used by UI polling and sleep probes infers release only
+following at least three successful all-A5 reads spanning 300 ms, with GPIO8
+high at each read and no interval between reads above 100 ms. A valid contact,
+malformed response, transaction error or sampled low IRQ resets qualification.
+A confirmed zero-contact packet still releases immediately. No additional
+expander reads are used. Sleep return resets qualification, so elapsed sleep
+time cannot complete a release window.
+
+Qualified idle clears wake suppression and permits sleep preparation. The
+existing physical expander input, touch rechecks and final GPIO checks remain
+required before CPU sleep. Unqualified/invalid responses retain the 30-second
+retry, screen-off state and uninterrupted acquisition. A tap within the 300 ms
+release qualification period remains suppressed; lifting for at least 300 ms
+before the next tap is the current expected behavior on the all-A5 path.
+
+Packet logs distinguish raw state from qualified state; look for
+`raw_state=3 state=0 reason=idle_a5_qualified`, then `gate=0`, and on the next tap
+`delivered=1`. For sleep, require `sleep_return result=ESP_OK` and
+`sleep_result slept=1`; screen-off or a successful precheck alone is not proof.
+
+**Hardware validation remains required:** hold a finger still for several
+seconds, lift and tap again, drag, repeat screen-off/wake cycles, and verify
+actual sleep/wake on battery and USB. GPIO8 is shared and its high level alone
+does not prove no finger is present. A controller that emits all-A5 for over
+300 ms during a held contact could cause an inferred release; this heuristic
+must be validated on the target board. Conversely, a stuck-low shared IRQ
+prevents qualification and sleep. The default verified-wake configuration gate
+remains unchanged. Native regressions exercise qualification timing, brief gaps,
+contact resets, bus errors, malformed/mixed packets, low IRQ, stale samples,
+post-sleep reset, second-tap delivery, and the final sleep IRQ guard.

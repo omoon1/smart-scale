@@ -5,6 +5,7 @@
 #include "esp_io_expander.h"
 #include "lvgl.h"
 #include "power.hxx"
+#include "board349.hxx"
 #include "battery.hxx"
 #include "esp_adc/adc_oneshot.h"
 #include "esp_adc/adc_cali.h"
@@ -53,7 +54,8 @@ private:
     uint64_t packet_log_us_{}, gate_since_us_{};
     int packet_log_state_{-1};
     unsigned packet_log_count_{};
-    esp_err_t read_touch_packet(uint8_t* packet);
+    board349::TouchIdleQualifier touch_idle_;
+    esp_err_t read_touch_packet(uint8_t* packet, board349::TouchReport& report);
     WakeTouchGate touch_gate_;
     PowerState power_state_{PowerState::active};
     bool touch_activity_{}, touch_down_{};

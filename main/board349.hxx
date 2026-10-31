@@ -37,7 +37,7 @@ void pack_strip(const Pixel* frame, Pixel* strip, int first_row) {
             strip[y * native_width + x] = frame[source_index(x, first_row + y)];
 }
 struct TouchPoint { int x{}, y{}; };
-enum class TouchState { released, pressed, invalid };
+enum class TouchState { released, pressed, invalid, no_data };
 struct TouchReport {
     TouchState state{TouchState::invalid};
     unsigned contacts{};
@@ -46,6 +46,9 @@ struct TouchReport {
 };
 inline TouchReport decode_touch_report(const std::uint8_t* packet, std::size_t size) {
     if (!packet || size != touch_packet_bytes) return {};
+    bool all_a5 = true;
+    for (std::size_t i = 0; i < size; ++i) all_a5 = all_a5 && packet[i] == 0xa5;
+    if (all_a5) return {TouchState::no_data, 0, {}, "idle_a5_candidate"};
     if (packet[1] > 2) return {TouchState::invalid, 0, {}, "count"};
     if (packet[1] == 0) return {TouchState::released, 0, {}, "release"};
     TouchPoint first{};
@@ -58,6 +61,29 @@ inline TouchReport decode_touch_report(const std::uint8_t* packet, std::size_t s
     }
     return {TouchState::pressed, packet[1], first, "contact"};
 }
+// Board-observed idle pattern, not a generic invalid-packet fallback. Require
+// fresh repeated successful reads and a quiet shared IRQ before inferring release.
+class TouchIdleQualifier {
+public:
+    TouchReport update(TouchReport report, bool io_ok, bool irq_high, std::uint64_t now_us) {
+        if (!io_ok || report.state != TouchState::no_data || !irq_high) {
+            reset();
+            return io_ok ? report : TouchReport{};
+        }
+        if (!samples_ || now_us < last_us_ || now_us - last_us_ > 100000) {
+            since_us_ = now_us; samples_ = 0;
+        }
+        last_us_ = now_us;
+        if (samples_ < 3) ++samples_;
+        if (samples_ >= 3 && now_us - since_us_ >= 300000)
+            return {TouchState::released, 0, {}, "idle_a5_qualified"};
+        return report;
+    }
+    void reset() { samples_ = 0; since_us_ = last_us_ = 0; }
+private:
+    unsigned samples_{};
+    std::uint64_t since_us_{}, last_us_{};
+};
 inline bool decode_touch(const std::uint8_t* packet, std::size_t size, TouchPoint& point) {
     const auto report = decode_touch_report(packet, size);
     if (report.state != TouchState::pressed || report.contacts != 1) return false;
