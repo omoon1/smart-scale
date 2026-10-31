@@ -41,7 +41,7 @@ make flash /dev/ttyACM0
 | `make idf ARGS="-p /dev/ttyACM0 flash monitor"` | Pass arbitrary IDF arguments |
 | `make test` | Compile and run native state tests without ESP-IDF |
 | `make preview` | Build actual LVGL UI and render PPM screenshots; exercise touch flows |
-| `make simulator` | Run the same C++/LVGL UI in an SDL2 desktop window |
+| `make simulator` | Run the current 3.49-inch firmware UI (640×172) in an SDL2 desktop window |
 
 For the interactive desktop simulator, install SDL2 development files (`brew install sdl2` or `sudo apt install libsdl2-dev`). `make preview` requires CMake/Ninja, provided by `make install` or your package manager; it does not require SDL or a display server. Images are in `build-host/screens/`. `python scripts/screens.py` converts them to PNGs when Pillow is installed.
 
@@ -93,7 +93,10 @@ traces, timestamp/sequence interpretation, and a stationary-load recording proce
 ### 3.49-inch wide-panel UI
 
 Use `make preview-wide` to validate/render the **640×172 landscape** layout, or
-`make simulator-wide` to interact with it. See [wide-panel UX and hardware-port boundary](docs/wide-panel-ux.md)
+`make simulator` to interact with it (`make simulator-wide` remains an alias).
+The default simulator reads its dimensions from the same `main/config.hxx`
+configuration as the firmware and compiles the same `main/ui.cxx`; UI updates
+are picked up on each build. Sensor input remains simulated. See [wide-panel UX and hardware-port boundary](docs/wide-panel-ux.md)
 for actual screenshots and board integration details. `make build` targets Rev1.1.
 **Rewire HX711 to IO44/IO43: GPIO17/18 are now the touch I²C bus.**
 The legacy 480×320 UI remains available in the host regression tests only.

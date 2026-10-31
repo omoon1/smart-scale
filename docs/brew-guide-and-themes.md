@@ -69,8 +69,8 @@ persistence and mobile recipe transfer are future work.
 - `make preview-themes`: setup, dose dialog, brewing and result for all themes;
   invalid theme rejection, session preservation across theme changes, no brew tare,
   and Finish interaction.
-- `make simulator` uses the configured device resolution. This includes the same
-  default-resolution adjustment proposed in PR #17; no dependency on merging #17.
+- `make simulator` uses the configured device resolution, preserving the shared
+  resolution and buffer checks from PR #17. Theme previews use that resolution too.
 
 Hardware checks still needed: physical touch targets, color/contrast on the LCD,
 NVS persistence across power cycles, and continued sample timing during a theme
