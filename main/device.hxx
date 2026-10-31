@@ -32,6 +32,7 @@ public:
     bool sleep_supported() const;
     void log_touch_health();
     void suppress_wake_touch(); // LVGL lock required
+    esp_err_t qualify_touch_for_sleep(bool& pressed); // bounded fresh polling; LVGL lock required
     esp_err_t touch_pressed(bool& pressed); // LVGL lock required; no expander acknowledgement
     esp_err_t light_sleep(uint64_t& started_us, uint64_t& ended_us, bool& user_wake, unsigned cycle = 0); // acquisition stopped; LVGL lock held
 
@@ -69,7 +70,7 @@ private:
     unsigned packet_log_count_{};
     board349::TouchIdleQualifier touch_idle_;
     board349::TouchIdleQualifier ui_touch_idle_{board349::TouchIdleQualifier::Use::ui};
-    esp_err_t read_touch_packet(uint8_t* packet, board349::TouchReport& report, bool for_ui = false);
+    esp_err_t read_touch_packet(uint8_t* packet, board349::TouchReport& report, bool for_ui = false, board349::TouchReport* raw_report = nullptr);
     WakeTouchGate touch_gate_;
     PowerState power_state_{PowerState::active};
     bool touch_activity_{}, touch_down_{};

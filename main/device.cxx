@@ -3,6 +3,7 @@
 #include "config.hxx"
 #include "board349.hxx"
 #include "expander_wake.hxx"
+#include "touch_sleep_check.hxx"
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 #include "esp_io_expander_tca9554.h"
@@ -424,7 +425,10 @@ esp_err_t Device::power_state(PowerState state) {
     log().event("power", "event=backlight from=%d to=%d duty=%u result=%s",
         static_cast<int>(power_state_), static_cast<int>(state),
         state == PowerState::active ? 0U : state == PowerState::dimmed ? 716U : 1023U, esp_err_to_name(error));
-    if (error == ESP_OK) power_state_ = state;
+    if (error == ESP_OK) {
+        power_state_ = state;
+        if (state == PowerState::screen_off) log().event("power", "event=screen_off cpu_sleep=0");
+    }
     return error;
 }
 BatterySnapshot Device::battery() {
@@ -457,13 +461,14 @@ bool Device::sleep_supported() const {
     return false;
 #endif
 }
-esp_err_t Device::read_touch_packet(uint8_t* packet, board::TouchReport& report, bool for_ui) {
+esp_err_t Device::read_touch_packet(uint8_t* packet, board::TouchReport& report, bool for_ui, board::TouchReport* raw_report) {
     // Match the vendor driver: STOP after command, then a separate read;
     // request and receive exactly two six-byte records plus the two-byte header.
     auto error = i2c_master_transmit(touch_, board::touch_command, sizeof(board::touch_command), 20);
     if (error == ESP_OK) error = i2c_master_receive(touch_, packet, board::touch_packet_bytes, 20);
     const auto now = static_cast<uint64_t>(esp_timer_get_time());
     const auto raw = board::decode_touch_report(packet, board::touch_packet_bytes);
+    if (raw_report) *raw_report = raw;
     const bool irq_high = gpio_get_level(static_cast<gpio_num_t>(board::expander_interrupt)) != 0;
     const auto sleep_report = touch_idle_.update(raw, error == ESP_OK, irq_high, now);
     const auto ui_report = ui_touch_idle_.update(raw, error == ESP_OK, irq_high, now);
@@ -482,6 +487,30 @@ esp_err_t Device::read_touch_packet(uint8_t* packet, board::TouchReport& report,
         packet_log_us_ = now; packet_log_state_ = state; packet_log_count_ = report.contacts;
     }
     return ESP_OK;
+}
+esp_err_t Device::qualify_touch_for_sleep(bool& pressed) {
+    pressed = false;
+    const auto started = esp_timer_get_time();
+    log().event("power", "event=touch_qualifying interval_ms=25 budget_ms=500");
+    const auto result = qualify_sleep_touch(
+        [this](board::TouchReport& raw) {
+            uint8_t packet[board::touch_packet_bytes]{};
+            board::TouchReport qualified;
+            return read_touch_packet(packet, qualified, false, &raw) == ESP_OK;
+        },
+        [this] { return !wake_button_pressed() &&
+            gpio_get_level(static_cast<gpio_num_t>(board::expander_interrupt)) != 0; },
+        [] { return static_cast<uint64_t>(esp_timer_get_time()); },
+        [](unsigned ms) { vTaskDelay(pdMS_TO_TICKS(ms)); });
+    // A fitted wake-only button is user activity even if pressed during polling.
+    pressed = result == TouchSleepCheck::pressed || wake_button_pressed();
+    log().event("power", "event=touch_qualification result=%s pressed=%d elapsed_us=%llu",
+        touch_sleep_reason(result), pressed,
+        static_cast<unsigned long long>(esp_timer_get_time() - started));
+    if (pressed || result == TouchSleepCheck::released) return ESP_OK;
+    if (result == TouchSleepCheck::io_error) return ESP_FAIL;
+    if (result == TouchSleepCheck::timeout) return ESP_ERR_TIMEOUT;
+    return ESP_ERR_INVALID_RESPONSE;
 }
 esp_err_t Device::touch_pressed(bool& pressed) {
     uint8_t packet[board::touch_packet_bytes]{};
@@ -518,7 +547,7 @@ esp_err_t Device::light_sleep(uint64_t& started_us, uint64_t& ended_us, bool& us
         return result == ESP_OK;
     };
     auto read_touch = [this, cycle](bool& pressed) {
-        const auto result = touch_pressed(pressed);
+        const auto result = qualify_touch_for_sleep(pressed);
         log().event("touch", "event=sleep_probe cycle=%u result=%s pressed=%d", cycle, esp_err_to_name(result), pressed);
         return result == ESP_OK;
     };
@@ -563,6 +592,7 @@ esp_err_t Device::light_sleep(uint64_t& started_us, uint64_t& ended_us, bool& us
     }
     if (error == ESP_OK) {
         const auto started = esp_timer_get_time();
+        log().event("power", "event=sleep_enter cycle=%u acquisition_stopped=1", cycle);
         error = esp_light_sleep_start();
         const auto returned = esp_timer_get_time();
         log().event("power", "event=sleep_return cycle=%u result=%s elapsed_us=%llu wake_cause=%d gpio8=%d",
@@ -572,7 +602,9 @@ esp_err_t Device::light_sleep(uint64_t& started_us, uint64_t& ended_us, bool& us
             started_us = started; ended_us = returned;
             uint32_t inputs{}; bool pressed{};
             const bool port_ok = read_port(inputs);
-            const bool touch_ok = read_touch(pressed);
+            // Wake classification remains a single conservative read; only
+            // entry requires the bounded no-contact qualification window.
+            const bool touch_ok = touch_pressed(pressed) == ESP_OK;
             const auto reason = classify_expander_wake(baseline, inputs, pressed, port_ok && touch_ok, 1U);
             // S3 light sleep does not expose a per-pin wake latch. With the
             // optional button armed, conservatively accept any GPIO wake so a

@@ -168,7 +168,7 @@ extern "C" void app_main() {
                 } else {
                     ++sleep_cycle;
                     bool precheck_pressed{};
-                    const auto precheck = display.touch_pressed(precheck_pressed);
+                    const auto precheck = display.qualify_touch_for_sleep(precheck_pressed);
                     logger.event("power", "event=sleep_precheck cycle=%u result=%s pressed=%d", sleep_cycle,
                         esp_err_to_name(precheck), precheck_pressed);
                     if (precheck != ESP_OK || precheck_pressed) {
