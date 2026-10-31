@@ -1,4 +1,5 @@
 #include "ui.hxx"
+#include "config.hxx"
 #include "equipment_icons.hxx"
 #include <algorithm>
 #include <array>
@@ -193,10 +194,19 @@ void run_wide_live_checks(smart_scale::ui::View& view, smart_scale::Controller& 
 
 }
 int main(int argc, char** argv) {
+    const bool interactive = argc > 1 && std::string(argv[1]) == "--interactive";
+    const bool smoke = argc > 1 && std::string(argv[1]) == "--interactive-smoke";
     const bool wide_test = argc > 1 && std::string(argv[1]) == "--wide-screenshots";
     const bool wide_live = argc > 1 && std::string(argv[1]) == "--wide-live-screenshots";
     const bool wide_interactive = argc > 1 && std::string(argv[1]) == "--wide-interactive";
-    if (wide_test || wide_interactive || wide_live) { width = 640; height = 172; }
+    // The default simulator follows the device configuration. Keep the legacy
+    // screenshot fixtures at 480x320 for regression coverage.
+    if (interactive || smoke || wide_test || wide_interactive || wide_live) {
+        width = smart_scale::config::screen_width;
+        height = smart_scale::config::screen_height;
+    }
+    require(width * height <= static_cast<int>(framebuffer.size()) &&
+            width <= static_cast<int>(buffer.size()), "display fits host buffers");
     lv_init();
     static lv_disp_draw_buf_t draw_buffer;
     lv_disp_draw_buf_init(&draw_buffer, buffer.data(), nullptr, buffer.size());
@@ -436,8 +446,7 @@ int main(int argc, char** argv) {
         std::cout << "Live HX711 UI checks passed\n";
         return 0;
     }
-    const bool smoke = argc > 1 && std::string(argv[1]) == "--interactive-smoke";
-    if (argc > 1 && (std::string(argv[1]) == "--interactive" || wide_interactive || smoke)) {
+    if (interactive || wide_interactive || smoke) {
 #ifdef SMART_SCALE_SDL
         if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) { std::cerr << SDL_GetError(); return 1; }
         auto* window = SDL_CreateWindow("Smart Scale | dummy data | R = Reset", SDL_WINDOWPOS_CENTERED,
