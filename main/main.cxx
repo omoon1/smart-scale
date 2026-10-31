@@ -75,6 +75,8 @@ extern "C" void app_main() {
     bool previous_inhibit = false;
     bool awaiting_stable = false;
     std::uint64_t resume_ms = 0;
+    ESP_LOGI("power", "firmware ELF prefix=%02x%02x%02x%02x", app->app_elf_sha256[0],
+        app->app_elf_sha256[1], app->app_elf_sha256[2], app->app_elf_sha256[3]);
     logger.event("power", "event=config fw=%s idf=%s reset_reason=%d sleep_enabled=%d wake_gpio=8 touch_mask=0x01 dim_ms=30000 sleep_ms=60000 retry_ms=30000 source=unknown",
         app->version, app->idf_ver, static_cast<int>(esp_reset_reason()), display.sleep_supported());
     smart_scale::PowerPolicy power(previous / 1000);
@@ -112,6 +114,7 @@ extern "C" void app_main() {
             }
             // Wake-only button never invokes reset/tare; held input prevents idle.
             if (display.wake_button_pressed()) power.activity(now_ms);
+            if (display.recover_touch_bus()) power.activity(now_ms);
             if (display.take_touch_activity()) {
                 if (applied_power != smart_scale::PowerState::active)
                     logger.event("power", "event=activity reason=touch state=%d", static_cast<int>(applied_power));

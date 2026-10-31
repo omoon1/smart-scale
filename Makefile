@@ -44,6 +44,12 @@ idf:
 	@./scripts/idf.sh $(ARGS)
 test:
 	@mkdir -p build-host
+	$(CXX) -std=c++20 -Wall -Wextra -Werror -I main tests/lcd_sleep_config_test.cxx -o build-host/lcd_config_default
+	@./build-host/lcd_config_default
+	$(CXX) -std=c++20 -Wall -Wextra -Werror -I main -DCONFIG_SMART_SCALE_LCD_SLEEP=1 tests/lcd_sleep_config_test.cxx -o build-host/lcd_config_existing
+	@./build-host/lcd_config_existing
+	$(CXX) -std=c++20 -Wall -Wextra -Werror -I main -DCONFIG_SMART_SCALE_LCD_SLEEP=1 -DCONFIG_SMART_SCALE_LCD_SLEEP_TOUCH_VERIFIED=1 -DEXPECT_LCD_SLEEP=1 tests/lcd_sleep_config_test.cxx -o build-host/lcd_config_verified
+	@./build-host/lcd_config_verified
 	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main tests/touch_sleep_check_test.cxx -o build-host/touch_sleep_check_tests
 	@./build-host/touch_sleep_check_tests
 	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main tests/peripheral_sleep_test.cxx -o build-host/peripheral_sleep_tests

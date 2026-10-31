@@ -9,12 +9,21 @@ config SMART_SCALE_TOUCH_WAKE_VERIFIED
 config SMART_SCALE_LCD_SLEEP
     bool "Send AXS15231B LCD sleep commands during light sleep"
     depends on SMART_SCALE_TOUCH_WAKE_VERIFIED
-    default y
+    default n
     help
         Display Off/Sleep In before CPU sleep; Sleep Out/Display On on return.
         Validate touch IRQ after Sleep In on Rev1.1 hardware. Disable this
         option to retain backlight-only blanking if touch wake stops working.
         Touch sleep, shared reset and system power-off are not used.
+config SMART_SCALE_LCD_SLEEP_TOUCH_VERIFIED
+    bool "Allow experimental LCD sleep after module touch-wake validation"
+    depends on SMART_SCALE_LCD_SLEEP
+    default n
+    help
+        Separate opt-in: existing LCD_SLEEP=y alone now uses backlight-only.
+        Enable only for module testing. A five-second timer restores the display
+        if touch does not wake the CPU first, then disables LCD sleep until reboot.
+        Timer wake is a recovery path, not proof of working touch wake.
 config SMART_SCALE_PERIPHERAL_SLEEP
     bool "Quiesce Rev1.1 IMU and RTC during light sleep"
     depends on SMART_SCALE_TOUCH_WAKE_VERIFIED

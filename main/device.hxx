@@ -24,6 +24,7 @@ public:
     // Call with the LVGL port lock held, after constructing the initial UI.
     esp_err_t show();
     bool reset_pressed();
+    bool recover_touch_bus(); // LVGL lock held; bounded retry on persistent I2C errors
     bool wake_button_pressed() const; // Optional active-low wake-only input.
     esp_err_t power_state(PowerState state); // LVGL lock required
     bool take_touch_activity(); // LVGL lock required
@@ -59,6 +60,9 @@ private:
     lv_indev_drv_t touch_driver_{};
     lv_point_t last_touch_{};
     bool touch_failed_{};
+    uint64_t touch_recovery_us_{};
+    unsigned touch_error_streak_{};
+    bool lcd_sleep_fallback_{};
     uint64_t touch_polls_{}, touch_errors_{}, touch_invalid_{}, last_touch_poll_us_{}, last_touch_ok_us_{};
     uint64_t touch_log_us_{}, battery_log_us_{};
     int battery_last_mv_{-1}, battery_last_error_{-1};

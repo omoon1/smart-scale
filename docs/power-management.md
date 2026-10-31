@@ -297,8 +297,8 @@ post-sleep reset, second-tap delivery, and the final sleep IRQ guard.
 
 ### Rev1.1 LCD sleep and optional wake-only button
 
-`Smart scale power` now exposes `SMART_SCALE_LCD_SLEEP` (default enabled when
-verified touch wake is enabled) and `SMART_SCALE_WAKE_BUTTON` (default disabled).
+`Smart scale power` exposes `SMART_SCALE_LCD_SLEEP` (default disabled; also
+requires `SMART_SCALE_LCD_SLEEP_TOUCH_VERIFIED`) and `SMART_SCALE_WAKE_BUTTON` (default disabled).
 The existing `SMART_SCALE_TOUCH_WAKE_VERIFIED` opt-in still gates CPU light sleep.
 The common 30-second dim / 60-second sleep policy above also applies while
 charging. Peripheral rail shutdown is unchanged; weight activity is described below.
@@ -487,3 +487,44 @@ qualification, held/late touch, each sample's I2C/malformed/IRQ failure, timeout
 clock stalls, repeated attempts and contact arriving after expander acknowledgement.
 The all-A5 pattern remains a board-observed heuristic: held-finger testing must
 confirm it cannot falsely qualify release on this module firmware.
+
+### Black-screen wake fallback and diagnostics
+
+Hardware captures reached LCD Sleep In, lost the USB console, then showed a new
+application boot with persistent touch I2C errors. They do not establish whether
+touch wake failed, panel restore failed, or a manual power/reset intervened.
+
+LCD Sleep In now defaults off and requires BOTH `SMART_SCALE_LCD_SLEEP` and the
+new `SMART_SCALE_LCD_SLEEP_TOUCH_VERIFIED` option. Existing configurations with
+only LCD_SLEEP=y therefore use backlight-only CPU sleep automatically. HX711 and
+configured IMU/RTC sleep still operate. The separate opt-in is needed because a
+Kconfig default change alone does not override an existing saved y value.
+
+When experimental LCD sleep is enabled, a five-second CPU timer wake is armed as
+a recovery guard. Timer wake forces visible recovery and disables further LCD
+Sleep In until reboot; future sleeps use the backlight-only path. Timer wake is
+not proof of touch wake. Timer arming failure cancels sleep, and every exit removes
+the timer source before restoration. Successful GPIO wake continues normal use.
+Normal backlight-only sleep does not add periodic timer wakeups.
+
+Persistent touch I2C errors now trigger a reset of the dedicated touch bus after
+three failed polls, with retries no faster than five seconds. A fresh probe must
+succeed before declaring recovery. The first gesture stays suppressed. This does
+not blindly reset the shared panel IC or claim to repair physical bus faults.
+Optional IMU/RTC restore errors retain their snapshot and block peripheral sleep
+preparation, but no longer block LCD restoration and normal display dimming.
+
+Boot logs report requested/effective LCD sleep, the additional verification flag,
+peripheral sleep, wake button and the ELF hash prefix. Compare these runtime
+values with menuconfig instead of inferring build settings from absent messages.
+
+Before the final IRQ guard, the diagnostic queue drains with a 200 ms deadline
+and emits a synchronous sleep checkpoint. This reduces loss of queued logs but
+cannot guarantee USB delivery: ESP32-S3 USB Serial/JTAG can disconnect or remain
+unresponsive across light sleep. Logger timeout does not hang sleep entry.
+
+Validation: native tests include configuration migration (old LCD_SLEEP=y alone
+is disabled), default and explicitly verified configurations, plus existing LCD
+restore, peripheral rollback and touch qualification regressions. CI adds an
+explicit experimental-LCD firmware configuration. Physical touch wake, timer
+recovery, panel visibility and I2C fault recovery still require board testing.

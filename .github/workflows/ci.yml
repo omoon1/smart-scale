@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        wake: [disabled, expander-349, expander-button, backlight-only]
+        wake: [disabled, expander-349, expander-button, backlight-only, lcd-experimental]
     container: espressif/idf:v5.5.2
     steps:
       - uses: actions/checkout@v4
@@ -40,6 +40,10 @@ jobs:
           if [ "${{ matrix.wake }}" = expander-button ]; then
             echo 'CONFIG_SMART_SCALE_WAKE_BUTTON=y' >> sdkconfig.defaults
             echo 'CONFIG_SMART_SCALE_WAKE_BUTTON_GPIO=38' >> sdkconfig.defaults
+          fi
+          if [ "${{ matrix.wake }}" = lcd-experimental ]; then
+            echo 'CONFIG_SMART_SCALE_LCD_SLEEP=y' >> sdkconfig.defaults
+            echo 'CONFIG_SMART_SCALE_LCD_SLEEP_TOUCH_VERIFIED=y' >> sdkconfig.defaults
           fi
           if [ "${{ matrix.wake }}" = backlight-only ]; then
             echo '# CONFIG_SMART_SCALE_LCD_SLEEP is not set' >> sdkconfig.defaults

@@ -188,6 +188,11 @@ void Device::init() {
     wake.mode = GPIO_MODE_INPUT; wake.pull_up_en = GPIO_PULLUP_ENABLE;
     ESP_ERROR_CHECK(gpio_config(&wake));
     initialized_ = true;
+    ESP_LOGI(tag, "power features: lcd_requested=%d lcd_touch_verified=%d lcd_effective=%d peripherals=%d wake_button=%d",
+        config::lcd_sleep_requested, config::lcd_sleep_touch_verified, config::lcd_sleep_enabled,
+        config::peripheral_sleep_enabled, config::wake_button);
+    if (config::lcd_sleep_requested && !config::lcd_sleep_enabled)
+        ESP_LOGW(tag, "LCD sleep not module-verified: using backlight-only sleep");
     ESP_LOGI(tag, "expander SDA=47 SCL=48; touch SDA=17 SCL=18; HX711 DOUT=%d SCK=%d", config::hx711_dout, config::hx711_sck);
 }
 bool Device::transfer_done(esp_lcd_panel_io_handle_t, esp_lcd_panel_io_event_data_t*, void* context) {
@@ -231,6 +236,7 @@ void Device::read_touch(lv_indev_drv_t* driver, lv_indev_data_t* data) {
     }
     if (result != ESP_OK) {
         ++self.touch_errors_;
+        if (self.touch_error_streak_ < 3) ++self.touch_error_streak_;
         if (!self.touch_failed_) log().event("touch", "event=i2c_error result=%s state=%d gate=%d errors=%llu",
             esp_err_to_name(result), static_cast<int>(self.power_state_), previous_gate,
             static_cast<unsigned long long>(self.touch_errors_));
@@ -242,6 +248,7 @@ void Device::read_touch(lv_indev_drv_t* driver, lv_indev_data_t* data) {
     if (self.touch_failed_) log().event("touch", "event=i2c_recovered polls=%llu errors=%llu",
         static_cast<unsigned long long>(self.touch_polls_), static_cast<unsigned long long>(self.touch_errors_));
     self.touch_failed_ = false;
+    self.touch_error_streak_ = 0;
     if (report.state == board::TouchState::pressed && report.contacts == 1) {
         self.last_touch_ = {static_cast<lv_coord_t>(report.point.x), static_cast<lv_coord_t>(report.point.y)};
         data->point = self.last_touch_;
@@ -269,6 +276,23 @@ void Device::read_touch(lv_indev_drv_t* driver, lv_indev_data_t* data) {
         self.touch_log_us_ = self.last_touch_poll_us_;
     }
     self.last_delivered_ = delivered;
+}
+bool Device::recover_touch_bus() {
+    const auto now = static_cast<uint64_t>(esp_timer_get_time());
+    if (touch_error_streak_ < 3 || (touch_recovery_us_ && now - touch_recovery_us_ < 5000000)) return false;
+    touch_recovery_us_ = now;
+    // Reset only I2C1's bus/FIFO state. No shared panel reset from a UI callback.
+    const auto reset = i2c_master_bus_reset(touch_bus_);
+    uint8_t packet[board::touch_packet_bytes]{};
+    board::TouchReport report;
+    touch_idle_.reset(); ui_touch_idle_.reset();
+    const auto probe = reset == ESP_OK ? read_touch_packet(packet, report) : reset;
+    log().event("touch", "event=bus_recovery reset=%s probe=%s streak=%u",
+        esp_err_to_name(reset), esp_err_to_name(probe), touch_error_streak_);
+    if (probe != ESP_OK) return false;
+    touch_error_streak_ = 0; touch_failed_ = false;
+    suppress_wake_touch(); // recovery must not deliver a stale contact to widgets
+    return true;
 }
 void Device::suppress_wake_touch() {
     touch_gate_.filter(true, true);
@@ -348,7 +372,9 @@ bool Device::wake_button_pressed() const {
 esp_err_t Device::show() {
     if (!initialized_) return ESP_ERR_INVALID_STATE;
     const auto peripherals = restore_peripherals();
-    if (peripherals != ESP_OK) return peripherals;
+    // Optional IMU/RTC restoration must not leave a recovered LCD black.
+    // The retained peripheral snapshot still prevents another sleep attempt.
+    if (peripherals != ESP_OK) ESP_LOGW(tag, "Peripheral restore pending; restoring display independently");
     const auto restored = restore_lcd();
     if (restored != ESP_OK) return restored; // Never light or flush an uncertain panel.
     // Caller holds the same LVGL port lock used by the UI task. flush() waits
@@ -407,7 +433,7 @@ bool Device::take_touch_activity() {
     const bool result = touch_activity_; touch_activity_ = false; return result;
 }
 esp_err_t Device::power_state(PowerState state) {
-    const bool restore_pending = lcd_sleep_.needs_restore() || peripheral_sleep_.needs_restore();
+    const bool restore_pending = lcd_sleep_.needs_restore();
     if (restore_pending && state != PowerState::active) return ESP_ERR_INVALID_STATE;
     if (state == power_state_ && !restore_pending) return ESP_OK;
     esp_err_t error;
@@ -535,7 +561,8 @@ esp_err_t Device::light_sleep(uint64_t& started_us, uint64_t& ended_us, bool& us
     auto error = lvgl_port_stop();
     log().event("power", "event=lvgl_stop cycle=%u result=%s", cycle, esp_err_to_name(error));
     if (error != ESP_OK) return error;
-    bool gpio_armed = false, wake_enabled = false, button_armed = false;
+    bool gpio_armed = false, wake_enabled = false, button_armed = false, timer_armed = false;
+    const bool use_lcd_sleep = config::lcd_sleep_enabled && !lcd_sleep_fallback_;
     uint32_t baseline{};
     auto read_port = [this, cycle](uint32_t& value) {
         const uint8_t reg = 0; uint8_t inputs{};
@@ -562,14 +589,16 @@ esp_err_t Device::light_sleep(uint64_t& started_us, uint64_t& ended_us, bool& us
         user_wake = preparation == WakePreparation::touch;
         error = preparation == WakePreparation::io_error ? ESP_FAIL : ESP_ERR_INVALID_STATE;
     }
-#ifdef CONFIG_SMART_SCALE_LCD_SLEEP
-    if (error == ESP_OK) {
+    if (error == ESP_OK && use_lcd_sleep) {
         // LVGL is stopped, the caller holds its lock, and flush() waits for DMA.
         const bool ok = lcd_sleep_.enter([this](uint8_t cmd) { return lcd_command(cmd); },
             [](unsigned ms) { vTaskDelay(pdMS_TO_TICKS(ms)); });
         if (!ok) error = ESP_FAIL;
     }
-#endif
+    if (error == ESP_OK && use_lcd_sleep) {
+        error = esp_sleep_enable_timer_wakeup(5000000ULL);
+        timer_armed = error == ESP_OK;
+    }
     if (error == ESP_OK && config::wake_button >= 0) {
         error = gpio_wakeup_enable(static_cast<gpio_num_t>(config::wake_button), GPIO_INTR_LOW_LEVEL);
         button_armed = error == ESP_OK;
@@ -584,6 +613,12 @@ esp_err_t Device::light_sleep(uint64_t& started_us, uint64_t& ended_us, bool& us
     }
     log().event("power", "event=sleep_arm cycle=%u result=%s gpio_armed=%d wake_enabled=%d wake_gpio=%d",
         cycle, esp_err_to_name(error), gpio_armed, wake_enabled, static_cast<int>(pin));
+    // Logging must precede the final IRQ guard: draining can take 200 ms.
+    if (error == ESP_OK) {
+        const bool drained = log().flush(200);
+        ESP_LOGI(tag, "sleep checkpoint: cycle=%u lcd_sleep=%d timer_guard=%d logs_drained=%d",
+            cycle, use_lcd_sleep, timer_armed, drained);
+    }
     // No expander read after this check: it could acknowledge a newly arrived touch.
     if (error == ESP_OK && (!gpio_get_level(pin) || wake_button_pressed())) {
         user_wake = wake_button_pressed();
@@ -609,10 +644,20 @@ esp_err_t Device::light_sleep(uint64_t& started_us, uint64_t& ended_us, bool& us
             // S3 light sleep does not expose a per-pin wake latch. With the
             // optional button armed, conservatively accept any GPIO wake so a
             // short button press is not lost after release (shared IRQ included).
-            user_wake = button_armed || reason != ExpanderWake::shared;
+            const bool timer_recovery = timer_armed && esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER;
+            if (timer_recovery) {
+                lcd_sleep_fallback_ = true;
+                log().event("power", "event=lcd_sleep_fallback reason=timer_recovery next_sleep=backlight_only");
+            }
+            user_wake = timer_recovery || button_armed || reason != ExpanderWake::shared;
             log().event("power", "event=wake_classified cycle=%u reason=%d before=0x%02x after=0x%02x touch=%d",
                 cycle, static_cast<int>(reason), static_cast<unsigned>(baseline), static_cast<unsigned>(inputs), pressed);
         }
+    }
+    if (timer_armed) {
+        const auto cleanup = esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
+        log().event("power", "event=timer_cleanup result=%s", esp_err_to_name(cleanup));
+        if (error == ESP_OK) error = cleanup;
     }
     const auto source_cleanup = wake_enabled ? esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_GPIO) : ESP_OK;
     const auto gpio_cleanup = gpio_armed ? gpio_wakeup_disable(pin) : ESP_OK;

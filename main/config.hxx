@@ -7,6 +7,23 @@
 #endif
 
 namespace smart_scale::config {
+#if defined(CONFIG_SMART_SCALE_LCD_SLEEP)
+inline constexpr bool lcd_sleep_requested = true;
+#else
+inline constexpr bool lcd_sleep_requested = false;
+#endif
+#if defined(CONFIG_SMART_SCALE_LCD_SLEEP_TOUCH_VERIFIED)
+inline constexpr bool lcd_sleep_touch_verified = true;
+#else
+inline constexpr bool lcd_sleep_touch_verified = false;
+#endif
+inline constexpr bool lcd_sleep_enabled = lcd_sleep_requested && lcd_sleep_touch_verified;
+#if defined(CONFIG_SMART_SCALE_PERIPHERAL_SLEEP)
+inline constexpr bool peripheral_sleep_enabled = true;
+#else
+inline constexpr bool peripheral_sleep_enabled = false;
+#endif
+
 inline constexpr int screen_width = board349::width;
 inline constexpr int screen_height = board349::height;
 inline constexpr std::uint32_t ui_period_ms = 100;
