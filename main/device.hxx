@@ -55,7 +55,8 @@ private:
     int packet_log_state_{-1};
     unsigned packet_log_count_{};
     board349::TouchIdleQualifier touch_idle_;
-    esp_err_t read_touch_packet(uint8_t* packet, board349::TouchReport& report);
+    board349::TouchIdleQualifier ui_touch_idle_{board349::TouchIdleQualifier::Use::ui};
+    esp_err_t read_touch_packet(uint8_t* packet, board349::TouchReport& report, bool for_ui = false);
     WakeTouchGate touch_gate_;
     PowerState power_state_{PowerState::active};
     bool touch_activity_{}, touch_down_{};

@@ -62,15 +62,17 @@ inline TouchReport decode_touch_report(const std::uint8_t* packet, std::size_t s
     return {TouchState::pressed, packet[1], first, "contact"};
 }
 // Board-observed idle pattern, not a generic invalid-packet fallback. Require
-// fresh repeated successful reads and a quiet shared IRQ before inferring release.
+// fresh repeated successful reads. Sleep additionally requires a quiet shared IRQ.
 class TouchIdleQualifier {
 public:
+    enum class Use { sleep, ui };
+    explicit TouchIdleQualifier(Use use = Use::sleep) : use_(use) {}
     TouchReport update(TouchReport report, bool io_ok, bool irq_high, std::uint64_t now_us) {
-        if (!io_ok || report.state != TouchState::no_data || !irq_high) {
+        if (!io_ok || report.state != TouchState::no_data || (use_ == Use::sleep && !irq_high)) {
             reset();
             return io_ok ? report : TouchReport{};
         }
-        if (!samples_ || now_us < last_us_ || now_us - last_us_ > 100000) {
+        if (!samples_ || now_us < last_us_ || now_us - last_us_ > (use_ == Use::sleep ? 100000U : 1000000U)) {
             since_us_ = now_us; samples_ = 0;
         }
         last_us_ = now_us;
@@ -81,6 +83,7 @@ public:
     }
     void reset() { samples_ = 0; since_us_ = last_us_ = 0; }
 private:
+    Use use_;
     unsigned samples_{};
     std::uint64_t since_us_{}, last_us_{};
 };
