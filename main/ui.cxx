@@ -115,14 +115,22 @@ lv_obj_t* View::button(lv_obj_t* p, const char* text, int x, int y, int w, int h
 }
 void View::action_rail(lv_obj_t* root, const char* text, Action action) {
     const int width = lv_disp_get_hor_res(nullptr);
-    const int rail = width * 15 / 100;
+    const int rail = width * 18 / 100;
     auto* control = button(root, text, width - rail, 0, rail,
                            lv_disp_get_ver_res(nullptr), action);
     lv_obj_set_style_radius(control, 0, 0);
     lv_obj_set_style_border_width(control, 0, 0);
-    lv_obj_set_style_bg_color(control, color(0xB83232), 0);
-    lv_obj_set_style_bg_color(control, color(0x882424), LV_STATE_PRESSED);
-    lv_obj_set_style_text_color(lv_obj_get_child(control, 0), color(0xFFFFFF), 0);
+    const bool finish = action == Action::finish;
+    lv_obj_set_style_bg_color(control, color(finish ? 0x287A50 : 0xB83232), 0);
+    lv_obj_set_style_bg_color(control, color(finish ? 0x1B5738 : 0x882424), LV_STATE_PRESSED);
+    auto* caption = lv_obj_get_child(control, 0);
+    lv_obj_set_style_text_color(caption, color(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(caption, &lv_font_montserrat_18, 0);
+    lv_obj_align(caption, LV_ALIGN_CENTER, 0, 18);
+    auto* icon = label(control, finish ? LV_SYMBOL_OK : LV_SYMBOL_LEFT, 0, 0, rail,
+                       &lv_font_montserrat_28, 0xFFFFFF);
+    lv_obj_set_style_text_align(icon, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(icon, LV_ALIGN_CENTER, 0, -16);
     // A drag from a neighboring control must not release as a rail click.
     lv_obj_clear_flag(control, LV_OBJ_FLAG_PRESS_LOCK);
 }
@@ -225,7 +233,7 @@ void View::draw() {
     lv_obj_set_style_text_font(battery_label_, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_align(battery_label_, LV_TEXT_ALIGN_RIGHT, 0);
     if (phase == Phase::brewing) {
-        lv_obj_set_x(battery_button, wide() ? 424 : 288);
+        lv_obj_set_x(battery_button, wide() ? 410 : 274);
         lv_obj_set_width(battery_button, wide() ? 110 : 112);
         lv_obj_set_width(battery_label_, wide() ? 98 : 100);
         if (wide()) { lv_obj_set_x(time_, 270); lv_obj_set_width(time_, 150); }
@@ -315,17 +323,17 @@ void View::draw_wide(lv_obj_t* root) {
         lv_obj_clear_flag(chart_, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_add_event_cb(chart_, draw_brew_plot, LV_EVENT_DRAW_MAIN, this);
         auto* mass = lv_obj_create(root); style(mass);
-        lv_obj_set_pos(mass, 350, 39); lv_obj_set_size(mass, phase == Phase::brewing ? 182 : 138, phase == Phase::brewing ? 64 : 72);
+        lv_obj_set_pos(mass, 350, 39); lv_obj_set_size(mass, phase == Phase::brewing ? 166 : 138, phase == Phase::brewing ? 64 : 72);
         weight_ = label(mass, "", 12, 7, 108, &lv_font_montserrat_32);
         weight_unit_ = label(mass, "g", 0, 0, 20, &lv_font_montserrat_14, muted);
-        auto* title = label(mass, water ? "Water added" : "Beverage", 0, phase == Phase::brewing ? 43 : 49, phase == Phase::brewing ? 182 : 138, &lv_font_montserrat_14, muted);
+        auto* title = label(mass, water ? "Water added" : "Beverage", 0, phase == Phase::brewing ? 43 : 49, phase == Phase::brewing ? 166 : 138, &lv_font_montserrat_14, muted);
         lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
         auto* rate = lv_obj_create(root); style(rate);
         lv_obj_set_pos(rate, phase == Phase::brewing ? 350 : 496, phase == Phase::brewing ? 107 : 39);
-        lv_obj_set_size(rate, phase == Phase::brewing ? 182 : 136, phase == Phase::brewing ? 60 : 72);
-        flow_ = label(rate, "", 4, 7, phase == Phase::brewing ? 174 : 128, &lv_font_montserrat_32);
+        lv_obj_set_size(rate, phase == Phase::brewing ? 166 : 136, phase == Phase::brewing ? 60 : 72);
+        flow_ = label(rate, "", 4, 7, phase == Phase::brewing ? 158 : 128, &lv_font_montserrat_32);
         lv_obj_set_style_text_align(flow_, LV_TEXT_ALIGN_CENTER, 0);
-        title = label(rate, phase == Phase::result ? "Ratio" : "Flow (g/s)", 0, phase == Phase::brewing ? 39 : 49, phase == Phase::brewing ? 182 : 136, &lv_font_montserrat_14, muted);
+        title = label(rate, phase == Phase::result ? "Ratio" : "Flow (g/s)", 0, phase == Phase::brewing ? 39 : 49, phase == Phase::brewing ? 166 : 136, &lv_font_montserrat_14, muted);
         lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
         if (phase == Phase::result) {
             auto* next = button(root, "Next brew", 350, 119, 282, 45, Action::next, 0, true);
@@ -396,8 +404,6 @@ void View::draw_wide_dialog(lv_obj_t* root) {
     auto* box = lv_obj_create(root); style(box);
     lv_obj_set_pos(box, 0, 0); lv_obj_set_size(box, 640, 172);
     lv_obj_set_style_radius(box, 0, 0); lv_obj_set_style_border_width(box, 0, 0);
-    if (dialog_ == Dialog::battery_history)
-        button(box, LV_SYMBOL_CLOSE, 588, 4, 44, 44, Action::close);
     if (dialog_ == Dialog::battery_history) draw_history(box);
     else if (dialog_ == Dialog::dose) {
         label(box, "Coffee", 12, 12, 180, &lv_font_montserrat_22, mint);
@@ -445,12 +451,10 @@ void View::draw_wide_dialog(lv_obj_t* root) {
         for (int i = 0; i < 4; ++i) button(box, names[i], 12 + (i % 2) * 314, 56 + (i / 2) * 56,
                                          306, 48, Action::choose_scenario, i);
     } else draw_wide_registration(box);
-    if (dialog_ != Dialog::battery_history) {
-        fit_width(box, 84, 100);
-        lv_obj_set_width(box, 544);
-        action_rail(root, dialog_ == Dialog::dose ? "Close" : "Cancel",
-                    dialog_ == Dialog::remove_equipment ? Action::cancel_remove : Action::close);
-    }
+    fit_width(box, 81, 100);
+    lv_obj_set_width(box, 525);
+    action_rail(root, "Back",
+                dialog_ == Dialog::remove_equipment ? Action::cancel_remove : Action::close);
 }
 void View::draw_wide_registration(lv_obj_t* box) {
     button(box, "Back", 404, 4, 80, 44, Action::register_back);
@@ -575,14 +579,14 @@ void View::draw_brew(lv_obj_t* root, bool result) {
         button(root, "Next brew", 322, 270, 142, 44, Action::next, 0, true);
     } else {
         if (!controller_.live()) button(root, controller_.session().paused ? "Resume flow" : "Pause flow", 16, 270, 140, 44, Action::pause);
-        lv_obj_set_width(object_text_, 352);
-        lv_obj_set_width(status_, 364);
-        lv_obj_set_width(target_text_, 376);
+        lv_obj_set_width(object_text_, 338);
+        lv_obj_set_width(status_, 352);
+        lv_obj_set_width(target_text_, 364);
         lv_obj_set_width(chart_, 190);
         lv_obj_set_x(weight_, 238); lv_obj_set_width(weight_, 142);
         lv_obj_set_style_text_font(weight_, &lv_font_montserrat_32, 0);
         lv_obj_set_x(time_, 238);
-        lv_obj_set_x(flow_, 238); lv_obj_set_width(flow_, 160);
+        lv_obj_set_x(flow_, 238); lv_obj_set_width(flow_, 146);
     }
 }
 void View::refresh_values() {
@@ -886,7 +890,6 @@ void View::draw_dialog(lv_obj_t* root) {
     lv_obj_set_size(box, (dialog_ == Dialog::registration || dialog_ == Dialog::battery_history) ? 452 : 304, 304);
     lv_obj_center(box);
     const int width = (dialog_ == Dialog::registration || dialog_ == Dialog::battery_history) ? 452 : 304;
-    if (dialog_ == Dialog::battery_history) button(box, LV_SYMBOL_CLOSE, width - 52, 4, 44, 44, Action::close);
     if (dialog_ == Dialog::battery_history) draw_history(box);
     else if (dialog_ == Dialog::calibration) {
         label(box, "Calibrate scale", 16, 18, 230, &lv_font_montserrat_22);
@@ -947,12 +950,10 @@ void View::draw_dialog(lv_obj_t* root) {
         const char* names[] = {"Cup + 18.2 g dose", "Unknown object / no baseline", "Portafilter > beans > cup", "V60 / bloom + pours"};
         for (int i = 0; i < 4; ++i) button(box, names[i], 12, 62 + i * 54, 280, 46, Action::choose_scenario, i);
     } else draw_registration(box);
-    if (dialog_ != Dialog::battery_history) {
-        if (width > 392) { fit_width(box, 392, width); lv_obj_set_width(box, 392); }
-        lv_obj_align(box, LV_ALIGN_TOP_LEFT, (408 - std::min(width, 392)) / 2, 8);
-        action_rail(shade, dialog_ == Dialog::dose ? "Close" : "Cancel",
-                    dialog_ == Dialog::remove_equipment ? Action::cancel_remove : Action::close);
-    }
+    if (width > 378) { fit_width(box, 378, width); lv_obj_set_width(box, 378); }
+    lv_obj_align(box, LV_ALIGN_TOP_LEFT, (394 - std::min(width, 378)) / 2, 8);
+    action_rail(shade, "Back",
+                dialog_ == Dialog::remove_equipment ? Action::cancel_remove : Action::close);
 }
 namespace {
 unsigned usage_color(UsageState state) {
@@ -967,7 +968,7 @@ unsigned usage_color(UsageState state) {
 }
 void View::draw_history(lv_obj_t* box) {
     if (wide()) {
-        label(box, "Battery Usage", 12, 12, 190, &lv_font_montserrat_22);
+        label(box, "Battery Usage", 12, 12, 225, &lv_font_montserrat_22);
         const unsigned ranges[] = {6, 24, 72};
         const char* names[] = {"6hr", "1day", "3day"};
         for (unsigned i = 0; i < 3; ++i)
@@ -984,7 +985,7 @@ void View::draw_history(lv_obj_t* box) {
         const auto middle = "-" + std::to_string(history_hours_ / 2) + "h";
         label(box, left.c_str(), 58, 136, 60, &lv_font_montserrat_14, muted);
         label(box, middle.c_str(), 320, 136, 60, &lv_font_montserrat_14, muted);
-        label(box, "Now", 584, 136, 36, &lv_font_montserrat_14, muted);
+        label(box, "Now", 572, 136, 48, &lv_font_montserrat_14, muted);
         label(box, "Voltage estimate", 58, 154, 180, &lv_font_montserrat_14, usage_color(UsageState::estimated));
         label(box, "Sleep (estimated)", 328, 154, 200, &lv_font_montserrat_14, usage_color(UsageState::sleep));
         refresh_history();
@@ -1009,7 +1010,7 @@ void View::draw_history(lv_obj_t* box) {
     const auto middle = "-" + std::to_string(history_hours_ / 2) + "h";
     label(box, left.c_str(), 58, 250, 60, &lv_font_montserrat_14, muted);
     label(box, middle.c_str(), 226, 250, 60, &lv_font_montserrat_14, muted);
-    label(box, "Now", 400, 250, 36, &lv_font_montserrat_14, muted);
+    label(box, "Now", 388, 250, 48, &lv_font_montserrat_14, muted);
     label(box, "Charging", 58, 280, 110, &lv_font_montserrat_14, usage_color(UsageState::charging));
     label(box, "Active", 200, 280, 90, &lv_font_montserrat_14, usage_color(UsageState::active));
     label(box, "Sleep", 340, 280, 90, &lv_font_montserrat_14, usage_color(UsageState::sleep));
