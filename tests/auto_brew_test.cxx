@@ -90,6 +90,9 @@ int main() {
             std::uint64_t now = 0;
             auto feed = [&](float grams) {
                 c.sensor_sample(static_cast<int>(grams * polarity * 1000), now += interval);
+                // Match the firmware loop: drain readings, then check timeout.
+                c.sensor_sample(std::nullopt, now);
+                c.sensor_sample(std::nullopt, now + interval / 2);
                 c.tick(interval / 1000.0F);
             };
             for (; now < 3000;) feed(100);

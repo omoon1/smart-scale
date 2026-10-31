@@ -79,10 +79,13 @@ void Controller::sensor_sample(std::optional<std::int32_t> raw, std::uint64_t no
         // Keep the final metrics immutable until fresh physical removal is confirmed.
         // Net zero (tare), stale samples, and an error timeout cannot clear a result.
         const auto recent = scale_.recent_gross();
-        if (!raw || !scale_.ready() || !recent || std::abs(*recent) > 2.0F) {
+        if (!scale_.ready() || !recent || std::abs(*recent) > 2.0F) {
             empty_since_.reset();
             return;
         }
+        // The UI loop polls with nullopt after draining sensor readings.
+        // Preserve the hold on healthy polls, but only advance it on samples.
+        if (!raw) return;
         if (!empty_since_) empty_since_ = scale_.sample_ms();
         if (scale_.sample_ms() - *empty_since_ >= 300) {
             session_.loaded = false;
