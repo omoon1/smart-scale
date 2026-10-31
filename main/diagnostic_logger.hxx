@@ -38,6 +38,15 @@ public:
         Record r{}; r.event = event; r.sample = s; r.trace_id = trace_id;
         return send(r, retry);
     }
+    bool flush(unsigned timeout_ms) {
+        const auto target = accepted_.load();
+        const auto deadline = esp_timer_get_time() + static_cast<int64_t>(timeout_ms) * 1000;
+        while (completed_.load() < target) {
+            if (esp_timer_get_time() >= deadline) return false;
+            vTaskDelay(1);
+        }
+        return true;
+    }
     unsigned dropped() const { return dropped_.load(std::memory_order_relaxed); }
     unsigned high_water() const { return high_water_.load(std::memory_order_relaxed); }
 private:
@@ -47,6 +56,7 @@ private:
             if (!retry) dropped_.fetch_add(1, std::memory_order_relaxed);
             return false;
         }
+        accepted_.fetch_add(1);
         const auto depth = static_cast<unsigned>(uxQueueMessagesWaiting(queue_));
         auto previous = high_water_.load(std::memory_order_relaxed);
         while (depth > previous && !high_water_.compare_exchange_weak(previous, depth, std::memory_order_relaxed)) {}
@@ -56,7 +66,7 @@ private:
         auto& self = *static_cast<DiagnosticLogger*>(context);
         Record r;
         while (true) if (xQueueReceive(self.queue_, &r, portMAX_DELAY) == pdTRUE) {
-            if (!r.event) { ESP_LOGI(r.tag, "%s", r.text); continue; }
+            if (!r.event) { ESP_LOGI(r.tag, "%s", r.text); self.completed_.fetch_add(1); continue; }
             const auto& s = r.sample;
             char failed[64]; failed_names(s.failed, failed);
             char raw[24] = "NA";
@@ -67,10 +77,12 @@ private:
                 static_cast<unsigned long long>(s.dt_ms), raw, s.raw_g, s.median_g, s.filtered_g, s.net_g, s.tare_g,
                 s.ready, s.stable, s.quiet, s.reason, failed, s.operational_sd, s.half_shift, s.anchor_delta, s.drift_guard,
                 s.sd, s.drift, s.p2p, s.residual, s.factor, s.zero);
+            self.completed_.fetch_add(1);
         }
     }
     QueueHandle_t queue_{};
     TaskHandle_t task_{};
+    std::atomic<unsigned> accepted_{}, completed_{};
     std::atomic<unsigned> dropped_{};
     std::atomic<unsigned> high_water_{};
 };

@@ -10,6 +10,10 @@ AXS15231B + TCA9554 + ETA6098; **never access AXP2101 registers at 0x34**.
 | 60 seconds | Gate backlight off at EXIO1 and pause display refresh; touch/scale continue |
 | 60 seconds | Light sleep if explicitly enabled after board validation; otherwise stay screen-off |
 
+These deadlines are total time since the last valid activity, independent of
+battery/external/unknown power status. Plugging or unplugging USB does not reset
+idle or wake the screen. Battery telemetry is used only for display/history.
+
 Full brightness uses GPIO42 PWM duty 0. Initialization holds EXIO1 low until a
 complete frame has reached the panel. Wake redraws before enabling EXIO1.
 The first dark-screen touch is consumed until release, including held gestures;
@@ -114,9 +118,11 @@ and power-cycle tests on the verified board.
 
 The common policy now makes sleep eligible at **60 seconds total idle**, rather
 than 360 seconds. With the verified-wake option disabled the board stays screen-off.
-The generic policy supports external-power dim at 30s, off at 10 minutes and no
-sleep, but 3.49 V2 has no power-source telemetry: its adapter cannot select that
-charging policy or detect USB insertion. It retains the 60-second policy on USB.
+The former external-power exception (10-minute screen-off, no sleep) has been
+removed. All adapters now dim at 30 seconds and become sleep-eligible at 60
+seconds, regardless of source telemetry. Power-source changes do not reset idle.
+Native tests cover battery, charging, full, unknown and failed telemetry, source
+transitions across the deadline, touch restart, inhibition release and retry delay.
 No AXP2101 charger register accesses or 3.5 V2 pin assignments are used.
 
 Sleep preparation reads touch before and after acknowledging the physical
@@ -286,3 +292,221 @@ prevents sleep qualification, but no longer blocks UI release. The default verif
 remains unchanged. Native regressions exercise qualification timing, brief gaps,
 contact resets, bus errors, malformed/mixed packets, low IRQ, stale samples,
 post-sleep reset, second-tap delivery, and the final sleep IRQ guard.
+
+
+
+### Rev1.1 LCD sleep and optional wake-only button
+
+`Smart scale power` exposes `SMART_SCALE_LCD_SLEEP` (default disabled; also
+requires `SMART_SCALE_LCD_SLEEP_TOUCH_VERIFIED`) and `SMART_SCALE_WAKE_BUTTON` (default disabled).
+The existing `SMART_SCALE_TOUCH_WAKE_VERIFIED` opt-in still gates CPU light sleep.
+The common 30-second dim / 60-second sleep policy above also applies while
+charging. Peripheral rail shutdown is unchanged; weight activity is described below.
+
+LCD sleep runs only during a real CPU sleep attempt, after HX711 suspension,
+LVGL stop, completed DMA and initial wake preparation. With the backlight gated
+off, QSPI sends Display Off (28h), Sleep In (10h), then waits 150 ms. The final
+GPIO check remains after these operations. On every exit, including late IRQ,
+failed commands and rejected CPU sleep, restore sends Sleep Out (11h), waits
+150 ms, then Display On (29h). The next visible transition redraws the full frame
+before enabling the backlight. Boot Sleep Out also waits 150 ms.
+
+Command delivery errors mark the panel uncertain until a complete restore
+succeeds. Restore errors keep the backlight and refresh timer off; active-state
+transitions retry restoration. Logs include `event=lcd_command`, `cmd`, and
+`result`. This does not reset the shared LCD/touch IC or put touch into Sleep.
+The LCD/touch supplies, TCA9554 and SYS_EN remain enabled.
+
+References: [AXS15231B datasheet, sections 1.5.2, 1.5.4, 3.2.2 and 6.1](https://files.waveshare.com/wiki/common/AXS15231B_Datasheet_V0.5.pdf)
+and [Waveshare V2 QSPI driver](https://github.com/waveshareteam/ESP32-S3-Touch-LCD-3.49-V2/blob/1c157e6e8e68b89fd4dc400f46bf1724cb64a57e/Arduino/examples/09_LVGL_V8_Test/src/axs15231b/esp_lcd_axs15231b.c).
+The 150 ms delay conservatively exceeds the documented 120 ms interval.
+
+**Hardware validation required before accepting LCD sleep:** verify TP_INT still
+reaches GPIO8 after 10h on this specific module firmware. Repeat touch wake,
+held finger, late touch during preparation and screen restoration on USB and
+battery. Compare battery-side backlight-only versus LCD-sleep current; no current
+reduction figure is claimed. If touch wake fails, disable SMART_SCALE_LCD_SLEEP
+and retain backlight-only behavior. Until validated, keep this PR draft.
+
+For a future external normally-open button, wire a free GPIO38-41 to GND through
+the button and enable SMART_SCALE_WAKE_BUTTON plus SMART_SCALE_WAKE_BUTTON_GPIO
+(default 38). Do not enable with an unconnected button. The internal pull-up is
+configured only when enabled. Remove SD and avoid external JTAG on shared pins;
+compile-time checks reject HX711 conflicts. This button only wakes/extends idle;
+it never tares or resets the session. Holding it blocks sleep and release allows
+the existing idle timeout. Existing BOOT/reset behavior is unchanged.
+
+ESP32-S3 light sleep has no per-pin status API equivalent to the deep-sleep GPIO
+wake status. When the optional button is armed, any GPIO wake is conservatively
+accepted as user activity so a short released press is not discarded. Thus a
+shared IMU/RTC IRQ can also restore the screen in that optional configuration.
+With the button disabled, existing shared-IRQ classification is unchanged.
+
+Validation: native tests inject failure at each LCD command, exercise restore
+retry/idempotence and repeated aborted/successful sleep cycles, verify QSPI
+encoding and allowed/conflicting button pins. Firmware CI builds default,
+expander + LCD sleep, expander + button, and backlight-only configurations.
+
+
+### Weight activity and drift rejection
+
+Idle-only `WeightActivityDetector` leaves scale filtering, tare, dose recognition
+and brewing unchanged. `WeightActivitySettings` is injectable into `PowerPolicy`;
+its initial tuning defaults are an 8 g step, a 500 ms hold with at most 1 g span,
+a 500 ms baseline time constant, 1000 ms initial quiet plateau and 500 ms maximum
+sample gap. These are hardware-tuning starting points, not a mobile settings API.
+Invalid settings fall back to defaults.
+
+The baseline tracks slow drift while small changes do not reset idle. Large
+changes freeze that baseline until a same-direction plateau confirms addition
+or removal. Spikes, reversals and unsettled candidates do not count. The 8 g
+threshold exceeds the full 6 g span of +/-3 g vibration. A small bean addition
+below threshold intentionally does not extend idle; touch/buttons still do,
+and brewing/editor inhibition still keeps the scale awake.
+
+Only fresh scale sample timestamps advance confirmation; repeated UI readings
+cannot manufacture persistence. Invalid readings, acquisition gaps and every
+resume (including cancelled sleep) discard pending candidates and re-establish
+a quiet baseline without activity. Touch wake independently restarts idle.
+HX711 is powered down during CPU sleep, so adding weight cannot wake CPU sleep.
+
+Native regression traces cover +/-0.1/1/3 g vibration at several periods,
++/-0.1/1 g/s drift, cup addition/removal, exact threshold and hold boundaries,
+small doses, spikes, reversals, unsettled loads, stale/duplicate samples,
+invalid readings, resume offsets and custom tuning. Replay real device logs to
+validate thresholds, especially slow placement and vibration above 3 g; weight
+alone cannot distinguish a persistent mechanical shift from a user load.
+
+### Rev1.1 peripheral sleep transaction
+
+`SMART_SCALE_PERIPHERAL_SLEEP` defaults on only when verified touch wake is
+selected. Disable it for the previous LCD/HX711-only path. This option is specific
+to the populated Rev1.1 QMI8658 (0x6B, WHO_AM_I=0x05) and PCF85063 (0x51).
+Missing devices, wrong IMU identity, I2C errors or mismatched readback reject the
+sleep attempt. No default register values are fabricated on communication errors.
+
+| Device / rail | Sleep behavior | Wake / abort behavior |
+| --- | --- | --- |
+| LCD | Existing Display Off/Sleep In, with DMA drained and LVGL stopped | Existing Sleep Out/Display On and full redraw before illumination |
+| Backlight | EXIO1 low; explicitly stop LEDC output at inactive HIGH | Duty/update restarts PWM behind EXIO1 before enabling backlight |
+| HX711 | Existing acquisition acknowledgement after PD_SCK high for 80 us | Existing power-up, queue/filter reset and fresh stable samples; no weight wake |
+| QMI8658 | Save CTRL7/CTRL1; disable accel/gyro, disable INT1/INT2 output, set power-down | Restore CTRL1 before CTRL7; verify readback |
+| PCF85063 | Save control registers; mask correction/alarm/periodic/timer IRQs, disable CLKOUT | Restore controls without clearing AF/TF; time/date/countdown remain running |
+| Battery ADC | Synchronous conversions suppressed during peripheral quiet interval | Next sample uses fresh ADC conversions |
+| Touch / TCA9554 | Power retained; no touch sleep or expander reset | Existing wake classification and first-gesture suppression |
+| SYS_EN / shared 3V3 | Remain on; no rail removal | No cold initialization required |
+| ES8311 / NS4150B audio | Not initialized by this application; no I2S clocks generated; **no new codec/amp shutdown command** | Unchanged; reset/idle analog current is not yet verified |
+| SD | No mounted card or active SD host; **no card rail switch implemented** | Remove card for low-current validation, especially with SD-pin HX711/button wiring |
+| Radio | No Wi-Fi/BLE stack initialized in current application | A future radio service must add its own suspend acknowledgement |
+
+The transaction runs after HX711 suspension and LVGL stop, **before** the shared
+expander input baseline is acknowledged. All five register snapshots must succeed
+before the first write. Each attempted write is marked for rollback before I2C
+submission, since a reported bus failure does not prove that the IC ignored it.
+Every write is read back. Wake, late touch, LCD-command failure and rejected CPU
+sleep all restore the register snapshot in reverse order. A failed restore retains
+the remaining snapshot, blocks another sleep, and is retried on the active display
+transition. It does not discard the snapshot or overwrite it with a new attempt.
+
+RTC AF/TF bits use write-zero-to-clear semantics: both are written as 1 during
+prepare and restore, and excluded from readback equality. Events arising after
+the snapshot therefore remain pending. Restoring enabled RTC IRQs can assert the
+shared line again; it is deliberately not acknowledged solely for diagnostics.
+This firmware has no RTC alarm service or IMU consumer. Future scheduled RTC wake,
+IMU wake, or concurrent sensor/audio services must negotiate sleep ownership;
+they must not concurrently change the saved registers or expect these IRQs to
+wake the CPU while this option is enabled.
+
+Backlight diagnostic read failure no longer changes a successful screen restore
+into failure or leaves the display refresh timer paused.
+
+Implementation sources:
+- [Waveshare Rev1.1 schematic](https://github.com/waveshareteam/ESP32-S3-Touch-LCD-3.49-V2/blob/1c157e6e8e68b89fd4dc400f46bf1724cb64a57e/schematic/ESP32-S3-Touch-LCD-3.49%20V2.pdf).
+- [Vendor QMI8658 driver](https://github.com/waveshareteam/ESP32-S3-Touch-LCD-3.49-V2/blob/1c157e6e8e68b89fd4dc400f46bf1724cb64a57e/ESP-IDF/03_I2C_QMI8658/components/SensorLib/src/SensorQMI8658.hpp), `powerDown`, `enableINT`, and CTRL register definitions.
+- [NXP PCF85063A datasheet](https://www.nxp.com/docs/en/data-sheet/PCF85063A.pdf), Control_1/Control_2, interrupt scheme, CLKOUT and Timer_mode.
+
+Native `peripheral_sleep_test` injects every snapshot/write/readback failure and
+every restore/write/readback failure, including writes accepted by the device
+but reported failed by the bus. It checks pending RTC flags, retained timekeeping,
+wrong identity, readback mismatch, idempotent rollback and 100 transaction cycles.
+These tests cover register policy; they do not simulate ESP-IDF, DMA or circuitry.
+
+#### Measurements still required
+
+Record board revision, firmware SHA/config, battery voltage, inserted SD card and
+USB state alongside each measurement. Measure at the battery supply, not only the
+USB cable. No measured current or saving is available from software tests.
+
+| Configuration | Battery-side current | Touch wake / 100 cycles | Notes |
+| --- | --- | --- | --- |
+| Active | Not measured | Not applicable | Fixed brightness |
+| Dim | Not measured | Pending | 30% brightness |
+| Screen off, CPU awake | Not measured | Pending | Polling continues |
+| Light sleep, peripheral option off | Not measured | Pending | Baseline |
+| Light sleep, peripheral option on | Not measured | Pending | Check GPIO8 and IMU/RTC readbacks |
+
+Verify on battery and USB: held touch, touch during preparation, shared IRQ,
+I2C disconnect/reconnect, LCD failure, rejected sleep, stable HX711 recovery and
+preserved tare/session. Separately measure codec/amp and inserted-card residual
+current before claiming that **all** peripherals are powered off or minimized.
+
+### Immediate repeated-packet idle policy
+
+This supersedes the earlier all-A5 sleep qualification above. A successful
+14-byte read with all bytes identical (including A5, D5 and 84) is classified as
+`released` with `contacts=0` and reason `repeated_idle`, before interpreting its
+contact byte. Both UI and sleep accept this as a zero-contact release immediately;
+there is no 300 ms qualification or polling loop. Controller fault diagnosis is
+separate from this battery sleep policy.
+
+Each sleep precheck reads a fresh packet. Valid contacts cancel entry; other
+malformed packets and I2C failures defer it. The optional wake button, checks on
+both sides of expander acknowledgement, and final IRQ check before CPU sleep
+remain. A zero-contact release proceeds to expander acknowledgement; the final
+IRQ guard still blocks sleep if an interrupt remains asserted.
+
+Native tests cover uniform byte values, mixed malformed responses, transport
+failure, valid contacts, IRQ guards and touch arriving after acknowledgement.
+Logs distinguish `screen_off cpu_sleep=0`, `touch_qualifying mode=single_read`,
+`touch_qualification`, `sleep_enter` and `sleep_return`.
+
+### Black-screen wake fallback and diagnostics
+
+Hardware captures reached LCD Sleep In, lost the USB console, then showed a new
+application boot with persistent touch I2C errors. They do not establish whether
+touch wake failed, panel restore failed, or a manual power/reset intervened.
+
+LCD Sleep In now defaults off and requires BOTH `SMART_SCALE_LCD_SLEEP` and the
+new `SMART_SCALE_LCD_SLEEP_TOUCH_VERIFIED` option. Existing configurations with
+only LCD_SLEEP=y therefore use backlight-only CPU sleep automatically. HX711 and
+configured IMU/RTC sleep still operate. The separate opt-in is needed because a
+Kconfig default change alone does not override an existing saved y value.
+
+When experimental LCD sleep is enabled, a five-second CPU timer wake is armed as
+a recovery guard. Timer wake forces visible recovery and disables further LCD
+Sleep In until reboot; future sleeps use the backlight-only path. Timer wake is
+not proof of touch wake. Timer arming failure cancels sleep, and every exit removes
+the timer source before restoration. Successful GPIO wake continues normal use.
+Normal backlight-only sleep does not add periodic timer wakeups.
+
+Persistent touch I2C errors now trigger a reset of the dedicated touch bus after
+three failed polls, with retries no faster than five seconds. A fresh probe must
+succeed before declaring recovery. The first gesture stays suppressed. This does
+not blindly reset the shared panel IC or claim to repair physical bus faults.
+Optional IMU/RTC restore errors retain their snapshot and block peripheral sleep
+preparation, but no longer block LCD restoration and normal display dimming.
+
+Boot logs report requested/effective LCD sleep, the additional verification flag,
+peripheral sleep, wake button and the ELF hash prefix. Compare these runtime
+values with menuconfig instead of inferring build settings from absent messages.
+
+Before the final IRQ guard, the diagnostic queue drains with a 200 ms deadline
+and emits a synchronous sleep checkpoint. This reduces loss of queued logs but
+cannot guarantee USB delivery: ESP32-S3 USB Serial/JTAG can disconnect or remain
+unresponsive across light sleep. Logger timeout does not hang sleep entry.
+
+Validation: native tests include configuration migration (old LCD_SLEEP=y alone
+is disabled), default and explicitly verified configurations, plus existing LCD
+restore, peripheral rollback and touch qualification regressions. CI adds an
+explicit experimental-LCD firmware configuration. Physical touch wake, timer
+recovery, panel visibility and I2C fault recovery still require board testing.

@@ -7,6 +7,23 @@
 #endif
 
 namespace smart_scale::config {
+#if defined(CONFIG_SMART_SCALE_LCD_SLEEP)
+inline constexpr bool lcd_sleep_requested = true;
+#else
+inline constexpr bool lcd_sleep_requested = false;
+#endif
+#if defined(CONFIG_SMART_SCALE_LCD_SLEEP_TOUCH_VERIFIED)
+inline constexpr bool lcd_sleep_touch_verified = true;
+#else
+inline constexpr bool lcd_sleep_touch_verified = false;
+#endif
+inline constexpr bool lcd_sleep_enabled = lcd_sleep_requested && lcd_sleep_touch_verified;
+#if defined(CONFIG_SMART_SCALE_PERIPHERAL_SLEEP)
+inline constexpr bool peripheral_sleep_enabled = true;
+#else
+inline constexpr bool peripheral_sleep_enabled = false;
+#endif
+
 inline constexpr int screen_width = board349::width;
 inline constexpr int screen_height = board349::height;
 inline constexpr std::uint32_t ui_period_ms = 100;
@@ -72,5 +89,16 @@ static_assert(hx711_dout != hx711_sck, "HX711 DOUT and SCK must differ");
 static_assert(hx711_dout != 43 && hx711_dout != 44 && hx711_sck != 43 && hx711_sck != 44,
               "HX711 GPIO43/44 conflicts with UART0; select USB Serial/JTAG console");
 #endif
+#if defined(ESP_PLATFORM) && defined(CONFIG_SMART_SCALE_WAKE_BUTTON)
+inline constexpr int wake_button = CONFIG_SMART_SCALE_WAKE_BUTTON_GPIO;
+#else
+inline constexpr int wake_button = -1;
+#endif
+constexpr bool wake_button_pin_valid(int pin, int dout, int sck) {
+    return pin == -1 || ((pin >= 38 && pin <= 41) && pin != dout && pin != sck);
+}
+static_assert(wake_button_pin_valid(wake_button, hx711_dout, hx711_sck),
+              "Wake button must use free header GPIO38-41, not an HX711 pin");
 inline constexpr int reset_button = 0; // BOOT, not the hardware EN/reset switch.
 }
+
