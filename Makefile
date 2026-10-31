@@ -91,6 +91,7 @@ test:
 	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main tests/battery_history_test.cxx -o build-host/battery_history_tests
 	@./build-host/battery_history_tests
 preview:
+	@./scripts/host.sh --rail-compact
 	@./scripts/host.sh --screenshots
 	@./scripts/host.sh --live-screenshots
 	@./scripts/host.sh --coffee-screenshots
@@ -99,6 +100,7 @@ simulator:
 
 .PHONY: preview-wide simulator-wide
 preview-wide:
+	@./scripts/host.sh --rail-wide
 	@./scripts/host.sh --wide-screenshots
 	@./scripts/host.sh --wide-live-screenshots
 simulator-wide:
