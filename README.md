@@ -48,20 +48,20 @@ For the interactive desktop simulator, install SDL2 development files (`brew ins
 ## Use the physical scale
 
 1. Connect the HX711 as described in [the wiring guide](docs/hx711.md), then build and flash.
-2. Tap **Calibrate**. With the platform empty and stable, **Capture empty zero**. Place a known **20 g, 50 g, or 100 g** mass, wait for stability, and tap its mass. Calibration is saved across reboots.
-3. Remove the mass. Registered objects are recognized within ±40 g when placed and stable; overlapping matches require manual selection. Recognition does not automatically tare. Place a container, wait for **Stable**, and tap **Tare** to weigh ingredients.
-4. Set the coffee dose if required. Tap **Start brew** with the vessel in place, before pouring. This captures a fresh baseline and starts the timer. Tap **Finish** to save a RAM record.
-5. Use **Reset** or **Next brew**, then remove the load. A disconnected sensor displays `?`; a failed measurement during brewing invalidates that brew.
+2. If calibration data is missing, the weight card shows **Tap to calibrate**. Tap the card. With the platform empty and stable, **Capture empty zero**. Place a known **20 g, 50 g, or 100 g** mass, wait for stability, and tap its mass. Calibration is saved across reboots.
+3. Remove the mass. Registered objects are recognized within ±40 g when placed and stable; overlapping matches require manual selection. Recognition does not automatically tare. Place a container, wait for **Stable**, and tap the weight card (**Tap to tare**) to weigh ingredients.
+4. Register the vessel and coffee dose, wait for **Pour to start**, then pour. Sustained flow automatically starts brewing and the timer; there is no Start brew button. Tap **Finish** to save a RAM record.
+5. Use the physical reset action or **Next brew**, then remove the load. A disconnected sensor displays `?`; a failed measurement during brewing invalidates that brew.
 
 ## Try the desktop demo screens
 
 1. Boot into the known-cup fixture: 142.6 g cup, automatic tare, measured 18.2 g dose.
 2. Touch the **entire object card** to choose equipment or register a new profile. Touch the dose card for the dose editor: 18/20/22 g presets, plus ±1 g and ±0.1 g buttons across 0.1–60.0 g. Hold an adjustment button to repeat after 400 ms, every 100 ms until release or slide-off. Dose changes save immediately; close returns to weighing.
 3. Tap the mode at the top to switch directly between Espresso and Pour-over. Mode and dose are locked during extraction in this prototype.
-4. Tap **Run demo** to inject simulated liquid. This is a development control; production brewing will be triggered by sensor events. The app switches to extraction when that event arrives, including unknown-object cases.
-5. Use **Scenarios** for known cup, unknown baseline, the portafilter → beans → removal → cup sequence, or V60 bloom/pours. The sequence starts after Run demo. A pour-over pause does not end the brew.
+4. In the wide simulator, press **Space** to inject simulated liquid (legacy screen: **Run demo**). This is a development control; production brewing will be triggered by sensor events. The app switches to extraction when that event arrives, including unknown-object cases.
+5. Press **S** for Scenarios in the wide simulator (legacy screen: **Scenarios**) for known cup, unknown baseline, the portafilter → beans → removal → cup sequence, or V60 bloom/pours. The sequence starts after Run demo. A pour-over pause does not end the brew.
 6. **Finish** opens results. Target arrival only alerts; simulated flow continues until Finish. **Next brew** starts an empty session after simulated load removal.
-7. On-screen **Reset**, the board's **BOOT/GPIO0** button, or desktop **R** clears session values and marks an active RAM record aborted. Registered profiles remain until reboot. The board's hardware RESET/EN switch reboots the MCU and cannot execute this application action.
+7. The board's **BOOT/GPIO0** button or desktop **R** clears session values and marks an active RAM record aborted. Registered profiles remain until reboot. The board's hardware RESET/EN switch reboots the MCU and cannot execute this application action.
 
 Registration has three steps: type (Container, Portafilter, or Pour-over set), simulated stable empty weight, and a 20-icon picker with distinct coffee, nature, sky, and personal symbols. Names are generated as the equipment type plus the selected icon; no keyboard is shown. Tap the stability badge to test the unstable state; Continue is disabled until stable. The list holds eight profiles, including fixtures. Tap a row’s trash button and confirm Remove to delete a profile. Current matching selections are cleared without taring; saved brew records are retained. Removal is disabled during brewing and results. Optional recipe defaults and editable measurement configurations are deferred.
 
@@ -112,3 +112,13 @@ See [power management](docs/power-management.md).
 Use `make menuconfig` → **Smart scale HX711** to select two distinct pins from
 38, 39, 40, 41, 43, 44. Defaults remain DOUT=44 / SCK=43. See the
 [pin-sharing constraints and wiring procedure](docs/hx711.md#select-alternative-header-gpios-349-v2).
+
+### Brew guide and color themes
+
+The ready weight card supports tap-to-tare; extraction shows actual mass against
+window targets and a larger Finish button. Sage Green is the default, with
+Espresso Amber and Porcelain Gray available through the firmware theme interface
+for future mobile selection. There is no on-scale settings page.
+Run `make preview-themes` for all three palettes. See
+[brew guide and theme integration](docs/brew-guide-and-themes.md) for stable theme
+IDs, persistence, default windows, and the future mobile integration contract.

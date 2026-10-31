@@ -1,5 +1,6 @@
 #pragma once
 #include "session.hxx"
+#include "theme.hxx"
 #include "weight_display.hxx"
 #include "registration_measurement.hxx"
 #include "lvgl.h"
@@ -12,6 +13,9 @@ class View {
 public:
     explicit View(Controller& controller) : controller_(controller) {}
     void init();
+    // Invoke on the serialized UI task / under the LVGL lock. Persists before applying.
+    bool set_theme(Theme theme);
+    Theme theme() const { return theme_; }
     void update();
     void battery(const BatterySnapshot& value) { battery_ = value; }
     void history(const BatteryHistory& value) { if (history_ != &value) history_revision_ = UINT64_MAX; history_ = &value; }
@@ -37,6 +41,8 @@ private:
     void draw_history(lv_obj_t* parent);
     void refresh_history();
     static void draw_history_plot(lv_event_t* event);
+    static void draw_brew_plot(lv_event_t* event);
+    static void draw_card_icon(lv_event_t* event);
     void draw_registration(lv_obj_t* parent);
     void action(Action action, int value);
     static void clicked(lv_event_t* event);
@@ -45,6 +51,7 @@ private:
     void schedule_draw();
     void refresh_values();
     Controller& controller_;
+    Theme theme_{Theme::sage_green};
     BatterySnapshot battery_;
     const BatteryHistory* history_{};
     lv_obj_t* history_plot_{};
@@ -63,6 +70,7 @@ private:
     lv_obj_t *screen_{}, *weight_{}, *weight_unit_{}, *time_{}, *flow_{}, *status_{}, *object_text_{}, *dose_text_{},
              *target_text_{}, *chart_{}, *dose_value_{}, *icon_name_{}, *kind_input_{},
              *chart_max_{}, *chart_time_{}, *current_point_{}, *object_weight_{};
+    std::array<lv_obj_t*, 12> guide_ticks_{};
     lv_chart_series_t *series_{}, *target_series_{};
     Phase rendered_phase_{Phase::ready};
     Dialog dialog_{Dialog::none};
@@ -76,11 +84,11 @@ private:
     std::array<lv_obj_t*, 20> icon_buttons_{};
     std::string registration_error_;
     float registration_weight_{156.8F};
-    lv_obj_t *start_button_{}, *tare_button_{};
+    lv_obj_t *tare_button_{}, *weight_hint_{}, *object_pill_{}, *coffee_pill_{};
     lv_obj_t *coffee_card_{}, *coffee_hint_{}, *coffee_check_{}, *object_card_{}, *object_check_{}, *stage_text_{};
     int coffee_visual_state_{-1};
     bool object_visual_selected_{};
-    lv_obj_t *sensor_status_{}, *calibration_message_{}, *calibration_weight_label_{}, *registration_weight_label_{}, *registration_status_{}, *registration_next_{};
+    lv_obj_t *calibration_message_{}, *calibration_weight_label_{}, *registration_weight_label_{}, *registration_status_{}, *registration_next_{};
     std::string calibration_message_text_;
 };
 }

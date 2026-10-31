@@ -48,6 +48,12 @@ inline constexpr float stable_hard_shift_g = 0.75F;
 inline constexpr std::uint64_t auto_flow_bucket_ms = 200, auto_flow_confirm_ms = 1000;
 inline constexpr float auto_flow_gain_g = 0.60F, auto_flow_step_g = 0.025F;
 inline constexpr float auto_flow_backstep_g = 0.20F, auto_flow_jump_g = 3.0F;
+// Slow/intermittent flow needs a longer window; do not lower the fast gate.
+inline constexpr std::uint64_t auto_flow_slow_min_ms = 3000, auto_flow_history_ms = 6000;
+inline constexpr float auto_flow_slow_gain_g = 0.40F, auto_flow_slow_rate_g_s = 0.08F;
+inline constexpr float auto_flow_slow_step_g = 0.008F;
+// Large positive steps need subsequent sustained rises, not immediate disarming.
+inline constexpr float auto_flow_max_bucket_gain_g = 12.0F;
 inline constexpr float display_hysteresis_g = 0.15F;
 inline constexpr float display_zero_deadband_g = 0.15F;
 // Header GPIO44/43 replace the old GPIO17/18 pair, now used by touch I2C.

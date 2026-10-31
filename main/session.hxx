@@ -1,5 +1,6 @@
 #pragma once
 #include "config.hxx"
+#include "brew_guide.hxx"
 #include "scale.hxx"
 #include "flow_start.hxx"
 #include <array>
@@ -28,6 +29,8 @@ struct Session {
     Mode mode{Mode::espresso};
     std::optional<Equipment> weighing_tool, vessel, active_object;
     std::optional<float> dose_g, target_g;
+    std::optional<BrewGuide> guide;
+    BrewGuide brew_guide() const { return guide.value_or(default_brew_guide(mode == Mode::pour_over)); }
     DoseSource dose_source{DoseSource::unknown};
     float net_g{}, seconds{}, flow_g_s{};
     bool loaded{}, baseline_known{}, uncertain{}, paused{};
@@ -72,6 +75,7 @@ public:
     bool select_equipment(std::size_t index);
     bool set_dose(float grams, DoseSource source = DoseSource::manual);
     bool set_mode(Mode mode);
+    bool set_brew_guide(const BrewGuide& guide);
     bool register_equipment(Equipment equipment, bool stable);
     bool remove_equipment(std::uint32_t id);
     void remove_object();

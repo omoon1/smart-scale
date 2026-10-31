@@ -2,9 +2,73 @@
 #include <cassert>
 #include <cmath>
 #include <iostream>
+#include <limits>
+#include <cstdlib>
 using namespace smart_scale;
 
+// Exercise the complete calibrated acquisition/controller path, including median
+// filtering, recognition and tare. Both load-cell polarities and sample rates.
+template<class Signal>
+void scenario(const char* name, unsigned interval, float polarity, Signal signal,
+              unsigned duration, bool expect_start, bool jitter = false) {
+    Controller c(true);
+    assert(c.scale().restore({0, polarity * 1000}));
+    assert(c.register_equipment({0, Kind::pour_over_set, "Set", "", 500.0F, {}}, true));
+    std::uint64_t now = 0;
+    auto feed = [&](float grams, unsigned dt) {
+        c.sensor_sample(static_cast<int>(std::lround(grams * polarity * 1000)), now += dt);
+        c.tick(dt * .001F);
+    };
+    while (now < 5000) feed(500, interval);
+    assert(c.set_dose(18) && c.session().brew_prepared);
+    const auto start = now;
+    unsigned count = 0;
+    while (now - start < duration && c.session().phase == Phase::ready) {
+        const unsigned dt = jitter ? interval + (++count % 3) * interval / 4 : interval;
+        feed(500 + signal(static_cast<float>(now + dt - start) / 1000), dt);
+    }
+    const bool started = c.session().phase == Phase::brewing;
+    if (started != expect_start) {
+        std::cerr << "FAILED " << name << " interval=" << interval << " polarity=" << polarity << '\n';
+        std::abort();
+    }
+    if (started) {
+        assert(c.session().seconds > 0 && c.session().net_g > 0);
+        assert(c.session().seconds <= (now - start) * .001F + .001F);
+        assert(!c.session().uncertain);
+    }
+    std::cout << name << " passed dt=" << interval << " polarity=" << polarity
+              << " elapsed_ms=" << now - start << '\n';
+}
+void varied_flows() {
+    for (unsigned dt : {100U, 13U}) for (float sign : {1.0F, -1.0F}) {
+        scenario("slow_drip_0.1", dt, sign, [](float t) { return .1F * t; }, 6500, true);
+        scenario("slow_noisy_0.15", dt, sign, [](float t) { return .15F * t + .015F * std::sin(t * 8); }, 6500, true);
+        scenario("fast_pour_30", dt, sign, [](float t) { return 30 * t; }, 3000, true);
+        scenario("intermittent_drops", dt, sign, [](float t) { return .16F * std::floor(t / .7F); }, 6500, true);
+        scenario("pause_resume", dt, sign, [](float t) { return t < .5F ? t : t < 2 ? .5F : .5F + (t - 2) * 2; }, 6000, true);
+        scenario("jittered_samples", dt, sign, [](float t) { return 2 * t; }, 4000, true, true);
+        scenario("slow_drift", dt, sign, [](float t) { return .03F * t; }, 20000, false);
+        scenario("stationary_noise", dt, sign, [](float t) { return .3F * std::sin(t * 8); }, 10000, false);
+        scenario("single_step", dt, sign, [](float t) { return t < .5F ? 0.F : 10.F; }, 10000, false);
+        scenario("tap_return", dt, sign, [](float t) { return t > .5F && t < .8F ? 4.F : 0.F; }, 10000, false);
+        scenario("small_step", dt, sign, [](float t) { return t < .5F ? 0.F : .7F; }, 10000, false);
+        scenario("step_then_flow", dt, sign, [](float t) { return t < .5F ? 0.F : t < 2 ? 10.F : 10.F + 2 * (t - 2); }, 6000, true);
+    }
+    FlowStartDetector detector;
+    assert(!detector.update(100, 100, 100, true));
+    assert(!detector.update(101, 101, 300, false));
+    assert(!detector.update(102, 102, 2000, false)); // Timeout requires stable rearm.
+    for (unsigned ms = 2200; ms < 4000; ms += 200) assert(!detector.update(102 + ms * .001F, 100, ms, false));
+    assert(!detector.update(100, 100, 4100, true));
+    assert(!detector.update(101, 101, 4300, false));
+    assert(!detector.update(102, 102, 4200, false)); // Backwards timestamp discards evidence.
+    assert(!detector.update(103, 103, 4500, false));
+    assert(!detector.update(std::numeric_limits<float>::quiet_NaN(), 100, 4700, true));
+    assert(!detector.update(100, std::numeric_limits<float>::infinity(), 4900, true));
+}
 int main() {
+    varied_flows();
     for (const float rate : {0.1F, 1.0F, 8.0F}) {
         FlowStartDetector detector;
         for (unsigned ms = 100; ms <= 2000; ms += 100)

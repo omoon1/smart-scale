@@ -113,8 +113,8 @@ void run_wide_checks(smart_scale::ui::View& view, smart_scale::Controller& contr
     click(view, 610, 26);
     view.open(ui::Dialog::calibration); screenshot(view, "wide-09-calibration");
     click(view, 610, 26);
-    click(view, 460, 146); screenshot(view, "wide-10-scenarios");
-    click(view, 150, 80); click(view, 320, 146);
+    view.open(ui::Dialog::demo); screenshot(view, "wide-10-scenarios");
+    click(view, 150, 80); controller.run_demo();
     for (int i = 0; i < 190; ++i) { controller.tick(.1F); pump(view, 100); }
     require(controller.session().phase == Phase::brewing, "wide run starts brewing");
     screenshot(view, "wide-11-brewing");
@@ -150,7 +150,15 @@ void run_wide_live_checks(smart_scale::ui::View& view, smart_scale::Controller& 
     view.battery(decode_voltage_battery(3900));
     std::filesystem::create_directories("build-host/screens");
     screenshot(view, "wide-15-disconnected");
-    click(view, 496, 146); screenshot(view, "wide-16-live-calibration");
+    require(has_label(lv_scr_act(), "Tap to calibrate"), "missing calibration offers card action");
+    require(!has_label(lv_scr_act(), "Calibrate") && !has_label(lv_scr_act(), "Reset") &&
+            !has_label(lv_scr_act(), "Start brew") && !has_label(lv_scr_act(), "Place a registered container."),
+            "wide setup removes separate actions and placement hint");
+    click(view, 100, 90);
+    require(has_label(lv_scr_act(), "Calibrate scale"), "weight card opens calibration without sensor data");
+    click(view, 610, 26);
+    require(has_label(lv_scr_act(), "Tap to calibrate"), "cancelled calibration remains accessible");
+    click(view, 100, 90); screenshot(view, "wide-16-live-calibration");
     std::uint64_t now{};
     auto feed = [&](int raw) {
         for (int i = 0; i < 60; ++i) { controller.sensor_sample(raw, now += 100); controller.tick(.1F); pump(view, 100); }
@@ -159,6 +167,13 @@ void run_wide_live_checks(smart_scale::ui::View& view, smart_scale::Controller& 
     require(controller.scale().ready() && std::abs(controller.scale().gross() - 100) < .01F,
             "wide touch calibration captures zero and 100 g mass");
     screenshot(view, "wide-17-calibrated"); click(view, 610, 26);
+    require(has_label(lv_scr_act(), "Tap to tare") && !has_label(lv_scr_act(), "Tap to calibrate"),
+            "successful calibration changes card to tare");
+    controller.sensor_sample(std::nullopt, now += 1100); controller.tick(1.1F); pump(view);
+    click(view, 100, 90);
+    require(!has_label(lv_scr_act(), "Calibrate scale") && has_label(lv_scr_act(), "Tap to tare"),
+            "sensor fault with calibration cannot open calibration or tare");
+    feed(110000);
     require(controller.register_equipment({0, Kind::pour_over_set, "Pour-over set", "", 500.0F, {}}, true), "wide live profile");
     click(view, 70, 24);
     feed(10000); screenshot(view, "wide-18-load-container");
@@ -171,9 +186,17 @@ void run_wide_live_checks(smart_scale::ui::View& view, smart_scale::Controller& 
     screenshot(view, "wide-20-save-coffee"); click(view, 520, 70);
     require(controller.session().dose_source == DoseSource::measured, "wide card saves measured coffee");
     feed(528000); screenshot(view, "wide-21-ready-live");
+    click(view, 300, 146); // Former Start brew position.
+    // The former footer is now occupied by full-height cards.
+    require(controller.session().phase == Phase::ready && controller.session().dose_g,
+            "removed controls neither start nor reset a prepared brew");
     click(view, 520, 70); click(view, 460, 132); click(view, 610, 26);
     require(std::abs(*controller.session().dose_g - 18.1F) < .02F, "wide saved coffee manual edit");
     feed(528000);
+    const auto epoch = controller.scale().display_epoch();
+    click(view, 100, 90);
+    require(controller.scale().display_epoch() != epoch && std::abs(controller.session().net_g) < .01F,
+            "wide weight card tares ready stable scale");
     for (unsigned i = 1; i <= 25 && controller.session().phase == Phase::ready; ++i) {
         controller.sensor_sample(528000 + i * 200, now += 100); controller.tick(.1F); pump(view, 100);
     }
@@ -195,13 +218,14 @@ void run_wide_live_checks(smart_scale::ui::View& view, smart_scale::Controller& 
 }
 int main(int argc, char** argv) {
     const bool interactive = argc > 1 && std::string(argv[1]) == "--interactive";
+    const bool theme_test = argc > 1 && std::string(argv[1]) == "--theme-screenshots";
     const bool smoke = argc > 1 && std::string(argv[1]) == "--interactive-smoke";
     const bool wide_test = argc > 1 && std::string(argv[1]) == "--wide-screenshots";
     const bool wide_live = argc > 1 && std::string(argv[1]) == "--wide-live-screenshots";
     const bool wide_interactive = argc > 1 && std::string(argv[1]) == "--wide-interactive";
     // The default simulator follows the device configuration. Keep the legacy
     // screenshot fixtures at 480x320 for regression coverage.
-    if (interactive || smoke || wide_test || wide_interactive || wide_live) {
+    if (interactive || smoke || wide_test || wide_interactive || wide_live || theme_test) {
         width = smart_scale::config::screen_width;
         height = smart_scale::config::screen_height;
     }
@@ -224,6 +248,44 @@ int main(int argc, char** argv) {
     if (coffee_test) controller.set_mode(smart_scale::Mode::pour_over);
     smart_scale::ui::View view(controller);
     view.init();
+    if (theme_test) {
+        using namespace smart_scale;
+        std::filesystem::create_directories("build-host/screens");
+        require(view.theme() == Theme::sage_green, "default Sage Green");
+        require(!view.set_theme(static_cast<Theme>(255)), "invalid theme rejected");
+        const char* names[] = {"sage-green", "espresso-amber", "porcelain-gray"};
+        for (unsigned i = 0; i < 3; ++i) {
+            controller.load_scenario(Scenario::pour_over);
+            view.open(ui::Dialog::none);
+            require(view.set_theme(static_cast<Theme>(i)), "theme changes");
+            pump(view);
+            screenshot(view, (std::string(names[i]) + "-ready").c_str());
+            view.open(ui::Dialog::dose); pump(view);
+            screenshot(view, (std::string(names[i]) + "-dose").c_str());
+            view.open(ui::Dialog::none); pump(view);
+            controller.run_demo(); for(int sample=0;sample<180;++sample){controller.tick(.1F);pump(view,100);}
+            const auto before = controller.session();
+            require(view.set_theme(static_cast<Theme>((i+1)%3)), "theme can change during brew");
+            pump(view);
+            require(controller.session().net_g == before.net_g && controller.session().seconds == before.seconds &&
+                    controller.session().phase == before.phase, "theme preserves running session");
+            require(view.set_theme(static_cast<Theme>(i)), "restore theme"); pump(view);
+            require(!controller.tare(), "controller rejects tare during brew");
+            const float net = controller.session().net_g;
+            click(view, 355, 90);
+            require(controller.session().net_g == net, "brew weight tap does not tare");
+            require(!has_label(lv_scr_act(), "Tare"), "no brew tare control");
+            screenshot(view, (std::string(names[i]) + "-brewing").c_str());
+            click(view, 555, 140);
+            require(controller.session().phase == Phase::result, "large Finish button");
+            screenshot(view, (std::string(names[i]) + "-result").c_str());
+            controller.reset(); controller.remove_object(); view.open(ui::Dialog::none); pump(view);
+            require(has_label(lv_scr_act(), "Select") && has_label(lv_scr_act(), "Set dose"), "empty cards have clear actions");
+            require(!has_label(lv_scr_act(), "Run demo") && !has_label(lv_scr_act(), "Scenarios"), "simulator controls stay off device");
+            screenshot(view, (std::string(names[i]) + "-empty").c_str());
+        }
+        return 0;
+    }
     if (wide_live) {
         run_wide_live_checks(view, controller);
         return 0;
@@ -258,7 +320,7 @@ int main(int argc, char** argv) {
         require(controller.session().dose_source == DoseSource::measured, "click saves measured coffee");
         require(!has_label(lv_scr_act(), "+0.1"), "save does not open manual editor");
         feed(518000); screenshot(view, "32-start-brew");
-        require(has_label(lv_scr_act(), "Water flow starts timer."), "both registered shows ready guidance");
+        require(has_label(lv_scr_act(), LV_SYMBOL_PLAY " Pour to start"), "both registered shows ready guidance");
         const auto after_save = flush_count;
         for (unsigned i = 0; i < 15; ++i) pump(view, 100);
         require(flush_count == after_save, "saved card stops pulsing");
@@ -324,7 +386,10 @@ int main(int argc, char** argv) {
         click(view, 432, 30);
         view.battery({});
         pump(view);
-        click(view, 268, 286);
+        require(has_label(lv_scr_act(), "Tap to calibrate"), "legacy calibration prompt");
+        require(!has_label(lv_scr_act(), "Start brew") && !has_label(lv_scr_act(), "Reset") &&
+                !has_label(lv_scr_act(), "Calibrate"), "legacy setup has no separate actions");
+        click(view, 100, 145);
         screenshot(view, "17-hx711-calibrate");
         std::uint64_t now = 0;
         auto feed = [&](int raw) {
@@ -343,12 +408,13 @@ int main(int argc, char** argv) {
         screenshot(view, "18-hx711-calibrated");
         click(view, 366, 32); // Close dialog.
         feed(8600); // 100 g vessel.
-        click(view, 172, 286); // Tare.
+        click(view, 100, 145); // Tap weight to tare.
         require(std::abs(controller.scale().net()) < 0.01F, "touch tare");
         screenshot(view, "19-hx711-live");
         // A tare changes the idle net reading, never the gross calibration or
         // registration readout. Both dialogs use the same timed presentation.
-        click(view, 268, 286);
+        // Exercise calibration rendering directly; it is no longer a setup button.
+        view.open(smart_scale::ui::Dialog::calibration); pump(view);
         require(has_label(lv_scr_act(), "100.0 g"), "calibration displays gross despite tare");
         screenshot(view, "22-hx711-calibration-gross");
         controller.sensor_sample(std::nullopt, now += 1100); controller.tick(1.1F); pump(view);
@@ -386,8 +452,10 @@ int main(int argc, char** argv) {
         click(view, 366, 32); // Close equipment list.
         feed(8254); // Actual placement ~99.6 g, registered mass ~100.12 g.
         require(controller.set_dose(18), "coffee required before manual brew");
-        click(view, 60, 286); // Start brew.
-        require(controller.session().phase == smart_scale::Phase::brewing, "touch starts real brew");
+        click(view, 60, 286); // Former Start brew position must do nothing.
+        require(controller.session().phase == smart_scale::Phase::ready, "no manual start control");
+        // Model-only fixture for the signed-weight regression below. Live UI starts via flow only.
+        require(controller.start_brew(), "signed-weight brew fixture"); pump(view);
         feed(8167); // -0.1 g net is noise, not cup removal.
         require(!controller.session().uncertain && controller.session().net_g < -.09F,
                 "negative tenth-gram reading stays in live brew despite registration offset");
@@ -449,7 +517,7 @@ int main(int argc, char** argv) {
     if (interactive || wide_interactive || smoke) {
 #ifdef SMART_SCALE_SDL
         if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) { std::cerr << SDL_GetError(); return 1; }
-        auto* window = SDL_CreateWindow("Smart Scale | dummy data | R = Reset", SDL_WINDOWPOS_CENTERED,
+        auto* window = SDL_CreateWindow("Smart Scale | Space: Run demo | S: Scenarios | R: Reset", SDL_WINDOWPOS_CENTERED,
             SDL_WINDOWPOS_CENTERED, width * 2, height * 2, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
         auto* renderer = SDL_CreateRenderer(window, -1, 0);
         if (!window || !renderer) { std::cerr << SDL_GetError(); return 1; }
@@ -466,7 +534,11 @@ int main(int argc, char** argv) {
                 if (event.type == SDL_MOUSEMOTION) { mouse_x = event.motion.x; mouse_y = event.motion.y; }
                 if (event.type == SDL_MOUSEBUTTONDOWN) mouse_down = true;
                 if (event.type == SDL_MOUSEBUTTONUP) mouse_down = false;
-                if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_r) view.reset();
+                if (event.type == SDL_KEYDOWN) {
+                    if (event.key.keysym.sym == SDLK_r) view.reset();
+                    if (event.key.keysym.sym == SDLK_SPACE) controller.run_demo();
+                    if (event.key.keysym.sym == SDLK_s) view.open(smart_scale::ui::Dialog::demo);
+                }
             }
             const auto now = SDL_GetTicks(); const auto elapsed = now - previous; previous = now;
             controller.tick(static_cast<float>(elapsed) / 1000); pump(view, elapsed);
