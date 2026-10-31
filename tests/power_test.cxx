@@ -26,19 +26,108 @@ int main() {
     assert(p.update(1000000, false) == PowerState::active);
     assert(!p.sleep_due(1000000));
     assert(p.update(1030000, false) == PowerState::dimmed);
-    PowerPolicy noise;
-    for (unsigned t = 0; t <= 360000; t += 100) noise.weight(100.0F + (t % 200 ? .1F : -.1F), t);
-    assert(noise.sleep_due(360000));
-    noise.weight(101.0F, 360100); noise.weight(101.0F, 360399);
-    assert(noise.sleep_due(360399));
-    noise.weight(101.0F, 360400); assert(!noise.sleep_due(360400));
-    PowerPolicy slow;
-    for (unsigned t=0; t<=1000; t+=100) slow.weight(100.0F + t * .001F,t);
-    assert(slow.update(30000, false) == PowerState::active);
-    PowerPolicy invalid;
-    invalid.weight(std::nullopt, 360000);
-    invalid.weight(std::numeric_limits<float>::quiet_NaN(), 360000);
-    assert(invalid.sleep_due(360000));
+    const auto prime = [](PowerPolicy& policy) {
+        for (unsigned t = 0; t <= 1000; t += 100) policy.weight(100.0F, t);
+    };
+    for (float amplitude : {.1F, 1.0F, 3.0F}) {
+        for (unsigned period : {200U, 2000U, 10000U}) {
+            PowerPolicy noise;
+            prime(noise);
+            for (unsigned t = 1100; t <= 120000; t += 100) {
+                noise.weight(100.0F + (t % period < period / 2 ? amplitude : -amplitude), t);
+                assert(noise.idle_ms(t) == t);
+            }
+            assert(noise.sleep_due(120000));
+        }
+    }
+    // Drift accumulates far beyond the step threshold without extending idle.
+    for (float rate : {-1.0F, -.1F, .1F, 1.0F}) {
+        PowerPolicy drift;
+        prime(drift);
+        for (unsigned t = 1100; t <= 120000; t += 100) {
+            drift.weight(100.0F + (t - 1000) * rate / 1000, t);
+            assert(drift.idle_ms(t) == t);
+        }
+        assert(drift.sleep_due(120000));
+    }
+    for (float step : {-100.0F, -8.0F, 8.0F, 250.0F}) {
+        PowerPolicy object;
+        prime(object);
+        for (unsigned t = 1100; t < 1600; t += 100) object.weight(100 + step, t);
+        assert(object.idle_ms(1599) == 1599);
+        object.weight(100 + step, 1600);
+        assert(object.idle_ms(1600) == 0);
+        for (unsigned t = 1700; t <= 61600; t += 100) object.weight(100 + step, t);
+        assert(object.sleep_due(61600)); // one event, not one per held sample
+    }
+    PowerPolicy spike;
+    prime(spike);
+    spike.weight(350.0F, 1100);
+    for (unsigned t = 1200; t <= 60000; t += 100) spike.weight(100.0F, t);
+    assert(spike.sleep_due(60000));
+    PowerPolicy reversal;
+    prime(reversal);
+    for (unsigned t = 1100; t <= 60000; t += 100)
+        reversal.weight(t % 200 ? 120.0F : 80.0F, t);
+    assert(reversal.sleep_due(60000));
+    PowerPolicy unstable;
+    prime(unstable);
+    for (unsigned t = 1100; t <= 60000; t += 100)
+        unstable.weight(t % 200 ? 120.0F : 125.0F, t);
+    assert(unstable.sleep_due(60000));
+    PowerPolicy small_dose;
+    prime(small_dose);
+    for (unsigned t = 1100; t <= 60000; t += 100) small_dose.weight(103.0F, t);
+    assert(small_dose.sleep_due(60000));
+    // Repeated UI reads cannot confirm a step without fresh sensor data.
+    PowerPolicy duplicate;
+    prime(duplicate);
+    duplicate.weight(350.0F, 1100);
+    for (unsigned i = 0; i < 100; ++i) duplicate.weight(350.0F, 1100);
+    assert(duplicate.idle_ms(2000) == 2000);
+    duplicate.weight(350.0F, 2000); // stale gap rebases, never confirms
+    assert(duplicate.idle_ms(2000) == 2000);
+    for (auto bad : {std::optional<float>{}, std::optional<float>{std::numeric_limits<float>::quiet_NaN()},
+                     std::optional<float>{std::numeric_limits<float>::infinity()}}) {
+        PowerPolicy recovery;
+        prime(recovery);
+        recovery.weight(350.0F, 1100); // interrupt a pending candidate
+        recovery.weight(bad, 1200);
+        for (unsigned t = 1300; t <= 60000; t += 100) recovery.weight(500.0F, t);
+        assert(recovery.sleep_due(60000));
+    }
+    PowerPolicy resumed;
+    prime(resumed);
+    resumed.reset_weight(); // called on every acquisition resume, even sleep aborts
+    for (unsigned t = 1100; t <= 60000; t += 100) resumed.weight(500.0F, t);
+    assert(resumed.sleep_due(60000));
+    resumed.activity(60000); // user wake still resets idle immediately
+    assert(!resumed.sleep_due(60000));
+    WeightActivitySettings tuning;
+    tuning.change_g = 12; tuning.hold_ms = 800;
+    PowerPolicy tuned(0, tuning);
+    prime(tuned);
+    for (unsigned t = 1100; t < 1900; t += 100) tuned.weight(120.0F, t);
+    assert(tuned.idle_ms(1899) == 1899);
+    tuned.weight(120.0F, 1900);
+    assert(tuned.idle_ms(1900) == 0);
+    PowerPolicy touch_first;
+    prime(touch_first);
+    for (unsigned t = 1100; t < 1600; t += 100) touch_first.weight(120, t);
+    touch_first.activity(1650);
+    touch_first.weight(120, 1600); // queued sample cannot backdate a touch
+    assert(touch_first.idle_ms(1650) == 0);
+    PowerPolicy backoff;
+    prime(backoff);
+    backoff.retry_sleep(60000);
+    backoff.reset_weight();
+    for (unsigned t = 60000; t <= 90000; t += 100) backoff.weight(500, t);
+    assert(backoff.sleep_due(90000)); // resume offset cannot cancel retry deadline
+    WeightActivityDetector backwards;
+    for (unsigned t = 0; t <= 1000; t += 100) assert(!backwards.sample(100, t));
+    assert(!backwards.sample(120, 1100));
+    assert(!backwards.sample(120, 900));
+    assert(!backwards.sample(120, 1400));
     WakeTouchGate gate;
     assert(!gate.filter(true,true)); assert(!gate.filter(true,false));
     assert(!gate.filter(false,false)); assert(gate.filter(true,false));

@@ -301,7 +301,7 @@ post-sleep reset, second-tap delivery, and the final sleep IRQ guard.
 verified touch wake is enabled) and `SMART_SCALE_WAKE_BUTTON` (default disabled).
 The existing `SMART_SCALE_TOUCH_WAKE_VERIFIED` opt-in still gates CPU light sleep.
 The common 30-second dim / 60-second sleep policy above also applies while
-charging. Weight thresholds and peripheral rail shutdown are unchanged.
+charging. Peripheral rail shutdown is unchanged; weight activity is described below.
 
 LCD sleep runs only during a real CPU sleep attempt, after HX711 suspension,
 LVGL stop, completed DMA and initial wake preparation. With the backlight gated
@@ -346,3 +346,33 @@ Validation: native tests inject failure at each LCD command, exercise restore
 retry/idempotence and repeated aborted/successful sleep cycles, verify QSPI
 encoding and allowed/conflicting button pins. Firmware CI builds default,
 expander + LCD sleep, expander + button, and backlight-only configurations.
+
+
+### Weight activity and drift rejection
+
+Idle-only `WeightActivityDetector` leaves scale filtering, tare, dose recognition
+and brewing unchanged. `WeightActivitySettings` is injectable into `PowerPolicy`;
+its initial tuning defaults are an 8 g step, a 500 ms hold with at most 1 g span,
+a 500 ms baseline time constant, 1000 ms initial quiet plateau and 500 ms maximum
+sample gap. These are hardware-tuning starting points, not a mobile settings API.
+Invalid settings fall back to defaults.
+
+The baseline tracks slow drift while small changes do not reset idle. Large
+changes freeze that baseline until a same-direction plateau confirms addition
+or removal. Spikes, reversals and unsettled candidates do not count. The 8 g
+threshold exceeds the full 6 g span of +/-3 g vibration. A small bean addition
+below threshold intentionally does not extend idle; touch/buttons still do,
+and brewing/editor inhibition still keeps the scale awake.
+
+Only fresh scale sample timestamps advance confirmation; repeated UI readings
+cannot manufacture persistence. Invalid readings, acquisition gaps and every
+resume (including cancelled sleep) discard pending candidates and re-establish
+a quiet baseline without activity. Touch wake independently restarts idle.
+HX711 is powered down during CPU sleep, so adding weight cannot wake CPU sleep.
+
+Native regression traces cover +/-0.1/1/3 g vibration at several periods,
++/-0.1/1 g/s drift, cup addition/removal, exact threshold and hold boundaries,
+small doses, spikes, reversals, unsettled loads, stale/duplicate samples,
+invalid readings, resume offsets and custom tuning. Replay real device logs to
+validate thresholds, especially slow placement and vibration above 3 g; weight
+alone cannot distinguish a persistent mechanical shift from a user load.

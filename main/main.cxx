@@ -95,9 +95,10 @@ extern "C" void app_main() {
             smart_scale::device::scale::Reading reading;
 
             for (unsigned i = 0; i < acquisition.capacity && acquisition.receive(reading); ++i) {
-                if (reading.gap) controller->sensor_fault();
+                if (reading.gap) { controller->sensor_fault(); power.reset_weight(); }
                 if (now_ms > reading.ms && now_ms - reading.ms > smart_scale::config::sensor_timeout_ms) {
                     controller->sensor_fault();
+                    power.reset_weight();
                     continue;
                 }
                 controller->sensor_sample(reading.raw, reading.ms);
@@ -117,8 +118,8 @@ extern "C" void app_main() {
                 power.activity(now_ms);
             }
             const auto idle_before_weight = power.idle_ms(now_ms);
-            power.weight(controller->scale().ready() ? std::optional<float>{controller->scale().gross()} : std::nullopt, now_ms);
-            if (idle_before_weight && power.idle_ms(now_ms) == 0 && applied_power != smart_scale::PowerState::active)
+            power.weight(controller->scale().ready() ? std::optional<float>{controller->scale().gross()} : std::nullopt, controller->scale().sample_ms());
+            if (power.idle_ms(now_ms) < idle_before_weight && applied_power != smart_scale::PowerState::active)
                 logger.event("power", "event=activity reason=weight state=%d", static_cast<int>(applied_power));
             if (!battery_sampled || now_ms - battery_sample_ms >= 5000) {
                 const auto battery = display.battery();
@@ -204,6 +205,7 @@ extern "C" void app_main() {
                         logger.event("power", "event=measurement_resume cycle=%u", sleep_cycle);
                         acquisition.resume(); // also cancel a timed-out suspend request
                         controller->resume_measurement();
+                        power.reset_weight(); // discard pre-sleep baseline, including aborted attempts
                         const auto resumed = esp_timer_get_time();
                         if (user_wake) power.activity(resumed / 1000);
                         else power.retry_sleep(resumed / 1000);
