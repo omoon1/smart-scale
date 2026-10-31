@@ -82,7 +82,6 @@ extern "C" void app_main() {
     std::uint64_t battery_sample_ms = 0;
     bool battery_sampled = false;
     bool battery_valid = false;
-    bool external_power = false;
     smart_scale::BatterySnapshot current_battery;
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(smart_scale::config::ui_period_ms));
@@ -124,8 +123,6 @@ extern "C" void app_main() {
             if (!battery_sampled || now_ms - battery_sample_ms >= 5000) {
                 const auto battery = display.battery();
                 current_battery = battery;
-                // Retain known power-source telemetry through transient read errors.
-                if (battery.valid && battery.source_known) external_power = battery.external_power;
                 view.battery(battery);
                 if (!battery_sampled || battery.valid != battery_valid)
                     ESP_LOGI("power", "battery telemetry %s", battery.valid ? "available" : "unavailable");
@@ -141,7 +138,7 @@ extern "C" void app_main() {
                 logger.event("power", "event=inhibit active=%d phase=%d", inhibit, static_cast<int>(controller->session().phase));
                 previous_inhibit = inhibit;
             }
-            const auto desired = power.update(now_ms, inhibit, external_power);
+            const auto desired = power.update(now_ms, inhibit);
             if (awaiting_stable && controller->scale().ready() && controller->scale().stable()) {
                 logger.event("power", "event=measurement_stable cycle=%u latency_ms=%llu", sleep_cycle,
                     static_cast<unsigned long long>(now_ms - resume_ms));
@@ -238,4 +235,3 @@ extern "C" void app_main() {
         }
     }
 }
-

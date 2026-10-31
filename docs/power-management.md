@@ -10,6 +10,10 @@ AXS15231B + TCA9554 + ETA6098; **never access AXP2101 registers at 0x34**.
 | 60 seconds | Gate backlight off at EXIO1 and pause display refresh; touch/scale continue |
 | 60 seconds | Light sleep if explicitly enabled after board validation; otherwise stay screen-off |
 
+These deadlines are total time since the last valid activity, independent of
+battery/external/unknown power status. Plugging or unplugging USB does not reset
+idle or wake the screen. Battery telemetry is used only for display/history.
+
 Full brightness uses GPIO42 PWM duty 0. Initialization holds EXIO1 low until a
 complete frame has reached the panel. Wake redraws before enabling EXIO1.
 The first dark-screen touch is consumed until release, including held gestures;
@@ -114,9 +118,11 @@ and power-cycle tests on the verified board.
 
 The common policy now makes sleep eligible at **60 seconds total idle**, rather
 than 360 seconds. With the verified-wake option disabled the board stays screen-off.
-The generic policy supports external-power dim at 30s, off at 10 minutes and no
-sleep, but 3.49 V2 has no power-source telemetry: its adapter cannot select that
-charging policy or detect USB insertion. It retains the 60-second policy on USB.
+The former external-power exception (10-minute screen-off, no sleep) has been
+removed. All adapters now dim at 30 seconds and become sleep-eligible at 60
+seconds, regardless of source telemetry. Power-source changes do not reset idle.
+Native tests cover battery, charging, full, unknown and failed telemetry, source
+transitions across the deadline, touch restart, inhibition release and retry delay.
 No AXP2101 charger register accesses or 3.5 V2 pin assignments are used.
 
 Sleep preparation reads touch before and after acknowledging the physical
@@ -294,8 +300,8 @@ post-sleep reset, second-tap delivery, and the final sleep IRQ guard.
 `Smart scale power` now exposes `SMART_SCALE_LCD_SLEEP` (default enabled when
 verified touch wake is enabled) and `SMART_SCALE_WAKE_BUTTON` (default disabled).
 The existing `SMART_SCALE_TOUCH_WAKE_VERIFIED` opt-in still gates CPU light sleep.
-No new timer, charging policy, weight threshold or peripheral rail shutdown is
-introduced by this change.
+The common 30-second dim / 60-second sleep policy above also applies while
+charging. Weight thresholds and peripheral rail shutdown are unchanged.
 
 LCD sleep runs only during a real CPU sleep attempt, after HX711 suspension,
 LVGL stop, completed DMA and initial wake preparation. With the backlight gated
