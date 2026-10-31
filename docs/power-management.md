@@ -286,3 +286,57 @@ prevents sleep qualification, but no longer blocks UI release. The default verif
 remains unchanged. Native regressions exercise qualification timing, brief gaps,
 contact resets, bus errors, malformed/mixed packets, low IRQ, stale samples,
 post-sleep reset, second-tap delivery, and the final sleep IRQ guard.
+
+
+
+### Rev1.1 LCD sleep and optional wake-only button
+
+`Smart scale power` now exposes `SMART_SCALE_LCD_SLEEP` (default enabled when
+verified touch wake is enabled) and `SMART_SCALE_WAKE_BUTTON` (default disabled).
+The existing `SMART_SCALE_TOUCH_WAKE_VERIFIED` opt-in still gates CPU light sleep.
+No new timer, charging policy, weight threshold or peripheral rail shutdown is
+introduced by this change.
+
+LCD sleep runs only during a real CPU sleep attempt, after HX711 suspension,
+LVGL stop, completed DMA and initial wake preparation. With the backlight gated
+off, QSPI sends Display Off (28h), Sleep In (10h), then waits 150 ms. The final
+GPIO check remains after these operations. On every exit, including late IRQ,
+failed commands and rejected CPU sleep, restore sends Sleep Out (11h), waits
+150 ms, then Display On (29h). The next visible transition redraws the full frame
+before enabling the backlight. Boot Sleep Out also waits 150 ms.
+
+Command delivery errors mark the panel uncertain until a complete restore
+succeeds. Restore errors keep the backlight and refresh timer off; active-state
+transitions retry restoration. Logs include `event=lcd_command`, `cmd`, and
+`result`. This does not reset the shared LCD/touch IC or put touch into Sleep.
+The LCD/touch supplies, TCA9554 and SYS_EN remain enabled.
+
+References: [AXS15231B datasheet, sections 1.5.2, 1.5.4, 3.2.2 and 6.1](https://files.waveshare.com/wiki/common/AXS15231B_Datasheet_V0.5.pdf)
+and [Waveshare V2 QSPI driver](https://github.com/waveshareteam/ESP32-S3-Touch-LCD-3.49-V2/blob/1c157e6e8e68b89fd4dc400f46bf1724cb64a57e/Arduino/examples/09_LVGL_V8_Test/src/axs15231b/esp_lcd_axs15231b.c).
+The 150 ms delay conservatively exceeds the documented 120 ms interval.
+
+**Hardware validation required before accepting LCD sleep:** verify TP_INT still
+reaches GPIO8 after 10h on this specific module firmware. Repeat touch wake,
+held finger, late touch during preparation and screen restoration on USB and
+battery. Compare battery-side backlight-only versus LCD-sleep current; no current
+reduction figure is claimed. If touch wake fails, disable SMART_SCALE_LCD_SLEEP
+and retain backlight-only behavior. Until validated, keep this PR draft.
+
+For a future external normally-open button, wire a free GPIO38-41 to GND through
+the button and enable SMART_SCALE_WAKE_BUTTON plus SMART_SCALE_WAKE_BUTTON_GPIO
+(default 38). Do not enable with an unconnected button. The internal pull-up is
+configured only when enabled. Remove SD and avoid external JTAG on shared pins;
+compile-time checks reject HX711 conflicts. This button only wakes/extends idle;
+it never tares or resets the session. Holding it blocks sleep and release allows
+the existing idle timeout. Existing BOOT/reset behavior is unchanged.
+
+ESP32-S3 light sleep has no per-pin status API equivalent to the deep-sleep GPIO
+wake status. When the optional button is armed, any GPIO wake is conservatively
+accepted as user activity so a short released press is not discarded. Thus a
+shared IMU/RTC IRQ can also restore the screen in that optional configuration.
+With the button disabled, existing shared-IRQ classification is unchanged.
+
+Validation: native tests inject failure at each LCD command, exercise restore
+retry/idempotence and repeated aborted/successful sleep cycles, verify QSPI
+encoding and allowed/conflicting button pins. Firmware CI builds default,
+expander + LCD sleep, expander + button, and backlight-only configurations.
