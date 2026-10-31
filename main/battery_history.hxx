@@ -5,7 +5,7 @@
 #include <cstdint>
 
 namespace smart_scale {
-enum class UsageState : uint8_t { charging, active, sleep, unknown };
+enum class UsageState : uint8_t { charging, active, sleep, estimated, unknown };
 struct BatteryPoint {
     uint64_t seconds{}; // Monotonic uptime, including light sleep; never wall time.
     uint8_t percent{255};
@@ -18,6 +18,7 @@ public:
     static constexpr uint64_t sample_seconds = 300;
     static UsageState state(const BatterySnapshot& b, bool sleeping = false) {
         if (!b.valid) return UsageState::unknown;
+        if (!b.source_known) return sleeping ? UsageState::sleep : UsageState::estimated;
         if (b.external_power) return UsageState::charging;
         return b.present ? (sleeping ? UsageState::sleep : UsageState::active) : UsageState::unknown;
     }

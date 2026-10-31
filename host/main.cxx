@@ -14,9 +14,9 @@
 LV_FONT_DECLARE(equipment_icons_22);
 LV_FONT_DECLARE(equipment_icons_32);
 namespace {
-constexpr int width = 480, height = 320;
-std::array<std::uint32_t, width * height> framebuffer{};
-std::array<lv_color_t, width * 40> buffer{};
+int width = 480, height = 320;
+std::array<std::uint32_t, 640 * 320> framebuffer{};
+std::array<lv_color_t, 640 * 40> buffer{};
 int mouse_x{}, mouse_y{};
 bool mouse_down{};
 unsigned flush_count{};
@@ -47,7 +47,8 @@ void screenshot(smart_scale::ui::View& view, const char* name) {
     auto* file = std::fopen(path.c_str(), "wb");
     if (!file) std::exit(1);
     std::fprintf(file, "P6\n%d %d\n255\n", width, height);
-    for (auto pixel : framebuffer) {
+    for (int i = 0; i < width * height; ++i) {
+        const auto pixel = framebuffer[i];
         const unsigned char bytes[] = {static_cast<unsigned char>(pixel >> 16),
             static_cast<unsigned char>(pixel >> 8), static_cast<unsigned char>(pixel)};
         std::fwrite(bytes, 1, 3, file);
@@ -72,8 +73,130 @@ bool has_label(lv_obj_t* parent, const std::string& text) {
     return false;
 }
 
+void run_wide_checks(smart_scale::ui::View& view, smart_scale::Controller& controller) {
+    using namespace smart_scale;
+    std::filesystem::create_directories("build-host/screens");
+    screenshot(view, "wide-01-ready");
+    click(view, 520, 70); screenshot(view, "wide-02-dose");
+    require(has_label(lv_scr_act(), "+0.1"), "wide coffee card opens dose");
+    click(view, 390, 76); click(view, 460, 132);
+    require(std::abs(*controller.session().dose_g - 20.1F) < .01F, "wide preset and fine adjustment");
+    mouse_x = 460; mouse_y = 132; mouse_down = true;
+    for (int i = 0; i < 25; ++i) pump(view, 40);
+    const auto held = *controller.session().dose_g;
+    mouse_down = false; pump(view);
+    require(held > 20.1F && *controller.session().dose_g == held, "wide press hold and release");
+    click(view, 610, 26);
+    click(view, 330, 70); screenshot(view, "wide-03-objects");
+    require(has_label(lv_scr_act(), "+ Register\nequipment"), "wide object card opens list");
+    click(view, 540, 100); screenshot(view, "wide-04-register-type");
+    auto* type = find_type(lv_scr_act(), &lv_dropdown_class);
+    require(type, "wide registration type");
+    click(view, 150, 90); screenshot(view, "wide-05-type-options");
+    lv_dropdown_close(type); lv_dropdown_set_selected(type, 2);
+    click(view, 550, 100); screenshot(view, "wide-06-register-weight");
+    click(view, 100, 138); click(view, 550, 100);
+    require(has_label(lv_scr_act(), "Unstable - wait"), "wide unstable registration blocked");
+    click(view, 100, 138); click(view, 550, 100);
+    require(has_label(lv_scr_act(), "Icon 3/3"), "wide stable registration advances");
+    for (int i = 0; i < 20; ++i) click(view, 40 + (i % 10) * 62, 90 + (i / 10) * 50);
+    screenshot(view, "wide-07-icons");
+    click(view, 535, 26);
+    require(controller.equipment_count() == 4 && controller.equipment()[3].name == "Pour-over set 🦋",
+            "all wide icon positions are reachable and last selection saves");
+    click(view, 417, 130); screenshot(view, "wide-08-remove-confirm");
+    require(controller.equipment_count() == 4, "wide removal requires confirmation");
+    click(view, 520, 80); require(controller.equipment_count() == 4, "wide cancel preserves equipment");
+    click(view, 417, 130); click(view, 520, 138);
+    require(controller.equipment_count() == 3, "wide confirm removes equipment");
+    click(view, 610, 26);
+    view.open(ui::Dialog::calibration); screenshot(view, "wide-09-calibration");
+    click(view, 610, 26);
+    click(view, 460, 146); screenshot(view, "wide-10-scenarios");
+    click(view, 150, 80); click(view, 320, 146);
+    for (int i = 0; i < 190; ++i) { controller.tick(.1F); pump(view, 100); }
+    require(controller.session().phase == Phase::brewing, "wide run starts brewing");
+    screenshot(view, "wide-11-brewing");
+    auto* brew = lv_scr_act(); view.open(ui::Dialog::dose); pump(view);
+    require(lv_scr_act() == brew, "wide brew locks editors");
+    click(view, 570, 146); require(controller.session().phase == Phase::result, "wide finish");
+    screenshot(view, "wide-12-result");
+    click(view, 560, 146); screenshot(view, "wide-13-remove-load");
+    require(controller.session().phase == Phase::remove_load, "wide next requires removal");
+    click(view, 540, 146); require(controller.session().phase == Phase::ready, "wide removal returns home");
+    controller.load_scenario(Scenario::pour_over); controller.run_demo();
+    for (int i = 0; i < 130; ++i) { controller.tick(.1F); pump(view, 100); }
+    screenshot(view, "wide-14-pour-over");
+    static BatteryHistory history;
+    view.history(history);
+    history.update(0, UsageState::estimated, decode_voltage_battery(4000));
+    history.update(21600, UsageState::estimated, decode_voltage_battery(3800));
+    view.battery(decode_voltage_battery(3800));
+    click(view, 574, 18);
+    require(has_label(lv_scr_act(), "Battery Usage"), "wide battery accessible during brew");
+    require(!view.power_inhibited() || controller.session().phase == Phase::brewing,
+            "battery history does not introduce an editor inhibitor");
+    screenshot(view, "wide-24-battery-6hr");
+    click(view, 400, 24); screenshot(view, "wide-25-battery-1day");
+    click(view, 510, 24); screenshot(view, "wide-26-battery-3day");
+    click(view, 610, 24);
+    require(!has_label(lv_scr_act(), "Battery Usage"), "wide battery close returns to brew");
+    std::cout << "Wide UI interaction checks passed\n";
+}
+
+void run_wide_live_checks(smart_scale::ui::View& view, smart_scale::Controller& controller) {
+    using namespace smart_scale;
+    view.battery(decode_voltage_battery(3900));
+    std::filesystem::create_directories("build-host/screens");
+    screenshot(view, "wide-15-disconnected");
+    click(view, 496, 146); screenshot(view, "wide-16-live-calibration");
+    std::uint64_t now{};
+    auto feed = [&](int raw) {
+        for (int i = 0; i < 60; ++i) { controller.sensor_sample(raw, now += 100); controller.tick(.1F); pump(view, 100); }
+    };
+    feed(10000); click(view, 450, 92); feed(110000); click(view, 575, 142);
+    require(controller.scale().ready() && std::abs(controller.scale().gross() - 100) < .01F,
+            "wide touch calibration captures zero and 100 g mass");
+    screenshot(view, "wide-17-calibrated"); click(view, 610, 26);
+    require(controller.register_equipment({0, Kind::pour_over_set, "Pour-over set", "", 500.0F, {}}, true), "wide live profile");
+    click(view, 70, 24);
+    feed(10000); screenshot(view, "wide-18-load-container");
+    feed(510000); screenshot(view, "wide-19-load-coffee");
+    feed(514900); click(view, 520, 70);
+    require(has_label(lv_scr_act(), "+0.1"), "wide below 5 g opens editor");
+    require(!controller.session().dose_g, "wide opening editor does not invent coffee");
+    click(view, 610, 26); feed(528000);
+    require(has_label(lv_scr_act(), "Tap to save"), "wide measured coffee candidate");
+    screenshot(view, "wide-20-save-coffee"); click(view, 520, 70);
+    require(controller.session().dose_source == DoseSource::measured, "wide card saves measured coffee");
+    feed(528000); screenshot(view, "wide-21-ready-live");
+    click(view, 520, 70); click(view, 460, 132); click(view, 610, 26);
+    require(std::abs(*controller.session().dose_g - 18.1F) < .02F, "wide saved coffee manual edit");
+    feed(528000);
+    for (unsigned i = 1; i <= 25 && controller.session().phase == Phase::ready; ++i) {
+        controller.sensor_sample(528000 + i * 200, now += 100); controller.tick(.1F); pump(view, 100);
+    }
+    require(controller.session().phase == Phase::brewing && controller.session().net_g > 0,
+            "wide coffee registration permits automatic flow start");
+    screenshot(view, "wide-22-auto-brew");
+    controller.sensor_sample(std::nullopt, now += 1100); controller.tick(1.1F); pump(view);
+    require(controller.session().brew_error == BrewError::sensor_fault, "wide sensor fault recorded");
+    const auto remaining = static_cast<unsigned>(std::ceil(controller.error_remaining_s()));
+    char alert[96];
+    std::snprintf(alert, sizeof(alert), "Sensor unavailable - home in %02u:%02u", remaining / 60, remaining % 60);
+    require(has_label(lv_scr_act(), alert), "wide sensor error countdown");
+    screenshot(view, "wide-23-sensor-error");
+    controller.tick(180.1F); pump(view); pump(view);
+    require(controller.session().phase == Phase::ready, "wide error recovery returns home");
+    std::cout << "Wide live calibration and coffee checks passed\n";
+}
+
 }
 int main(int argc, char** argv) {
+    const bool wide_test = argc > 1 && std::string(argv[1]) == "--wide-screenshots";
+    const bool wide_live = argc > 1 && std::string(argv[1]) == "--wide-live-screenshots";
+    const bool wide_interactive = argc > 1 && std::string(argv[1]) == "--wide-interactive";
+    if (wide_test || wide_interactive || wide_live) { width = 640; height = 172; }
     lv_init();
     static lv_disp_draw_buf_t draw_buffer;
     lv_disp_draw_buf_init(&draw_buffer, buffer.data(), nullptr, buffer.size());
@@ -87,10 +210,18 @@ int main(int argc, char** argv) {
     lv_indev_drv_register(&pointer);
     const bool coffee_test = argc > 1 && std::string(argv[1]) == "--coffee-screenshots";
     const bool live_test = argc > 1 && std::string(argv[1]) == "--live-screenshots";
-    smart_scale::Controller controller(live_test || coffee_test);
+    smart_scale::Controller controller(live_test || coffee_test || wide_live);
     if (coffee_test) controller.set_mode(smart_scale::Mode::pour_over);
     smart_scale::ui::View view(controller);
     view.init();
+    if (wide_live) {
+        run_wide_live_checks(view, controller);
+        return 0;
+    }
+    if (wide_test) {
+        run_wide_checks(view, controller);
+        return 0;
+    }
     if (coffee_test) {
         using namespace smart_scale;
         std::filesystem::create_directories("build-host/screens");
@@ -306,11 +437,11 @@ int main(int argc, char** argv) {
         return 0;
     }
     const bool smoke = argc > 1 && std::string(argv[1]) == "--interactive-smoke";
-    if (argc > 1 && (std::string(argv[1]) == "--interactive" || smoke)) {
+    if (argc > 1 && (std::string(argv[1]) == "--interactive" || wide_interactive || smoke)) {
 #ifdef SMART_SCALE_SDL
         if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) { std::cerr << SDL_GetError(); return 1; }
         auto* window = SDL_CreateWindow("Smart Scale | dummy data | R = Reset", SDL_WINDOWPOS_CENTERED,
-            SDL_WINDOWPOS_CENTERED, 960, 640, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
+            SDL_WINDOWPOS_CENTERED, width * 2, height * 2, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
         auto* renderer = SDL_CreateRenderer(window, -1, 0);
         if (!window || !renderer) { std::cerr << SDL_GetError(); return 1; }
         SDL_RenderSetLogicalSize(renderer, width, height);
@@ -475,4 +606,3 @@ int main(int argc, char** argv) {
     require(find_type(lv_scr_act(), &lv_dropdown_class), "Empty list still allows registration");
     std::cout << "UI interaction checks passed\n";
 }
-

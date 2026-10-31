@@ -71,7 +71,7 @@ Recipe assumptions are 1:2 for espresso and 1:15 for a whole pour-over set. They
 | RESET-01–03 | BOOT and UI Reset, aborted RAM record, clears session, remove-load gate; MCU reset is a reboot |
 | EQ-01–05 | Three-step registration, stable fixture weight, 20-icon picker and type-plus-icon names, immutable record copies; confirmed profile removal; editable configurations/defaults deferred |
 | NFR-01 | Runtime is offline; persistent local records and deduplicated sync deferred |
-| NFR-02/03 | 480×320 actual LVGL rendering, text plus color, shared time/measurement state; physical readability and power-loss recovery unverified |
+| NFR-02/03 | 640×172 Rev1.1 and 480×320 legacy-host LVGL rendering, text plus color, shared time/measurement state; physical readability and power-loss recovery unverified |
 | NFR-04 | No network stack is started and no cloud credentials/API are present |
 
 ## Corner Cases & Failure Modes

@@ -1,5 +1,7 @@
 # 무게 안정화
 
+> Current 3.49 V2 firmware disables `scale_trace` capture/dumps and periodic `hx711_diag` output. The diagnostic descriptions below are reference material; use [power and touch troubleshooting](power-management.md#diagnostic-logs) for current sleep/wake captures. Ordinary `scale_event` output remains enabled.
+
 ## 적용 화면과 데이터 경로
 
 대기 화면, 추출 화면, 칼리브레이션 및 물체 등록 화면은 `Scale::ingest()`의

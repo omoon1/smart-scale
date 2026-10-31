@@ -5,6 +5,10 @@
 using namespace smart_scale;
 BatterySnapshot battery(unsigned p=72, bool usb=false) { return {true,true,usb,usb,false,p}; }
 int main() {
+    const auto estimated = decode_voltage_battery(3800);
+    assert(BatteryHistory::state(estimated) == UsageState::estimated);
+    assert(BatteryHistory::state(estimated, true) == UsageState::sleep);
+
     BatteryHistory h;
     assert(h.size()==0);
     h.update(0,UsageState::charging,battery(20,true));

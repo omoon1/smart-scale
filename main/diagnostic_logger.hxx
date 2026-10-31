@@ -4,8 +4,10 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include <atomic>
 #include <cstdio>
+#include <cstdarg>
 
 namespace smart_scale::device {
 // Controller/UI producers, one low-priority consumer. No serial work under
@@ -20,6 +22,16 @@ public:
     }
     bool text(const char* tag, const char* text) {
         Record r{}; r.tag = tag; std::snprintf(r.text, sizeof(r.text), "%s", text);
+        return send(r);
+    }
+    bool event(const char* tag, const char* format, ...) __attribute__((format(printf, 3, 4))) {
+        Record r{}; r.tag = tag;
+        const int prefix = std::snprintf(r.text, sizeof(r.text), "t_us=%llu ",
+            static_cast<unsigned long long>(esp_timer_get_time()));
+        va_list args;
+        va_start(args, format);
+        std::vsnprintf(r.text + prefix, sizeof(r.text) - prefix, format, args);
+        va_end(args);
         return send(r);
     }
     bool sample(const char* event, const DiagnosticSample& s, unsigned trace_id = 0, bool retry = false) {

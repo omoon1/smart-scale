@@ -13,15 +13,27 @@ struct Hardware {
     bool irq{true}, fail_port{}, fail_touch{}, pressed{}, pressed_after_ack{};
     unsigned reads{};
     std::vector<char> calls;
-    WakePreparation prepare(std::uint32_t& baseline) {
+    WakePreparation prepare(std::uint32_t& baseline, uint32_t touch = expander_touch_mask, uint32_t pending = expander_pmu_mask) {
         return prepare_expander_wake(
             [&](std::uint32_t& value) { calls.push_back('P'); value = port; return !fail_port; },
             [&](bool& value) { calls.push_back('T'); value = reads++ ? pressed_after_ack : pressed; return !fail_touch; },
-            [&] { calls.push_back('I'); return irq; }, baseline);
+            [&] { calls.push_back('I'); return irq; }, baseline, touch, pending);
     }
 };
 int main() {
     std::uint32_t baseline{};
+    Hardware wide;
+    // V2 EXIO5 is LCD reset, not a PMU interrupt. Only EXIO0 is touch.
+    wide.port = 0xdf;
+    assert(wide.prepare(baseline, 1U, 0U) == WakePreparation::ready);
+    Hardware wide_held; wide_held.port = 0xfe;
+    assert(wide_held.prepare(baseline, 1U, 0U) == WakePreparation::touch);
+    Hardware wide_race; wide_race.pressed_after_ack = true;
+    assert(wide_race.prepare(baseline, 1U, 0U) == WakePreparation::touch);
+    assert(classify_expander_wake(0xff,0xfe,false,true,1U) == ExpanderWake::touch);
+    assert(classify_expander_wake(0xff,0xfb,false,true,1U) == ExpanderWake::shared);
+    assert(classify_expander_wake(0xff,0xff,false,true,1U) == ExpanderWake::ambiguous);
+    assert(classify_expander_wake(0xff,0xff,false,false,1U) == ExpanderWake::io_error);
     Hardware idle;
     assert(idle.prepare(baseline) == WakePreparation::ready);
     assert(baseline == 0xff);

@@ -4,6 +4,14 @@
 #include <limits>
 using namespace smart_scale;
 int main() {
+    assert(!smart_scale::decode_voltage_battery(0).valid);
+    assert(!smart_scale::decode_voltage_battery(4400).valid);
+    const auto voltage = smart_scale::decode_voltage_battery(3800);
+    assert(voltage.percent == 50 && voltage.estimated && !voltage.source_known);
+    assert(!voltage.charging && !voltage.full && !voltage.external_power);
+    assert(smart_scale::battery_text(voltage) == "~50%");
+    assert(smart_scale::decode_voltage_battery(4200).percent == 100);
+
     PowerPolicy p;
     assert(p.update(29999, false) == PowerState::active);
     assert(p.update(30000, false) == PowerState::dimmed);

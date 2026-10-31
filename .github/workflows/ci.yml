@@ -12,6 +12,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y ninja-build libsdl2-dev
       - run: make test
       - run: make preview
+      - run: make preview-wide
       - uses: actions/upload-artifact@v4
         with:
           name: lvgl-screens
@@ -20,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        wake: [disabled, expander-v2, custom-direct]
+        wake: [disabled, expander-349]
     container: espressif/idf:v5.5.2
     steps:
       - uses: actions/checkout@v4
@@ -31,11 +32,10 @@ jobs:
           # Pin the resolver too: older image versions can resolve a second LVGL
           # major during Kconfig retry despite the application's 8.4.0 lock.
           python -m pip install 'idf-component-manager==2.5.2'
-          if [ "${{ matrix.wake }}" = expander-v2 ]; then
-            echo 'CONFIG_SMART_SCALE_BOARD_35_V2=y' >> sdkconfig.defaults
-          elif [ "${{ matrix.wake }}" = custom-direct ]; then
+          if [ "${{ matrix.wake }}" = expander-349 ]; then
             echo 'CONFIG_SMART_SCALE_TOUCH_WAKE_VERIFIED=y' >> sdkconfig.defaults
-            echo 'CONFIG_SMART_SCALE_TOUCH_WAKE_GPIO=16' >> sdkconfig.defaults
+            echo 'CONFIG_SMART_SCALE_HX711_DOUT=40' >> sdkconfig.defaults
+            echo 'CONFIG_SMART_SCALE_HX711_SCK=41' >> sdkconfig.defaults
           fi
           idf.py build
       - uses: actions/upload-artifact@v4

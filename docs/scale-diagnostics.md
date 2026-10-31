@@ -1,5 +1,7 @@
 # Scale troubleshooting logs
 
+> Current 3.49 V2 firmware disables `scale_trace` capture/dumps and periodic `hx711_diag` output. The diagnostic descriptions below are reference material; use [power and touch troubleshooting](power-management.md#diagnostic-logs) for current sleep/wake captures. Ordinary `scale_event` output remains enabled.
+
 Capture serial output from power-on, keep the load untouched for at least two
 minutes, and include the firmware configuration and the complete trace blocks.
 Use the usual `make monitor /dev/ttyACM0` command (choose the actual port).

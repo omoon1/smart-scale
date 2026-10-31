@@ -27,6 +27,10 @@ private:
     lv_obj_t* button(lv_obj_t* parent, const char* text, int x, int y, int w, int h,
                      Action action, int value = 0, bool primary = false);
     void draw();
+    bool wide() const;
+    void draw_wide(lv_obj_t* root);
+    void draw_wide_dialog(lv_obj_t* root);
+    void draw_wide_registration(lv_obj_t* root);
     void draw_ready(lv_obj_t* root);
     void draw_brew(lv_obj_t* root, bool result);
     void draw_dialog(lv_obj_t* root);
@@ -80,4 +84,3 @@ private:
     std::string calibration_message_text_;
 };
 }
-

@@ -1,8 +1,8 @@
 # Smart Scale
 
-ESP-IDF + modern C++ coffee-scale UX prototype for the **Waveshare ESP32-S3-Touch-LCD-3.5** (ST7796 display / FT6336 touch). LVGL renders a 480 × 320 landscape interface on the native 320 × 480 panel.
+ESP-IDF + modern C++ coffee-scale UX prototype for the **Waveshare ESP32-S3-Touch-LCD-3.49 V2 / Rev1.1** (AXS15231B QSPI display / I²C touch). LVGL renders a 640 × 172 landscape interface on the native 172 × 640 panel.
 
-**Device firmware now reads an HX711 load cell** on GPIO17 (DOUT) / GPIO18 (SCK), with live weight, tare, touchscreen two-point calibration, and calibration persistence in NVS. Calibrate your own cell before use; there is no hard-coded calibration factor. The desktop simulator retains deterministic dummy scenarios. Equipment profiles and the last eight brew records remain RAM-only. No network service or machine control is connected.
+**Device firmware now reads an HX711 load cell** on header IO44 (DOUT) / IO43 (SCK), with live weight, tare, touchscreen two-point calibration, and calibration persistence in NVS. Calibrate your own cell before use; there is no hard-coded calibration factor. The desktop simulator retains deterministic dummy scenarios. Equipment profiles and the last eight brew records remain RAM-only. No network service or machine control is connected.
 
 See [HX711 wiring, calibration, and operating instructions](docs/hx711.md). Camera use is incompatible with these GPIO assignments.
 
@@ -79,7 +79,7 @@ The `.cxx`/`.hxx` organization, nested device namespaces, `device()` accessor, t
 | `main/device.hxx`, `device.cxx` | Board I2C/SPI, display, touch, backlight, debounced BOOT button |
 | `main/config.hxx` | Board pins, dimensions, capacities, explicit prototype assumptions |
 | `host/` | Native framebuffer renderer and optional SDL2 adapter; same UI and model |
-| `components/` | Minimal vendor ST7796 and FT6336 drivers with upstream licensing |
+| `main/board349.hxx`, `main/device.cxx` | Rev1.1 pins, full-frame QSPI rotation, touch parsing and hardware initialization |
 | `tests/` | State invariants and UX acceptance cases |
 | `docs/` | Architecture, requirement coverage, hardware bring-up, validation |
 
@@ -90,19 +90,22 @@ See [architecture and scope](docs/architecture.md), [hardware setup](docs/hardwa
 See [Scale troubleshooting logs](docs/scale-diagnostics.md) for automatic anomaly
 traces, timestamp/sequence interpretation, and a stationary-load recording procedure.
 
-## Battery sleep on the 3.5-inch V2 board
+### 3.49-inch wide-panel UI
 
-A dark screen alone does not mean the CPU is asleep. For **ESP32-S3-Touch-LCD-3.5
-V2 / Rev2.0**, select `Smart scale power → Waveshare ESP32-S3-Touch-LCD-3.5 V2
-(Rev2.0)` in `make menuconfig`, save, rebuild and flash. This enables touch wake
-through TCA9554 P2 and GPIO4. Do not select it on V1 or a 3.49-inch board.
-See [power management](docs/power-management.md) for configuration, shared-interrupt
-handling, expected logs and physical validation. Sleep remains disabled by default
-until a board/wake route is selected.
+Use `make preview-wide` to validate/render the **640×172 landscape** layout, or
+`make simulator-wide` to interact with it. See [wide-panel UX and hardware-port boundary](docs/wide-panel-ux.md)
+for actual screenshots and board integration details. `make build` targets Rev1.1.
+**Rewire HX711 to IO44/IO43: GPIO17/18 are now the touch I²C bus.**
+The legacy 480×320 UI remains available in the host regression tests only.
 
-While external power is connected, including a full battery, idle dims the screen
-to 30% after 30 seconds and turns it off after 10 minutes total idle. Sleep stays disabled;
-touch restores the display and restarts the idle timer. Unplugging restarts the normal idle timers.
+## Battery, idle power and HX711 pins (wide-panel integration)
 
-On battery, idle dims after 30 seconds and enters light sleep at 60 seconds total idle
-when the selected wake route is available. There is no extra five-minute screen-off wait.
+The 3.49 V2 adapter now includes main's battery usage graph and 30s dim / 60s
+off / 60s sleep-eligible policy. Voltage-based battery SOC is marked `~`;
+charging/USB state cannot be read on this board. Screen-off touch wake is on;
+light sleep requires enabling the verified EXIO0 → GPIO8 path in menuconfig.
+See [power management](docs/power-management.md).
+
+Use `make menuconfig` → **Smart scale HX711** to select two distinct pins from
+38, 39, 40, 41, 43, 44. Defaults remain DOUT=44 / SCK=43. See the
+[pin-sharing constraints and wiring procedure](docs/hx711.md#select-alternative-header-gpios-349-v2).
