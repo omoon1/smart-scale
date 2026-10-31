@@ -1,69 +1,69 @@
 #include "touch_sleep_check.hxx"
 #include "expander_wake.hxx"
+#include <array>
 #include <cassert>
 #include <iostream>
 using namespace smart_scale;
 using namespace smart_scale::board349;
-struct Hardware {
-    uint64_t time{};
-    unsigned reads{}, spacing{25}, contact_at{}, invalid_at{}, fault_at{}, low_at{};
-    bool release{}, frozen{};
-    TouchSleepCheck run() {
+int main() {
+    std::array<uint8_t, touch_packet_bytes> packet{};
+    unsigned reads{};
+    bool io_ok=true, irq_high=true;
+    auto check = [&] {
+        reads=0;
         return qualify_sleep_touch([&](TouchReport& report) {
             ++reads;
-            report = {TouchState::no_data, 0, {}, "idle_a5_candidate"};
-            if (release) report.state = TouchState::released;
-            if (reads == contact_at) report.state = TouchState::pressed;
-            if (reads == invalid_at) report.state = TouchState::invalid;
-            return reads != fault_at;
-        }, [&] { return reads != low_at; }, [&] { return time; },
-        [&](unsigned ms) { assert(ms == 25); if (!frozen) time += spacing * 1000; });
+            report=decode_touch_report(packet.data(),packet.size());
+            return io_ok;
+        }, [&]{return irq_high;});
+    };
+    // All uniform values follow the explicit board policy, including 00/FF.
+    for (unsigned byte=0;byte<256;++byte) {
+        packet.fill(byte);
+        const auto report=decode_touch_report(packet.data(),packet.size());
+        assert(report.state==TouchState::released && report.contacts==0);
+        assert(check()==TouchSleepCheck::released);
+        assert(reads==1); // no debounce delay or polling loop
+        irq_high=false;
+        assert(check()==TouchSleepCheck::released); // final IRQ guard still applies
+        irq_high=true;
+        io_ok=false;
+        assert(check()==TouchSleepCheck::io_error);
+        io_ok=true;
     }
-};
-int main() {
-    // Reproduce normal UI cadence: sleep qualifier never completes at 125 ms.
-    TouchIdleQualifier old;
-    for (uint64_t t=0; t<2000000; t+=125000)
-        assert(old.update({TouchState::no_data,0,{},"a5"},true,true,t).state == TouchState::no_data);
-    Hardware h; h.time=2000000;
-    assert(h.run() == TouchSleepCheck::released); assert(h.reads == 13);
-    assert(h.time == 2300000); // fresh 300 ms, no UI history reuse
-    Hardware release; release.release=true;
-    assert(release.run() == TouchSleepCheck::released); assert(release.reads == 1);
-    Hardware release_irq; release_irq.release=true; release_irq.low_at=1;
-    assert(release_irq.run() == TouchSleepCheck::released); // final IRQ guards still required
-    for (unsigned n=1; n<=13; ++n) {
-        Hardware contact; contact.contact_at=n; assert(contact.run()==TouchSleepCheck::pressed);
-        Hardware invalid; invalid.invalid_at=n; assert(invalid.run()==TouchSleepCheck::invalid);
-        Hardware fault; fault.fault_at=n; assert(fault.run()==TouchSleepCheck::io_error);
-        Hardware irq; irq.low_at=n; assert(irq.run()==TouchSleepCheck::pending_irq);
+    for (const auto byte : {0xa5,0xd5,0x84}) {
+        packet.fill(byte); packet[13]^=1;
+        assert(check()==TouchSleepCheck::invalid);
     }
-    Hardware slow; slow.spacing=125;
-    assert(slow.run()==TouchSleepCheck::timeout); assert(slow.time==500000);
-    Hardware delayed; delayed.spacing=100;
-    assert(delayed.run()==TouchSleepCheck::released); assert(delayed.time==300000);
-    Hardware frozen; frozen.frozen=true;
-    assert(frozen.run()==TouchSleepCheck::timeout); assert(frozen.reads==21);
-    // No stale inferred release across repeated attempts / wake rechecks.
-    for (unsigned cycle=0;cycle<100;++cycle) {
-        Hardware repeated; assert(repeated.run()==TouchSleepCheck::released);
-        assert(repeated.time==300000);
-    }
-    // Real preparation uses the same bounded helper on both sides of port ack.
-    uint32_t baseline{}; unsigned checks{};
+    packet.fill(0); packet[0]=1; // explicit zero-contact report
+    assert(check()==TouchSleepCheck::released);
+    irq_high=false;
+    assert(check()==TouchSleepCheck::released); // later final IRQ guard still applies
+    irq_high=true;
+    packet[1]=1; packet[3]=10; packet[5]=10;
+    assert(check()==TouchSleepCheck::pressed);
+    packet[1]=2; packet[9]=20; packet[11]=20;
+    assert(check()==TouchSleepCheck::pressed);
+    packet[10]=1;
+    assert(check()==TouchSleepCheck::invalid); // invalid second-contact coordinates
+
+    // Contact arriving after port acknowledgement and final IRQ remain guarded.
+    uint32_t baseline{};
     auto prepare = [&](bool late_contact, bool final_irq) {
-        checks=0;
+        unsigned checks=0;
         return prepare_expander_wake([](uint32_t& v){v=0xff;return true;},
             [&](bool& pressed) {
-                Hardware probe;
-                if (++checks == 2 && late_contact) probe.contact_at=7;
-                const auto result=probe.run();
+                packet.fill(0x84);
+                if (++checks==2 && late_contact) {
+                    packet.fill(0); packet[1]=1; packet[3]=10; packet[5]=10;
+                }
+                const auto result=check();
                 pressed=result==TouchSleepCheck::pressed;
                 return pressed || result==TouchSleepCheck::released;
-            }, [&]{return final_irq;}, baseline, 1U, 0U);
+            }, [&]{return final_irq;},baseline,1U,0U);
     };
     assert(prepare(false,true)==WakePreparation::ready);
     assert(prepare(true,true)==WakePreparation::touch);
     assert(prepare(false,false)==WakePreparation::pending_irq);
-    std::cout << "bounded touch sleep qualification tests passed\n";
+    std::cout << "immediate repeated-packet sleep tests passed\n";
 }

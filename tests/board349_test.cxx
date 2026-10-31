@@ -47,7 +47,7 @@ int main() {
     assert(!b::decode_touch(nullptr, packet.size(), point));
     // The request length must match the response size (old code requested 14/read 32).
     assert(b::touch_command[7] == packet.size());
-    sample(0, 0, 0);
+    sample(10, 10, 0);
     assert(b::decode_touch_report(packet.data(), packet.size()).state == b::TouchState::released);
     sample(10, 10, 2); // Valid second contact: single-touch UI ignores it; sleep must not.
     packet[8] = 0; packet[9] = 20; packet[10] = 0; packet[11] = 20;
@@ -82,92 +82,35 @@ int main() {
         assert(gate.suppressed()); // invalid input cannot clear a waking gesture
     }
     assert(port_reads == 0);
-    sample(0, 0, 0);
+    sample(10, 10, 0);
     assert(b::decode_touch_report(packet.data(), packet.size()).state == b::TouchState::released);
     gate.filter(false, true); assert(!gate.suppressed());
     sample(10, 10, 1);
     uint32_t baseline{};
     assert(smart_scale::prepare_expander_wake(read_port, read_touch, []{return true;}, baseline, 1U, 0U)
            == smart_scale::WakePreparation::touch);
-    // Replay device evidence: valid contact -> all-A5 idle -> next contact.
+    // Uniform responses release both UI and sleep immediately, for every byte.
     b::TouchIdleQualifier idle;
-    packet.fill(0xa5);
-    const auto no_data = b::decode_touch_report(packet.data(), packet.size());
-    assert(no_data.state == b::TouchState::no_data);
-    packet[5] = 0; // A near-match is still malformed, never idle.
-    assert(b::decode_touch_report(packet.data(), packet.size()).state == b::TouchState::invalid);
-    packet.fill(0xa5);
-    auto press = b::TouchReport{b::TouchState::pressed, 1, {10,10}, "contact"};
-    auto apply = [&](b::TouchReport r, bool dark) {
-        return (r.state == b::TouchState::released || r.state == b::TouchState::pressed)
-            ? gate.filter(r.state == b::TouchState::pressed, dark) : false;
-    };
-    assert(!apply(idle.update(press, true, true, 0), true));
-    for (unsigned t = 30; t <= 300; t += 30) {
-        assert(!apply(idle.update(no_data, true, true, t*1000), false));
-        assert(gate.suppressed());
+    b::TouchIdleQualifier ui_idle{b::TouchIdleQualifier::Use::ui};
+    for (unsigned byte=0; byte<256; ++byte) {
+        packet.fill(byte);
+        const auto release=b::decode_touch_report(packet.data(),packet.size());
+        assert(release.state==b::TouchState::released && release.contacts==0);
+        assert(idle.update(release,true,true,0).state==b::TouchState::released);
+        assert(ui_idle.update(release,true,false,0).state==b::TouchState::released);
+        gate.filter(true,true);
+        gate.filter(false,false);
+        assert(!gate.suppressed());
+        assert(idle.update(release,false,true,0).state==b::TouchState::invalid);
     }
-    // A held/contact report resets the entire idle qualification window.
-    assert(!apply(idle.update(press, true, true, 310000), false));
-    for (unsigned t = 340; t <= 610; t += 30) {
-        assert(!apply(idle.update(no_data, true, true, t*1000), false));
-        assert(gate.suppressed());
+    for (const auto byte : {0xa5, 0xd5, 0x84}) {
+        packet.fill(byte); packet[5]=0;
+        assert(b::decode_touch_report(packet.data(),packet.size()).state==b::TouchState::invalid);
     }
-    assert(!apply(idle.update(no_data, true, true, 640000), false));
-    assert(!gate.suppressed());
-    assert(apply(idle.update(press, true, true, 670000), false));
-    // IRQ low, read failure, malformed packets, and stale samples cannot release.
-    for (unsigned scenario = 0; scenario < 4; ++scenario) {
-        idle.reset();
-        for (unsigned t=0; t<=240; t+=30) idle.update(no_data,true,true,t*1000);
-        if (scenario == 0) idle.update(no_data,true,false,270000);
-        if (scenario == 1) idle.update(no_data,false,true,270000);
-        if (scenario == 2) idle.update({},true,true,270000);
-        const auto r = idle.update(no_data,true,true,scenario==3 ? 500000 : 300000);
-        assert(r.state == b::TouchState::no_data);
-    }
-    idle.reset();
-    for (unsigned t=0; t<=300; t+=30) report=idle.update(no_data,true,true,t*1000);
-    assert(report.state == b::TouchState::released);
-    auto idle_read = [&](bool& pressed) { pressed=false; return report.state==b::TouchState::released; };
+    auto idle_read = [&](bool& pressed) { pressed=false; return true; };
     assert(smart_scale::prepare_expander_wake(read_port,idle_read,[]{return true;},baseline,1U,0U)
            == smart_scale::WakePreparation::ready);
-    // A new pending IRQ still blocks entry after the touch checks.
     assert(smart_scale::prepare_expander_wake(read_port,idle_read,[]{return false;},baseline,1U,0U)
            == smart_scale::WakePreparation::pending_irq);
-    idle.reset(); // resume starts a fresh interval even after a very long sleep
-    assert(idle.update(no_data,true,true,90000000).state == b::TouchState::no_data);
-    // UI release must not depend on the shared wake IRQ or sub-100ms rendering.
-    b::TouchIdleQualifier ui_idle{b::TouchIdleQualifier::Use::ui};
-    idle.reset();
-    assert(!apply(ui_idle.update(press,true,false,0),true));
-    for (unsigned t : {30U, 180U, 330U}) {
-        report = ui_idle.update(no_data,true,false,t*1000);
-        assert(idle.update(no_data,true,false,t*1000).state == b::TouchState::no_data);
-        assert(!apply(report,false));
-    }
-    assert(!gate.suppressed());
-    assert(apply(ui_idle.update(press,true,false,360000),false));
-    assert(!apply(ui_idle.update({b::TouchState::released,0,{},"release"},true,false,390000),false));
-    ui_idle.reset(); idle.reset();
-    for (unsigned t : {0U, 150U, 300U}) {
-        report=ui_idle.update(no_data,true,true,t*1000);
-        assert(idle.update(no_data,true,true,t*1000).state == b::TouchState::no_data);
-    }
-    assert(report.state == b::TouchState::released);
-    // UI never clears suppression on a timer alone, error, invalid packet, or hold.
-    for (unsigned scenario=0; scenario<5; ++scenario) {
-        ui_idle.reset();
-        assert(!apply(ui_idle.update(press,true,false,0),true));
-        apply(ui_idle.update(no_data,true,false,30000),false);
-        apply(ui_idle.update(no_data,true,false,180000),false);
-        if (scenario==0) report=ui_idle.update(no_data,false,false,330000);
-        if (scenario==1) report=ui_idle.update({},true,false,330000);
-        if (scenario==2) report=ui_idle.update(press,true,false,330000);
-        if (scenario==3) report=ui_idle.update(no_data,true,false,2000000);
-        if (scenario==4) { ui_idle.reset(); report=ui_idle.update(no_data,true,false,330000); }
-        assert(!apply(report,false));
-        assert(gate.suppressed());
-    }
     std::puts("Rev1.1 frame rotation, DMA strip seams, touch bounds and release checks passed");
 }

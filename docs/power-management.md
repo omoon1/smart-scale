@@ -450,43 +450,25 @@ I2C disconnect/reconnect, LCD failure, rejected sleep, stable HX711 recovery and
 preserved tare/session. Separately measure codec/amp and inserted-card residual
 current before claiming that **all** peripherals are powered off or minimized.
 
-### Bounded touch qualification before sleep
+### Immediate repeated-packet idle policy
 
-Normal LVGL polling on the observed device is about 125 ms, exceeding the sleep
-qualifier's 100 ms maximum gap. Previously each precheck saw an unqualified A5
-packet, deferred for 30 seconds and left HX711 running indefinitely with the
-screen dark. `state=2` means screen-off, not CPU sleep.
+This supersedes the earlier all-A5 sleep qualification above. A successful
+14-byte read with all bytes identical (including A5, D5 and 84) is classified as
+`released` with `contacts=0` and reason `repeated_idle`, before interpreting its
+contact byte. Both UI and sleep accept this as a zero-contact release immediately;
+there is no 300 ms qualification or polling loop. Controller fault diagnosis is
+separate from this battery sleep policy.
 
-The precheck now uses `qualify_touch_for_sleep()` under the LVGL lock, before
-HX711 suspension. It starts a fresh qualifier, reads raw decoded packets at a
-25 ms requested interval and uses a 500 ms time budget (plus an in-flight bounded
-I2C transaction). A hard iteration bound also prevents an unbounded loop if the
-clock fails to advance. Explicit contact cancels sleep and is consumed as a wake
-gesture; an explicit release proceeds to existing wake-source checks. Exact A5
-packets require 300 ms of observations with IRQ high and gaps no larger than
-100 ms. Malformed packets, I2C errors, low IRQ during A5 qualification and budget
-expiry defer sleep without suspending acquisition. The optional wake button is
-checked too. Normal UI polling and its release qualification are unchanged.
+Each sleep precheck reads a fresh packet. Valid contacts cancel entry; other
+malformed packets and I2C failures defer it. The optional wake button, checks on
+both sides of expander acknowledgement, and final IRQ check before CPU sleep
+remain. A zero-contact release proceeds to expander acknowledgement; the final
+IRQ guard still blocks sleep if an interrupt remains asserted.
 
-The same fresh qualification is used on both sides of expander acknowledgement,
-so peripheral setup latency cannot invalidate a reused A5 qualification and cause
-another permanent rejection. Each invocation has its own budget: a successful
-all-A5 entry typically spends about 900 ms qualifying across three checks, plus
-peripheral/LCD setup. The final IRQ check immediately before CPU sleep remains.
-No expander input is read merely to qualify A5. Explicit release with a latched
-IRQ may proceed to the existing acknowledgement and final IRQ checks.
-
-Logs distinguish `screen_off cpu_sleep=0`, `touch_qualifying`,
-`touch_qualification result=...`, `sleep_enter` and `sleep_return`.
-`sleep_enter` records the attempt; only a successful return with measured elapsed
-sleep establishes a completed sleep interval. Weight acquisition is stopped before
-`sleep_enter`; queued diagnostic output may still drain around entry/return.
-
-Native regressions reproduce 125 ms UI polling, then verify fresh 25 ms
-qualification, held/late touch, each sample's I2C/malformed/IRQ failure, timeout,
-clock stalls, repeated attempts and contact arriving after expander acknowledgement.
-The all-A5 pattern remains a board-observed heuristic: held-finger testing must
-confirm it cannot falsely qualify release on this module firmware.
+Native tests cover uniform byte values, mixed malformed responses, transport
+failure, valid contacts, IRQ guards and touch arriving after acknowledgement.
+Logs distinguish `screen_off cpu_sleep=0`, `touch_qualifying mode=single_read`,
+`touch_qualification`, `sleep_enter` and `sleep_return`.
 
 ### Black-screen wake fallback and diagnostics
 

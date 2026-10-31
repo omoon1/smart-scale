@@ -46,9 +46,10 @@ struct TouchReport {
 };
 inline TouchReport decode_touch_report(const std::uint8_t* packet, std::size_t size) {
     if (!packet || size != touch_packet_bytes) return {};
-    bool all_a5 = true;
-    for (std::size_t i = 0; i < size; ++i) all_a5 = all_a5 && packet[i] == 0xa5;
-    if (all_a5) return {TouchState::no_data, 0, {}, "idle_a5_candidate"};
+    // Board policy: a uniform full-length response means zero contacts.
+    bool repeated = true;
+    for (std::size_t i = 1; i < size; ++i) repeated = repeated && packet[i] == packet[0];
+    if (repeated) return {TouchState::released, 0, {}, "repeated_idle"};
     if (packet[1] > 2) return {TouchState::invalid, 0, {}, "count"};
     if (packet[1] == 0) return {TouchState::released, 0, {}, "release"};
     TouchPoint first{};
@@ -78,7 +79,7 @@ public:
         last_us_ = now_us;
         if (samples_ < 3) ++samples_;
         if (samples_ >= 3 && now_us - since_us_ >= 300000)
-            return {TouchState::released, 0, {}, "idle_a5_qualified"};
+            return {TouchState::released, 0, {}, "repeated_idle_qualified"};
         return report;
     }
     void reset() { samples_ = 0; since_us_ = last_us_ = 0; }

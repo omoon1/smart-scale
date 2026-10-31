@@ -507,8 +507,11 @@ esp_err_t Device::read_touch_packet(uint8_t* packet, board::TouchReport& report,
         char hex[board::touch_packet_bytes * 3 + 1]{};
         for (unsigned i = 0; i < board::touch_packet_bytes; ++i)
             std::snprintf(hex + i * 3, 4, "%02x ", static_cast<unsigned>(packet[i]));
-        log().event("touch", "event=packet state=%d reason=%s raw_state=%d raw_contact_byte=%u contacts=%u hex=%s source=%s gpio8=%d sleep_state=%d ui_state=%d",
-            state, report.reason, static_cast<int>(raw.state), static_cast<unsigned>(packet[1]), report.contacts, hex, for_ui ? "ui" : "sleep",
+        char contacts[16] = "unknown";
+        if (raw.state == board::TouchState::pressed || raw.state == board::TouchState::released)
+            std::snprintf(contacts, sizeof(contacts), "%u", raw.contacts);
+        log().event("touch", "event=packet state=%d reason=%s raw_state=%d raw_contact_byte=%u contacts=%s hex=%s source=%s gpio8=%d sleep_state=%d ui_state=%d",
+            state, report.reason, static_cast<int>(raw.state), static_cast<unsigned>(packet[1]), contacts, hex, for_ui ? "ui" : "sleep",
             irq_high, static_cast<int>(sleep_report.state), static_cast<int>(ui_report.state));
         packet_log_us_ = now; packet_log_state_ = state; packet_log_count_ = report.contacts;
     }
@@ -517,7 +520,7 @@ esp_err_t Device::read_touch_packet(uint8_t* packet, board::TouchReport& report,
 esp_err_t Device::qualify_touch_for_sleep(bool& pressed) {
     pressed = false;
     const auto started = esp_timer_get_time();
-    log().event("power", "event=touch_qualifying interval_ms=25 budget_ms=500");
+    log().event("power", "event=touch_qualifying mode=single_read");
     const auto result = qualify_sleep_touch(
         [this](board::TouchReport& raw) {
             uint8_t packet[board::touch_packet_bytes]{};
@@ -525,9 +528,7 @@ esp_err_t Device::qualify_touch_for_sleep(bool& pressed) {
             return read_touch_packet(packet, qualified, false, &raw) == ESP_OK;
         },
         [this] { return !wake_button_pressed() &&
-            gpio_get_level(static_cast<gpio_num_t>(board::expander_interrupt)) != 0; },
-        [] { return static_cast<uint64_t>(esp_timer_get_time()); },
-        [](unsigned ms) { vTaskDelay(pdMS_TO_TICKS(ms)); });
+            gpio_get_level(static_cast<gpio_num_t>(board::expander_interrupt)) != 0; });
     // A fitted wake-only button is user activity even if pressed during polling.
     pressed = result == TouchSleepCheck::pressed || wake_button_pressed();
     log().event("power", "event=touch_qualification result=%s pressed=%d elapsed_us=%llu",
@@ -535,7 +536,6 @@ esp_err_t Device::qualify_touch_for_sleep(bool& pressed) {
         static_cast<unsigned long long>(esp_timer_get_time() - started));
     if (pressed || result == TouchSleepCheck::released) return ESP_OK;
     if (result == TouchSleepCheck::io_error) return ESP_FAIL;
-    if (result == TouchSleepCheck::timeout) return ESP_ERR_TIMEOUT;
     return ESP_ERR_INVALID_RESPONSE;
 }
 esp_err_t Device::touch_pressed(bool& pressed) {
