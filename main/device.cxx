@@ -11,6 +11,8 @@
 #include "esp_timer.h"
 #include "esp_sleep.h"
 #include "sdkconfig.h"
+#include "expander_wake.hxx"
+#include "charger_wake.hxx"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -143,6 +145,13 @@ void Device::init() {
     button.mode = GPIO_MODE_INPUT;
     button.pull_up_en = GPIO_PULLUP_ENABLE;
     ESP_ERROR_CHECK(gpio_config(&button));
+#ifdef CONFIG_SMART_SCALE_BOARD_35_V2
+    ESP_LOGI("power", "wake route: 3.5 V2 TP_INT -> TCA9554 P2 -> GPIO4");
+#elif defined(CONFIG_SMART_SCALE_TOUCH_WAKE_VERIFIED)
+    ESP_LOGI("power", "wake route: custom direct GPIO%d", CONFIG_SMART_SCALE_TOUCH_WAKE_GPIO);
+#else
+    ESP_LOGW("power", "sleep disabled: select 3.5 V2 board or verified custom touch wiring");
+#endif
     initialized_ = true;
     ESP_LOGI("smart-scale", "Waveshare ST7796/FT6336: 480x320 landscape");
 }
@@ -203,8 +212,17 @@ BatterySnapshot Device::battery() {
     auto value = decode_axp2101(status0, status1, soc_valid ? percent : 255);
     return value;
 }
+// Read actual TD_STATUS rather than cached LVGL coordinates; no widget dispatch.
+esp_err_t Device::touch_pressed(bool& pressed) {
+    std::uint8_t points{};
+    const auto error = esp_lcd_panel_io_rx_param(touch_io_, 0x02, &points, 1);
+    pressed = (points & 0x0f) != 0;
+    return error;
+}
 bool Device::sleep_supported() const {
-#ifdef CONFIG_SMART_SCALE_TOUCH_WAKE_VERIFIED
+#ifdef CONFIG_SMART_SCALE_BOARD_35_V2
+    return true; // Fixed schematic mapping, independent of the custom GPIO option.
+#elif defined(CONFIG_SMART_SCALE_TOUCH_WAKE_VERIFIED)
     constexpr int pin = CONFIG_SMART_SCALE_TOUCH_WAKE_GPIO;
     // Only exposed GPIOs outside memory/USB and this adapter's existing pins.
     return GPIO_IS_VALID_GPIO(pin) && pin != config::reset_button && pin != config::lcd_mosi &&
@@ -215,37 +233,108 @@ bool Device::sleep_supported() const {
     return false;
 #endif
 }
-esp_err_t Device::light_sleep(uint64_t& started_us, uint64_t& ended_us) {
+esp_err_t Device::light_sleep(uint64_t& started_us, uint64_t& ended_us, bool& user_wake) {
     started_us = ended_us = 0;
-#ifdef CONFIG_SMART_SCALE_TOUCH_WAKE_VERIFIED
+    user_wake = false;
+#if defined(CONFIG_SMART_SCALE_BOARD_35_V2) || defined(CONFIG_SMART_SCALE_TOUCH_WAKE_VERIFIED)
     if (!sleep_supported() || touch_down_ || touch_activity_) return ESP_ERR_INVALID_STATE;
-    const auto pin = static_cast<gpio_num_t>(CONFIG_SMART_SCALE_TOUCH_WAKE_GPIO);
+#ifdef CONFIG_SMART_SCALE_BOARD_35_V2
+    constexpr auto pin = static_cast<gpio_num_t>(expander_wake_gpio);
+#else
+    constexpr auto pin = static_cast<gpio_num_t>(CONFIG_SMART_SCALE_TOUCH_WAKE_GPIO);
+#endif
     gpio_config_t cfg{};
     cfg.pin_bit_mask = 1ULL << pin; cfg.mode = GPIO_MODE_INPUT;
     cfg.pull_up_en = GPIO_PULLUP_ENABLE;
     auto error = gpio_config(&cfg);
     if (error != ESP_OK) return error;
-    if (!gpio_get_level(pin)) return ESP_ERR_INVALID_STATE;
-    error = gpio_wakeup_enable(pin, GPIO_INTR_LOW_LEVEL);
-    if (error != ESP_OK) return error;
-    error = esp_sleep_enable_gpio_wakeup();
-    if (error != ESP_OK) { gpio_wakeup_disable(pin); return error; }
-    // LVGL lock prevents touch I2C/rendering while the main task sleeps.
-    // Timer is stopped to avoid advancing animations during the pause.
     error = lvgl_port_stop();
+    if (error != ESP_OK) return error;
+
+    // From here every exit resumes LVGL and removes any wake sources we armed.
+    bool gpio_armed = false, wake_enabled = false;
+#ifdef CONFIG_SMART_SCALE_BOARD_35_V2
+    std::uint32_t baseline{};
+    auto pmu_read = [this](std::uint8_t reg, std::uint8_t& value) {
+        return i2c_master_transmit_receive(pmu_, &reg, 1, &value, 1, 20) == ESP_OK;
+    };
+    auto pmu_write = [this](std::uint8_t reg, std::uint8_t value) {
+        const std::uint8_t data[] = {reg, value};
+        return i2c_master_transmit(pmu_, data, sizeof(data), 20) == ESP_OK;
+    };
+    auto read_port = [this](std::uint32_t& value) {
+        // Driver performs a hardware input-port read, acknowledging the shared INT.
+        return esp_io_expander_get_level(expander_, 0xff, &value) == ESP_OK;
+    };
+    auto read_touch = [this](bool& value) { return touch_pressed(value) == ESP_OK; };
+    // Preserve output latches; P2 and P5 carry touch and PMU interrupts.
+    error = esp_io_expander_set_dir(expander_, expander_touch_mask | expander_pmu_mask, IO_EXPANDER_INPUT);
     if (error == ESP_OK) {
-        if (gpio_get_level(pin)) {
-            started_us = esp_timer_get_time();
-            error = esp_light_sleep_start();
-            ended_us = esp_timer_get_time();
+        bool connected{};
+        if (!arm_charger_wake(pmu_read, pmu_write, connected)) {
+            ESP_LOGW("power", "sleep deferred: charger wake setup failed");
+            error = ESP_FAIL;
+        } else if (connected) {
+            user_wake = true;
+            error = ESP_ERR_INVALID_STATE;
         }
-        else error = ESP_ERR_INVALID_STATE;
-        lvgl_port_resume();
     }
-    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_GPIO);
-    gpio_wakeup_disable(pin);
-    // Suppress the waking press, even if the panel becomes bright before poll.
-    touch_gate_.filter(true, true);
+    if (error == ESP_OK) {
+        const auto preparation = prepare_expander_wake(read_port, read_touch,
+            [pin] { return gpio_get_level(pin) != 0; }, baseline);
+        if (preparation != WakePreparation::ready) {
+            user_wake = preparation == WakePreparation::touch;
+            error = preparation == WakePreparation::io_error ? ESP_FAIL : ESP_ERR_INVALID_STATE;
+            ESP_LOGW("power", "expander sleep deferred: preparation=%d inputs=0x%02x",
+                     static_cast<int>(preparation), static_cast<unsigned>(baseline));
+        }
+    }
+#else
+    if (!gpio_get_level(pin)) error = ESP_ERR_INVALID_STATE;
+#endif
+    if (error == ESP_OK) {
+        error = gpio_wakeup_enable(pin, GPIO_INTR_LOW_LEVEL);
+        gpio_armed = error == ESP_OK;
+    }
+    if (error == ESP_OK) {
+        error = esp_sleep_enable_gpio_wakeup();
+        wake_enabled = error == ESP_OK;
+    }
+    if (error == ESP_OK)
+        ESP_LOGI("power", "arming light sleep: wake_gpio=%d", static_cast<int>(pin));
+    // Check after logging, which may block on UART. No input-port reads after
+    // this check: they could acknowledge a new touch.
+    if (error == ESP_OK && !gpio_get_level(pin)) error = ESP_ERR_INVALID_STATE;
+    if (error == ESP_OK) {
+        const auto started = esp_timer_get_time();
+        error = esp_light_sleep_start();
+        if (error == ESP_OK) {
+            started_us = started;
+            ended_us = esp_timer_get_time();
+            user_wake = true;
+#ifdef CONFIG_SMART_SCALE_BOARD_35_V2
+            std::uint32_t inputs{};
+            bool pressed{};
+            // Snapshot and acknowledge shared inputs before reading the touch IC.
+            const bool port_ok = read_port(inputs);
+            const bool touch_ok = read_touch(pressed);
+            const auto reason = classify_expander_wake(baseline, inputs, pressed, port_ok && touch_ok);
+            bool inserted{};
+            const bool charger_ok = acknowledge_charger_wake(pmu_read, pmu_write, inserted);
+            user_wake = inserted || !charger_ok || reason != ExpanderWake::shared;
+            if (inserted || !charger_ok)
+                ESP_LOGI("power", "charger wake: inserted=%d acknowledged=%d", inserted, charger_ok);
+            ESP_LOGI("power", "expander wake: reason=%d before=0x%02x after=0x%02x touch=%d elapsed_ms=%llu",
+                     static_cast<int>(reason), static_cast<unsigned>(baseline), static_cast<unsigned>(inputs),
+                     pressed, static_cast<unsigned long long>((ended_us - started_us) / 1000));
+#endif
+        }
+    }
+    if (wake_enabled) esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_GPIO);
+    if (gpio_armed) gpio_wakeup_disable(pin);
+    const auto resumed = lvgl_port_resume();
+    if (resumed != ESP_OK) ESP_LOGE("power", "LVGL resume failed: %s", esp_err_to_name(resumed));
+    if (user_wake) touch_gate_.filter(true, true);
     return error;
 #else
     return ESP_ERR_NOT_SUPPORTED;

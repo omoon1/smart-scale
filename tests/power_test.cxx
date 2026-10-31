@@ -9,7 +9,7 @@ int main() {
     assert(p.update(30000, false) == PowerState::dimmed);
     assert(p.update(59999, false) == PowerState::dimmed);
     assert(p.update(60000, false) == PowerState::screen_off);
-    assert(!p.sleep_due(359999)); assert(p.sleep_due(360000));
+    assert(!p.sleep_due(59999)); assert(p.sleep_due(60000));
     assert(p.report_sleep_once()); assert(!p.report_sleep_once());
     p.activity(360001); assert(!p.sleep_due(360001)); assert(p.report_sleep_once());
     assert(p.update(900000, true) == PowerState::active);
@@ -49,4 +49,28 @@ int main() {
     assert(battery_text({}) == "Battery --");
     PowerPolicy uptime(0x100000000ULL);
     assert(uptime.update(0x100000000ULL+60000, false)==PowerState::screen_off);
+    PowerPolicy charging;
+    assert(charging.update(0, false, true) == PowerState::active);
+    assert(charging.update(29999, false, true) == PowerState::active);
+    assert(charging.update(30000, false, true) == PowerState::dimmed);
+    assert(charging.update(60000, false, true) == PowerState::dimmed);
+    assert(charging.update(599999, false, true) == PowerState::dimmed);
+    assert(charging.update(600000, false, true) == PowerState::screen_off);
+    assert(!charging.sleep_due(600000));
+    assert(charging.update(9ULL*3600000, false, true) == PowerState::screen_off);
+    assert(!charging.sleep_due(9ULL*3600000));
+    charging.activity(9ULL*3600000+1); // Touch wakes a charging screen and restarts its timer.
+    assert(charging.update(9ULL*3600000+1, false, true) == PowerState::active);
+    assert(charging.update(9ULL*3600000+30001, false, true) == PowerState::dimmed);
+    assert(charging.update(9ULL*3600000+600001, false, true) == PowerState::screen_off);
+    const auto unplug = 9ULL*3600000+600002;
+    assert(charging.update(unplug, false, false) == PowerState::active);
+    assert(charging.update(unplug+30000, false, false) == PowerState::dimmed);
+    assert(charging.update(unplug+60000, false, false) == PowerState::screen_off);
+    assert(!charging.sleep_due(unplug+59999));
+    assert(charging.sleep_due(unplug+60000));
+    assert(charging.update(unplug+60001, false, true) == PowerState::active);
+    assert(!charging.sleep_due(unplug+60001));
+    assert(charging.update(unplug+90001, false, true) == PowerState::dimmed);
+    assert(charging.update(unplug+90002, true, true) == PowerState::active);
 }

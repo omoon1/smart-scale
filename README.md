@@ -89,3 +89,20 @@ See [architecture and scope](docs/architecture.md), [hardware setup](docs/hardwa
 
 See [Scale troubleshooting logs](docs/scale-diagnostics.md) for automatic anomaly
 traces, timestamp/sequence interpretation, and a stationary-load recording procedure.
+
+## Battery sleep on the 3.5-inch V2 board
+
+A dark screen alone does not mean the CPU is asleep. For **ESP32-S3-Touch-LCD-3.5
+V2 / Rev2.0**, select `Smart scale power → Waveshare ESP32-S3-Touch-LCD-3.5 V2
+(Rev2.0)` in `make menuconfig`, save, rebuild and flash. This enables touch wake
+through TCA9554 P2 and GPIO4. Do not select it on V1 or a 3.49-inch board.
+See [power management](docs/power-management.md) for configuration, shared-interrupt
+handling, expected logs and physical validation. Sleep remains disabled by default
+until a board/wake route is selected.
+
+While external power is connected, including a full battery, idle dims the screen
+to 30% after 30 seconds and turns it off after 10 minutes total idle. Sleep stays disabled;
+touch restores the display and restarts the idle timer. Unplugging restarts the normal idle timers.
+
+On battery, idle dims after 30 seconds and enters light sleep at 60 seconds total idle
+when the selected wake route is available. There is no extra five-minute screen-off wait.
