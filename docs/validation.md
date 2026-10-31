@@ -80,7 +80,7 @@ Host tests cover repeated fine adjustment, no extra increment on release, stoppi
 
 ## Bounded diagnostics and stability confirmation
 
-Weight-change logging is capped at one line/second, plus one `hx711_diag` summary per five seconds. Summaries report stability failure bits and measured limits, calibration, sample cadence/age, batching, overflow, and fault counts. Stability entry now requires 500 ms of continuous passing checks; exit on failure remains immediate, with no relaxation of the measurement thresholds. Native tests cover pending confirmation, entry, immediate exit, drift flags, and invalidation. Firmware and LVGL checks pass; hardware diagnosis awaits logs captured under a fixed load.
+Historical scale diagnostic mode: weight-change logging was capped at one line/second, plus one `hx711_diag` summary per five seconds. Current 3.49 V2 firmware disables `hx711_diag` and `scale_trace`; see [current power/touch logging](power-management.md#diagnostic-logs). Summaries report stability failure bits and measured limits, calibration, sample cadence/age, batching, overflow, and fault counts. Stability entry now requires 500 ms of continuous passing checks; exit on failure remains immediate, with no relaxation of the measurement thresholds. Native tests cover pending confirmation, entry, immediate exit, drift flags, and invalidation. Firmware and LVGL checks pass; hardware diagnosis awaits logs captured under a fixed load.
 
 
 ## Drift-window correction from device diagnostics

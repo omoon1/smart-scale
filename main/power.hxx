@@ -32,6 +32,7 @@ public:
     // Keep the display dark and bound retries when a shared IRQ is noisy/stuck.
     void retry_sleep(std::uint64_t now) { retry_ms_ = now + 30000; sleep_reported_ = false; }
     bool report_sleep_once() { if (sleep_reported_) return false; sleep_reported_ = true; return true; }
+    std::uint64_t idle_ms(std::uint64_t now) const { return now - activity_ms_; }
     PowerState state() const { return state_; }
 private:
     std::uint64_t activity_ms_{}, retry_ms_{};
@@ -44,6 +45,7 @@ private:
 // First press on a dark display is consumed through release, even after wake.
 class WakeTouchGate {
 public:
+    bool suppressed() const { return suppress_; }
     bool filter(bool pressed, bool dark) {
         if (pressed && dark) suppress_ = true;
         const bool deliver = pressed && !suppress_;

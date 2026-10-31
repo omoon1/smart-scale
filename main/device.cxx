@@ -1,4 +1,5 @@
 #include "device.hxx"
+#include "diagnostic_logger.hxx"
 #include "config.hxx"
 #include "board349.hxx"
 #include "expander_wake.hxx"
@@ -20,6 +21,7 @@ namespace smart_scale::device::display {
 namespace {
 namespace board = board349;
 constexpr const char* tag = "display";
+auto& log() { return smart_scale::device::DiagnosticLogger::instance(); }
 // Match the V2 example; do not apply another panel's long power/gamma table.
 const axs15231b_lcd_init_cmd_t init_commands[] = {
     {0x11, nullptr, 0, 100}, // Sleep out.
@@ -203,18 +205,34 @@ void Device::flush(lv_disp_drv_t* driver, const lv_area_t* area, lv_color_t* pix
 }
 void Device::read_touch(lv_indev_drv_t* driver, lv_indev_data_t* data) {
     auto& self = *static_cast<Device*>(driver->user_data);
+    ++self.touch_polls_;
+    self.last_touch_poll_us_ = esp_timer_get_time();
+    const bool previous_down = self.touch_down_;
+    const bool previous_gate = self.touch_gate_.suppressed();
     data->state = LV_INDEV_STATE_RELEASED;
     data->point = self.last_touch_;
     std::uint8_t packet[board::touch_packet_bytes]{};
     const auto result = i2c_master_transmit_receive(self.touch_, board::touch_command, sizeof(board::touch_command),
                                                    packet, sizeof(packet), 20);
+    if (self.touch_resume_pending_) {
+        log().event("touch", "event=post_resume_read cycle=%u result=%s latency_us=%llu contacts=%u",
+            self.wake_cycle_, esp_err_to_name(result),
+            static_cast<unsigned long long>(esp_timer_get_time() - self.touch_resume_us_),
+            static_cast<unsigned>(packet[1]));
+        self.touch_resume_pending_ = false;
+    }
     if (result != ESP_OK) {
-        if (!self.touch_failed_) ESP_LOGW(tag, "Touch read failed on SDA=17 SCL=18 addr=0x3b: %s", esp_err_to_name(result));
+        ++self.touch_errors_;
+        if (!self.touch_failed_) log().event("touch", "event=i2c_error result=%s state=%d gate=%d errors=%llu",
+            esp_err_to_name(result), static_cast<int>(self.power_state_), previous_gate,
+            static_cast<unsigned long long>(self.touch_errors_));
         self.touch_failed_ = true;
         self.touch_down_ = false;
         return; // Release widgets without clearing the wake gesture gate.
     }
-    if (self.touch_failed_) ESP_LOGI(tag, "Touch communication recovered");
+    self.last_touch_ok_us_ = self.last_touch_poll_us_;
+    if (self.touch_failed_) log().event("touch", "event=i2c_recovered polls=%llu errors=%llu",
+        static_cast<unsigned long long>(self.touch_polls_), static_cast<unsigned long long>(self.touch_errors_));
     self.touch_failed_ = false;
     board::TouchPoint point;
     if (board::decode_touch(packet, sizeof(packet), point)) {
@@ -223,6 +241,7 @@ void Device::read_touch(lv_indev_drv_t* driver, lv_indev_data_t* data) {
         data->state = LV_INDEV_STATE_PRESSED;
     }
     self.touch_down_ = data->state == LV_INDEV_STATE_PRESSED;
+    if (packet[1] != 0 && !self.touch_down_) ++self.touch_invalid_;
     if (self.touch_down_) self.touch_activity_ = true;
     // Only an explicit zero-contact packet clears suppression. Malformed or
     // multi-touch reports must not turn a waking gesture into a widget press.
@@ -230,15 +249,35 @@ void Device::read_touch(lv_indev_drv_t* driver, lv_indev_data_t* data) {
         if (!self.touch_gate_.filter(self.touch_down_, self.power_state_ == PowerState::screen_off))
             data->state = LV_INDEV_STATE_RELEASED;
     }
+    const bool delivered = data->state == LV_INDEV_STATE_PRESSED;
+    if (previous_gate != self.touch_gate_.suppressed() ||
+        ((previous_down != self.touch_down_ || delivered != self.last_delivered_) &&
+         self.last_touch_poll_us_ - self.touch_log_us_ >= 250000)) {
+        log().event("touch", "event=input contacts=%u raw_down=%d delivered=%d gate=%d x=%d y=%d state=%d gpio8=%d",
+            static_cast<unsigned>(packet[1]), self.touch_down_, delivered, self.touch_gate_.suppressed(),
+            static_cast<int>(data->point.x), static_cast<int>(data->point.y), static_cast<int>(self.power_state_),
+            gpio_get_level(static_cast<gpio_num_t>(board::expander_interrupt)));
+        self.touch_log_us_ = self.last_touch_poll_us_;
+    }
+    self.last_delivered_ = delivered;
+}
+void Device::log_touch_health() {
+    const auto now = static_cast<uint64_t>(esp_timer_get_time());
+    // Never read TCA9554 inputs just for logging: that acknowledges its IRQ.
+    log().event("touch", "event=health polls=%llu errors=%llu invalid=%llu poll_age_us=%llu ok_age_us=%llu down=%d gate=%d gpio8=%d state=%d",
+        static_cast<unsigned long long>(touch_polls_), static_cast<unsigned long long>(touch_errors_),
+        static_cast<unsigned long long>(touch_invalid_), static_cast<unsigned long long>(last_touch_poll_us_ ? now-last_touch_poll_us_ : 0),
+        static_cast<unsigned long long>(last_touch_ok_us_ ? now-last_touch_ok_us_ : 0),
+        touch_down_, touch_gate_.suppressed(), gpio_get_level(static_cast<gpio_num_t>(board::expander_interrupt)), static_cast<int>(power_state_));
 }
 esp_err_t Device::show() {
     if (!initialized_) return ESP_ERR_INVALID_STATE;
     // Caller holds the same LVGL port lock used by the UI task. flush() waits
     // for every DMA completion, so no transfer remains in flight on return.
-    ESP_LOGI(tag, "First frame refresh starting; backlight held off");
+    log().event("power", "event=frame_begin state=%d", static_cast<int>(power_state_));
     lv_obj_invalidate(lv_disp_get_scr_act(display_));
     lv_refr_now(display_);
-    ESP_LOGI(tag, "First frame refresh complete; forcing backlight ON");
+    log().event("power", "event=frame_end");
     // Restore active-low full brightness behind EXIO1 before releasing the gate.
     // GPIO42 HIGH would darken this panel.
     auto error = ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 0);
@@ -302,19 +341,33 @@ esp_err_t Device::power_state(PowerState state) {
             error = esp_io_expander_set_level(expander_, board::backlight_enable, 0);
         if (error == ESP_OK && state == PowerState::screen_off) lv_timer_pause(display_->refr_timer);
     }
+    log().event("power", "event=backlight from=%d to=%d duty=%u result=%s",
+        static_cast<int>(power_state_), static_cast<int>(state),
+        state == PowerState::active ? 0U : state == PowerState::dimmed ? 716U : 1023U, esp_err_to_name(error));
     if (error == ESP_OK) power_state_ = state;
     return error;
 }
 BatterySnapshot Device::battery() {
-    if (!adc_ || !adc_calibration_) return {};
     int total = 0;
-    for (int i = 0; i < 16; ++i) {
+    esp_err_t error = adc_ && adc_calibration_ ? ESP_OK : ESP_ERR_INVALID_STATE;
+    for (int i = 0; error == ESP_OK && i < 16; ++i) {
         int raw{}, mv{};
-        if (adc_oneshot_read(adc_, ADC_CHANNEL_3, &raw) != ESP_OK ||
-            adc_cali_raw_to_voltage(adc_calibration_, raw, &mv) != ESP_OK) return {};
+        error = adc_oneshot_read(adc_, ADC_CHANNEL_3, &raw);
+        if (error == ESP_OK) error = adc_cali_raw_to_voltage(adc_calibration_, raw, &mv);
         total += mv;
     }
-    return decode_voltage_battery(total * 3 / 16);
+    const int mv = error == ESP_OK ? total * 3 / 16 : -1;
+    const auto battery = error == ESP_OK ? decode_voltage_battery(mv) : BatterySnapshot{};
+    const auto now = static_cast<uint64_t>(esp_timer_get_time());
+    const bool validity_changed = decode_voltage_battery(battery_last_mv_).valid != battery.valid;
+    if (!battery_log_us_ || error != battery_last_error_ || validity_changed ||
+        std::abs(mv - battery_last_mv_) >= 30 || now - battery_log_us_ >= 60000000) {
+        log().event("battery", "event=sample result=%s mv=%d valid=%d estimated_pct=%d source=unknown charging=unknown state=%d",
+            esp_err_to_name(error), mv, battery.valid, battery.percent ? static_cast<int>(*battery.percent) : -1,
+            static_cast<int>(power_state_));
+        battery_log_us_ = now; battery_last_mv_ = mv; battery_last_error_ = error;
+    }
+    return battery;
 }
 bool Device::sleep_supported() const {
 #ifdef CONFIG_SMART_SCALE_TOUCH_WAKE_VERIFIED
@@ -331,26 +384,39 @@ esp_err_t Device::touch_pressed(bool& pressed) {
     pressed = error == ESP_OK && packet[1] != 0;
     return error;
 }
-esp_err_t Device::light_sleep(uint64_t& started_us, uint64_t& ended_us, bool& user_wake) {
+esp_err_t Device::light_sleep(uint64_t& started_us, uint64_t& ended_us, bool& user_wake, unsigned cycle) {
     started_us = ended_us = 0;
     user_wake = false;
+    log().event("power", "event=sleep_prepare cycle=%u supported=%d down=%d activity=%d gate=%d gpio8=%d",
+        cycle, sleep_supported(), touch_down_, touch_activity_, touch_gate_.suppressed(),
+        gpio_get_level(static_cast<gpio_num_t>(board::expander_interrupt)));
 #ifdef CONFIG_SMART_SCALE_TOUCH_WAKE_VERIFIED
     if (!sleep_supported() || touch_down_ || touch_activity_) return ESP_ERR_INVALID_STATE;
     constexpr auto pin = static_cast<gpio_num_t>(board::expander_interrupt);
     auto error = lvgl_port_stop();
+    log().event("power", "event=lvgl_stop cycle=%u result=%s", cycle, esp_err_to_name(error));
     if (error != ESP_OK) return error;
     bool gpio_armed = false, wake_enabled = false;
     uint32_t baseline{};
-    auto read_port = [this](uint32_t& value) {
+    auto read_port = [this, cycle](uint32_t& value) {
         const uint8_t reg = 0; uint8_t inputs{};
         const auto result = i2c_master_transmit_receive(expander_input_, &reg, 1, &inputs, 1, 20);
         value = inputs;
+        log().event("power", "event=expander_read cycle=%u result=%s inputs=0x%02x valid=%d gpio8=%d",
+            cycle, esp_err_to_name(result), static_cast<unsigned>(inputs), result == ESP_OK,
+            gpio_get_level(static_cast<gpio_num_t>(board::expander_interrupt)));
         return result == ESP_OK;
     };
-    auto read_touch = [this](bool& pressed) { return touch_pressed(pressed) == ESP_OK; };
+    auto read_touch = [this, cycle](bool& pressed) {
+        const auto result = touch_pressed(pressed);
+        log().event("touch", "event=sleep_probe cycle=%u result=%s pressed=%d", cycle, esp_err_to_name(result), pressed);
+        return result == ESP_OK;
+    };
     // V2 has EXIO0 touch and no PMU IRQ. Never treat EXIO5 (LCD reset) as PMU.
     const auto preparation = prepare_expander_wake(read_port, read_touch,
         [pin] { return gpio_get_level(pin) != 0; }, baseline, 1U, 0U);
+    log().event("power", "event=prepared cycle=%u preparation=%d baseline=0x%02x gpio8=%d", cycle,
+        static_cast<int>(preparation), static_cast<unsigned>(baseline), gpio_get_level(pin));
     if (preparation != WakePreparation::ready) {
         user_wake = preparation == WakePreparation::touch;
         error = preparation == WakePreparation::io_error ? ESP_FAIL : ESP_ERR_INVALID_STATE;
@@ -363,28 +429,43 @@ esp_err_t Device::light_sleep(uint64_t& started_us, uint64_t& ended_us, bool& us
         error = esp_sleep_enable_gpio_wakeup();
         wake_enabled = error == ESP_OK;
     }
-    if (error == ESP_OK) ESP_LOGI("power", "arming light sleep: wake_gpio=%d", static_cast<int>(pin));
+    log().event("power", "event=sleep_arm cycle=%u result=%s gpio_armed=%d wake_enabled=%d wake_gpio=%d",
+        cycle, esp_err_to_name(error), gpio_armed, wake_enabled, static_cast<int>(pin));
     // No expander read after this check: it could acknowledge a newly arrived touch.
-    if (error == ESP_OK && !gpio_get_level(pin)) error = ESP_ERR_INVALID_STATE;
+    if (error == ESP_OK && !gpio_get_level(pin)) {
+        error = ESP_ERR_INVALID_STATE;
+        log().event("power", "event=sleep_abort cycle=%u reason=irq_low_before_entry", cycle);
+    }
     if (error == ESP_OK) {
         const auto started = esp_timer_get_time();
         error = esp_light_sleep_start();
+        const auto returned = esp_timer_get_time();
+        log().event("power", "event=sleep_return cycle=%u result=%s elapsed_us=%llu wake_cause=%d gpio8=%d",
+            cycle, esp_err_to_name(error), static_cast<unsigned long long>(returned-started),
+            error == ESP_OK ? static_cast<int>(esp_sleep_get_wakeup_cause()) : -1, gpio_get_level(pin));
         if (error == ESP_OK) {
-            started_us = started; ended_us = esp_timer_get_time();
+            started_us = started; ended_us = returned;
             uint32_t inputs{}; bool pressed{};
             const bool port_ok = read_port(inputs);
             const bool touch_ok = read_touch(pressed);
             const auto reason = classify_expander_wake(baseline, inputs, pressed, port_ok && touch_ok, 1U);
             user_wake = reason != ExpanderWake::shared;
-            ESP_LOGI("power", "expander wake: reason=%d before=0x%02x after=0x%02x touch=%d",
-                static_cast<int>(reason), static_cast<unsigned>(baseline), static_cast<unsigned>(inputs), pressed);
+            log().event("power", "event=wake_classified cycle=%u reason=%d before=0x%02x after=0x%02x touch=%d",
+                cycle, static_cast<int>(reason), static_cast<unsigned>(baseline), static_cast<unsigned>(inputs), pressed);
         }
     }
-    if (wake_enabled) esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_GPIO);
-    if (gpio_armed) gpio_wakeup_disable(pin);
+    const auto source_cleanup = wake_enabled ? esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_GPIO) : ESP_OK;
+    const auto gpio_cleanup = gpio_armed ? gpio_wakeup_disable(pin) : ESP_OK;
+    log().event("power", "event=wake_cleanup cycle=%u source=%s gpio=%s", cycle,
+        esp_err_to_name(source_cleanup), esp_err_to_name(gpio_cleanup));
+    battery_log_us_ = 0; // Include the first post-attempt voltage sample even if unchanged.
+    wake_cycle_ = cycle;
+    touch_resume_us_ = esp_timer_get_time();
+    touch_resume_pending_ = true;
     const auto resumed = lvgl_port_resume();
-    if (resumed != ESP_OK) ESP_LOGE("power", "LVGL resume failed: %s", esp_err_to_name(resumed));
+    log().event("power", "event=lvgl_resume cycle=%u result=%s user_wake=%d", cycle, esp_err_to_name(resumed), user_wake);
     if (user_wake) touch_gate_.filter(true, true);
+    log().event("touch", "event=wake_gate cycle=%u suppressed=%d", cycle, touch_gate_.suppressed());
     return error;
 #else
     return ESP_ERR_NOT_SUPPORTED;

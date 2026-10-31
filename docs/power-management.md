@@ -129,3 +129,71 @@ seconds without illuminating the screen. Sleep timestamps only describe an
 actually successful sleep. The host helper retains its upstream 3.5 defaults
 for regression tests; the 3.49 adapter explicitly supplies touch mask 0x01 and
 pending-PMU mask 0x00.
+
+
+## Diagnostic logs
+
+The 3.49 V2 firmware emits queued `power`, `touch`, and `battery` events for
+intermittent touch failures after sleep. `scale_trace` capture/dumps and the
+five-second `hx711_diag` stream are disabled; ordinary `scale_event` transitions
+and startup scale configuration remain available. Sleep policy and the verified
+wake configuration gate are unchanged by this instrumentation.
+
+Capture the complete serial output from boot through a failure, including the
+startup `power event=config` (`sleep_enabled`, firmware/IDF version, reset reason).
+Keep the unfiltered capture so errors, resets and display diagnostics survive.
+Annotate when you touched the panel, whether the backlight came on, whether a
+second tap worked, and whether USB or battery powered the test.
+
+Each sleep attempt has a `cycle` number. Follow these markers in order:
+
+1. `suspend_begin` / `suspend_end`: HX711 task suspension result and latency.
+2. `sleep_prepare`, `lvgl_stop`, `expander_read`, `sleep_probe`, `prepared`:
+   touch state, wake gesture suppression, I2C results, expander inputs and GPIO8.
+3. `sleep_arm`, optional `sleep_abort`, `sleep_return`: GPIO wake setup,
+   pending-IRQ rejection, actual sleep call result, duration and wake cause.
+4. `wake_classified`, `wake_cleanup`, `lvgl_resume`, `wake_gate`: wake decision,
+   cleanup results, LVGL resume result and suppression state.
+5. `measurement_resume`, `sleep_result`, `display_restore`,
+   `post_resume_read`, `measurement_stable`: measurement restart, screen restore,
+   first LVGL touch transaction after resume and eventual stable measurement.
+   `post_resume_read` also reports I2C errors; it does not imply a successful read.
+
+`touch event=input` reports raw contact detection versus delivered LVGL presses,
+coordinates and the wake gate. Ordinary input transitions are rate limited to at most
+four lines/second, so rapid press/release edges can be omitted. Wake gate changes
+are always logged. `i2c_error` and
+`i2c_recovered` mark communication transitions. The 30-second awake health logs
+report touch poll/error/invalid-packet counters, age of the last poll/success,
+power state, idle time, inhibition, measurement readiness and logger drops.
+A missing `post_resume_read` after successful `lvgl_resume` warrants checking
+whether the LVGL task resumes polling. A persistent `raw_down=1 delivered=0
+gate=1` suggests the wake gesture has not received a valid zero-contact release.
+These are diagnostic clues, not proof of the underlying hardware/software fault.
+
+`battery event=sample` records calibrated millivolts, validity, estimated percent
+and ADC/conversion result. It emits on first sample, error/validity changes,
+the first sample after a sleep attempt that stopped LVGL,
+a change of at least 30 mV from the last logged sample, or every 60 seconds
+while awake. Sampling remains every five seconds and restarts after sleep.
+`source=unknown charging=unknown` is intentional: this board's voltage-only ADC
+cannot identify charger state or USB power. No periodic logs or battery samples
+are produced while the CPU sleeps, and no timer wake has been added.
+
+Numeric fields:
+
+| Field | Values |
+| --- | --- |
+| `state`, `from`, `to` | 0 active, 1 dimmed, 2 screen off |
+| `preparation` | 0 ready, 1 touch pending, 2 pending IRQ, 3 I/O error |
+| `reason` in `wake_classified` | 0 touch, 1 shared non-touch, 2 ambiguous, 3 I/O error |
+| `wake_cause`, `reset_reason` | ESP-IDF enum values; wake cause -1 means no successful sleep |
+| `estimated_pct` | -1 means unavailable |
+
+`t_us` is the producer's ESP timer timestamp in microseconds; the ESP log prefix
+reflects when the queued line is printed. Pending lines may flush only after
+wake, so the last printed line alone cannot prove where execution stopped.
+Formatting/queue insertion occurs in the application/LVGL path; serial output
+runs in the logger task. `log_dropped` is cumulative and `queue_hwm` is the queue
+high-water mark (capacity 32). Logging can still affect timing. Diagnostic logs
+add no TCA9554 input reads: those could acknowledge and clear a wake interrupt.

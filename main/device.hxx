@@ -26,7 +26,8 @@ public:
     bool touch_down() const { return touch_down_; }
     BatterySnapshot battery(); // LVGL lock required; calibrated ADC voltage estimate
     bool sleep_supported() const;
-    esp_err_t light_sleep(uint64_t& started_us, uint64_t& ended_us, bool& user_wake); // acquisition stopped; LVGL lock held
+    void log_touch_health();
+    esp_err_t light_sleep(uint64_t& started_us, uint64_t& ended_us, bool& user_wake, unsigned cycle = 0); // acquisition stopped; LVGL lock held
 
 private:
     static bool transfer_done(esp_lcd_panel_io_handle_t, esp_lcd_panel_io_event_data_t*, void*);
@@ -41,6 +42,12 @@ private:
     lv_indev_drv_t touch_driver_{};
     lv_point_t last_touch_{};
     bool touch_failed_{};
+    uint64_t touch_polls_{}, touch_errors_{}, touch_invalid_{}, last_touch_poll_us_{}, last_touch_ok_us_{};
+    uint64_t touch_log_us_{}, battery_log_us_{};
+    int battery_last_mv_{-1}, battery_last_error_{-1};
+    bool last_delivered_{}, touch_resume_pending_{};
+    unsigned wake_cycle_{};
+    uint64_t touch_resume_us_{};
     WakeTouchGate touch_gate_;
     PowerState power_state_{PowerState::active};
     bool touch_activity_{}, touch_down_{};
