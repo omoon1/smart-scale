@@ -589,6 +589,15 @@ esp_err_t Device::light_sleep(uint64_t& started_us, uint64_t& ended_us, bool& us
         user_wake = preparation == WakePreparation::touch;
         error = preparation == WakePreparation::io_error ? ESP_FAIL : ESP_ERR_INVALID_STATE;
     }
+    // TODO(lcd-touch-wake, PR #19): Rev1.1 hardware test on 2026-10-31
+    // reported no touch wake after Display Off (0x28) + Sleep In (0x10),
+    // while backlight-only light sleep woke on touch. Both command transfers
+    // returned ESP_OK; that does not establish touch IRQ operation afterward.
+    // Keep this experimental path disabled for normal use. Before enabling it,
+    // isolate 0x28 versus 0x10 effects and verify TP_INT -> EXIO0 -> GPIO8.
+    // Also capture the five-second timer wake and panel/touch restoration:
+    // the supplied log ends before sleep returns, so recovery is unconfirmed.
+    // Revalidate repeated touch wake on USB/battery and measure current savings.
     if (error == ESP_OK && use_lcd_sleep) {
         // LVGL is stopped, the caller holds its lock, and flush() waits for DMA.
         const bool ok = lcd_sleep_.enter([this](uint8_t cmd) { return lcd_command(cmd); },
