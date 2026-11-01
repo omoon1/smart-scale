@@ -26,7 +26,7 @@ public:
 private:
     enum class Action { tare, calibration, capture_zero, calibrate, objects, dose, toggle_mode, demo, close,
         request_remove, confirm_remove, cancel_remove, dose_adjust, dose_preset, choose_object, choose_scenario, run, pause, finish, next,
-        battery_history, history_range, reset, remove, registration, register_next, register_back, register_save, choose_icon, stable };
+        battery_history, history_range, reset, remove, registration, register_next, register_back, register_save, choose_kind, choose_icon, stable };
     struct Binding { View* view{}; Action action{}; int value{}; };
     lv_obj_t* button(lv_obj_t* parent, const char* text, int x, int y, int w, int h,
                      Action action, int value = 0, bool primary = false);

@@ -89,26 +89,32 @@ void run_wide_checks(smart_scale::ui::View& view, smart_scale::Controller& contr
     require(held > 20.1F && *controller.session().dose_g == held, "wide press hold and release");
     click(view, 610, 26);
     click(view, 330, 70); screenshot(view, "wide-03-objects");
-    require(has_label(lv_scr_act(), "+ Register\nequipment"), "wide object card opens list");
+    require(has_label(lv_scr_act(), LV_SYMBOL_PLUS " Register equipment"), "wide object card opens list");
     click(view, 454, 100); screenshot(view, "wide-04-register-type");
-    auto* type = find_type(lv_scr_act(), &lv_dropdown_class);
-    require(type, "wide registration type");
-    click(view, 150, 90); screenshot(view, "wide-05-type-options");
-    lv_dropdown_close(type); lv_dropdown_set_selected(type, 2);
-    click(view, 462, 100); screenshot(view, "wide-06-register-weight");
-    click(view, 100, 138); click(view, 462, 100);
+    require(!find_type(lv_scr_act(), &lv_dropdown_class), "wide types are cards, not a dropdown");
+    click(view, 430, 90); screenshot(view, "wide-05-type-options");
+    click(view, 580, 126); screenshot(view, "wide-06-register-weight");
+    click(view, 580, 44); // Back preserves the selected type.
+    require(has_label(lv_scr_act(), "Pour-over set"), "type remains available after Back");
+    click(view, 580, 126);
+    click(view, 330, 128); click(view, 580, 126);
     require(has_label(lv_scr_act(), "Unstable - wait"), "wide unstable registration blocked");
-    click(view, 100, 138); click(view, 462, 100);
-    require(has_label(lv_scr_act(), "Icon 3/3"), "wide stable registration advances");
-    for (int i = 0; i < 20; ++i) click(view, (40 + (i % 10) * 62) * 81 / 100, 90 + (i / 10) * 50);
+    click(view, 330, 128); click(view, 580, 126);
+    require(has_label(lv_scr_act(), LV_SYMBOL_OK " Save"), "wide stable registration advances");
+    for (int i = 0; i < 20; ++i) {
+        require(has_label(lv_scr_act(), ui::equipment_icons[i]), "all twenty icons visible without paging");
+        click(view, 32 + (i % 10) * 51, 74 + (i / 10) * 59);
+    }
     screenshot(view, "wide-07-icons");
-    click(view, 449, 26);
+    click(view, 580, 126);
     require(controller.equipment_count() == 4 && controller.equipment()[3].name == "Pour-over set 🦋",
             "all wide icon positions are reachable and last selection saves");
-    click(view, 350, 130); screenshot(view, "wide-08-remove-confirm");
+    require(!has_label(lv_scr_act(), LV_SYMBOL_OK " Save"), "save returns to main screen");
+    view.open(ui::Dialog::objects); pump(view);
+    click(view, 230, 40); screenshot(view, "wide-08-remove-confirm");
     require(controller.equipment_count() == 4, "wide removal requires confirmation");
     click(view, 600, 80); require(controller.equipment_count() == 4, "wide cancel preserves equipment");
-    click(view, 350, 130); click(view, 437, 138);
+    click(view, 230, 40); click(view, 437, 138);
     require(controller.equipment_count() == 3, "wide confirm removes equipment");
     click(view, 610, 26);
     view.open(ui::Dialog::calibration); screenshot(view, "wide-09-calibration");
@@ -260,11 +266,18 @@ int main(int argc, char** argv) {
         const std::string prefix = rail_wide ? "rail-wide-" : "rail-compact-";
         for (int step = 0; step < 3; ++step) {
             view.open(ui::Dialog::registration); pump(view);
-            for (int i = 0; i < step; ++i) click(view, rail_wide ? 470 : 320, rail_wide ? 100 : 284);
+            for (int i = 0; i < step; ++i) click(view, rail_wide ? 580 : 320, rail_wide ? 126 : 284);
             screenshot(view, (prefix + "registration-" + std::to_string(step)).c_str());
-            require(has_label(lv_scr_act(), "Back"), "registration exposes cancellation");
-            click(view, width - 24, step == 0 ? 24 : step == 1 ? height / 2 : height - 24);
-            require(!has_label(lv_scr_act(), "Back"), "rail corners and center close registration");
+            if (rail_wide) {
+                require(has_label(lv_scr_act(), LV_SYMBOL_LEFT " Back"), "registration has right-side Back");
+                for (int i = 0; i <= step; ++i) click(view, 580, 44);
+                require(has_label(lv_scr_act(), LV_SYMBOL_PLUS " Register equipment"), "Back exits through registration steps");
+                click(view, 580, 44);
+            } else {
+                require(has_label(lv_scr_act(), "Back"), "registration exposes cancellation");
+                click(view, width - 24, step == 0 ? 24 : step == 1 ? height / 2 : height - 24);
+                require(!has_label(lv_scr_act(), "Back"), "rail corners and center close registration");
+            }
             require(controller.equipment_count() == count, "cancel never persists equipment");
         }
         view.open(ui::Dialog::dose); pump(view);
