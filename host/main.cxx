@@ -89,8 +89,8 @@ void run_wide_checks(smart_scale::ui::View& view, smart_scale::Controller& contr
     require(held > 20.1F && *controller.session().dose_g == held, "wide press hold and release");
     click(view, 610, 26);
     click(view, 330, 70); screenshot(view, "wide-03-objects");
-    require(has_label(lv_scr_act(), LV_SYMBOL_PLUS " Register equipment"), "wide object card opens list");
-    click(view, 454, 100); screenshot(view, "wide-04-register-type");
+    require(has_label(lv_scr_act(), LV_SYMBOL_PLUS " Add"), "wide object card opens list");
+    click(view, 580, 126); screenshot(view, "wide-04-register-type");
     require(!find_type(lv_scr_act(), &lv_dropdown_class), "wide types are cards, not a dropdown");
     click(view, 430, 90); screenshot(view, "wide-05-type-options");
     click(view, 580, 126); screenshot(view, "wide-06-register-weight");
@@ -271,7 +271,7 @@ int main(int argc, char** argv) {
             if (rail_wide) {
                 require(has_label(lv_scr_act(), LV_SYMBOL_LEFT " Back"), "registration has right-side Back");
                 for (int i = 0; i <= step; ++i) click(view, 580, 44);
-                require(has_label(lv_scr_act(), LV_SYMBOL_PLUS " Register equipment"), "Back exits through registration steps");
+                require(has_label(lv_scr_act(), LV_SYMBOL_PLUS " Add"), "Back exits through registration steps");
                 click(view, 580, 44);
             } else {
                 require(has_label(lv_scr_act(), "Back"), "registration exposes cancellation");

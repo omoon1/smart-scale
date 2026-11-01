@@ -417,7 +417,7 @@ void View::draw_wide_dialog(lv_obj_t* root) {
         for (int i = 0; i < 4; ++i) button(box, names[i], 208 + i * 104, 108, 96, 52, Action::dose_adjust, values[i]);
     } else if (dialog_ == Dialog::objects) {
         auto* list = lv_obj_create(box); style(list, bg);
-        lv_obj_set_pos(list, 8, 8); lv_obj_set_size(list, 509, 74);
+        lv_obj_set_pos(list, 8, 8); lv_obj_set_size(list, 509, 156);
         lv_obj_set_style_border_width(list, 0, 0);
         lv_obj_add_flag(list, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_scroll_dir(list, LV_DIR_VER);
@@ -431,9 +431,10 @@ void View::draw_wide_dialog(lv_obj_t* root) {
             lv_obj_set_height(caption, 44); lv_obj_center(caption);
             button(list, LV_SYMBOL_TRASH, x + 200, y, 49, 74, Action::request_remove, item.id);
         }
-        auto* add = button(box, LV_SYMBOL_PLUS " Register equipment", 8, 90, 509, 74, Action::registration);
+        auto* add = button(box, LV_SYMBOL_PLUS " Add", 533, 90, 99, 74, Action::registration, 0, true);
         lv_obj_set_style_border_color(add, color(mint), 0);
-        lv_obj_set_style_text_font(lv_obj_get_child(add, 0), &lv_font_montserrat_22, 0);
+        lv_obj_set_style_text_font(lv_obj_get_child(add, 0), &lv_font_montserrat_18, 0);
+        lv_obj_clear_flag(add, LV_OBJ_FLAG_PRESS_LOCK);
         auto* back = button(box, LV_SYMBOL_LEFT " Back", 533, 8, 99, 74, Action::close);
         lv_obj_set_style_text_font(lv_obj_get_child(back, 0), &lv_font_montserrat_18, 0);
         lv_obj_clear_flag(back, LV_OBJ_FLAG_PRESS_LOCK);
