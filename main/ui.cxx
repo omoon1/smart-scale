@@ -85,6 +85,13 @@ void fit_width(lv_obj_t* parent, int numerator, int denominator) {
         lv_obj_set_width(child, width * numerator / denominator);
     }
 }
+// This branch stores the chosen glyph in the registered equipment name.
+// Older profiles without a glyph retain a sensible type-specific fallback.
+const char* equipment_glyph(const Equipment& item) {
+    for (const auto* glyph : equipment_icons)
+        if (item.name.find(glyph) != std::string::npos) return glyph;
+    return equipment_icons[item.kind == Kind::portafilter ? 4 : item.kind == Kind::pour_over_set ? 3 : 1];
+}
 const char* kind_name(Kind kind) {
     switch (kind) {
     case Kind::cup: return "Container";
@@ -199,7 +206,7 @@ void View::draw() {
     weight_ = weight_unit_ = time_ = flow_ = status_ = object_text_ = dose_text_ = target_text_ = chart_ = nullptr;
     dose_value_ = icon_name_ = kind_input_ = chart_max_ = chart_time_ = current_point_ = object_weight_ = nullptr;
     tare_button_ = weight_hint_ = object_pill_ = coffee_pill_ = nullptr;
-    coffee_card_ = coffee_hint_ = coffee_check_ = object_card_ = object_check_ = stage_text_ = nullptr;
+    coffee_card_ = coffee_hint_ = coffee_check_ = object_card_ = object_check_ = object_icon_ = stage_text_ = nullptr;
     coffee_visual_state_ = -1;
     object_visual_selected_ = false;
     calibration_message_ = calibration_weight_label_ = registration_weight_label_ = registration_status_ = registration_next_ = nullptr;
@@ -277,6 +284,11 @@ void View::draw_wide(lv_obj_t* root) {
         coffee_card_ = button(root, "", 482, 39, 150, 125, Action::dose);
         for (auto* card : {object_card_, coffee_card_}) {
             lv_obj_set_style_bg_color(card, color(bg), 0);
+            if (card == object_card_) {
+                object_icon_ = label(card, equipment_icons[1], 55, 12, 40, &equipment_icons_32, mint);
+                lv_obj_set_style_text_align(object_icon_, LV_TEXT_ALIGN_CENTER, 0);
+                continue;
+            }
             auto* icon = lv_obj_create(card);
             lv_obj_remove_style_all(icon);
             lv_obj_set_pos(icon, 55, 12); lv_obj_set_size(icon, 40, 34);
@@ -425,7 +437,16 @@ void View::draw_wide_dialog(lv_obj_t* root) {
         for (std::size_t i = 0; i < controller_.equipment_count(); ++i) {
             const auto& item = controller_.equipment()[i];
             const int x = (i % 2) * 258, y = (i / 2) * 82;
-            auto* row = button(list, item.name.c_str(), x, y, 196, 74, Action::choose_object, i);
+            auto* row = button(list, "", x, y, 196, 74, Action::choose_object, i);
+            auto* glyph = label(row, equipment_glyph(item), 8, 8, 180, &equipment_icons_32, mint);
+            lv_obj_set_style_text_align(glyph, LV_TEXT_ALIGN_CENTER, 0);
+            auto* name = label(row, kind_name(item.kind), 4, 47, 188, &lv_font_montserrat_14);
+            lv_obj_set_style_text_align(name, LV_TEXT_ALIGN_CENTER, 0);
+            if (controller_.session().active_object && controller_.session().active_object->id == item.id) {
+                lv_obj_set_style_border_color(row, color(mint), 0);
+                lv_obj_set_style_border_width(row, 2, 0);
+                label(row, LV_SYMBOL_OK, 174, 8, 16, &lv_font_montserrat_14, mint);
+            }
             auto* caption = lv_obj_get_child(row, 0);
             lv_label_set_long_mode(caption, LV_LABEL_LONG_DOT);
             lv_obj_set_height(caption, 44); lv_obj_center(caption);
@@ -752,6 +773,7 @@ void View::refresh_values() {
     }
     if (s.phase == Phase::ready) {
         const auto& item = s.active_object;
+        if (object_icon_) set_text(object_icon_, item ? equipment_glyph(*item) : equipment_icons[1]);
         if (object_text_) {
             set_text(object_text_, wide() ? (item ? kind_name(item->kind) : "Container") : item ? item->name.c_str() : controller_.live() && !controller_.equipment_count() ? "Register object" : controller_.object_ambiguous() ? "Choose object" : "Container");
             set_text(object_weight_, wide() && !item ? "Select" : number(item ? item->empty_g : std::nullopt, " g").c_str());

@@ -86,7 +86,7 @@ private:
     std::string registration_error_;
     float registration_weight_{156.8F};
     lv_obj_t *tare_button_{}, *weight_hint_{}, *object_pill_{}, *coffee_pill_{};
-    lv_obj_t *coffee_card_{}, *coffee_hint_{}, *coffee_check_{}, *object_card_{}, *object_check_{}, *stage_text_{};
+    lv_obj_t *coffee_card_{}, *coffee_hint_{}, *coffee_check_{}, *object_card_{}, *object_check_{}, *object_icon_{}, *stage_text_{};
     int coffee_visual_state_{-1};
     bool object_visual_selected_{};
     lv_obj_t *calibration_message_{}, *calibration_weight_label_{}, *registration_weight_label_{}, *registration_status_{}, *registration_next_{};

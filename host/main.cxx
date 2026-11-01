@@ -110,7 +110,11 @@ void run_wide_checks(smart_scale::ui::View& view, smart_scale::Controller& contr
     require(controller.equipment_count() == 4 && controller.equipment()[3].name == "Pour-over set 🦋",
             "all wide icon positions are reachable and last selection saves");
     require(!has_label(lv_scr_act(), LV_SYMBOL_OK " Save"), "save returns to main screen");
+    require(has_label(lv_scr_act(), ui::equipment_icons[19]), "main card shows registered selected icon");
+    screenshot(view, "wide-registered-icon-main");
     view.open(ui::Dialog::objects); pump(view);
+    require(has_label(lv_scr_act(), ui::equipment_icons[19]), "equipment list shows registered icon");
+    screenshot(view, "wide-registered-icon-list");
     click(view, 230, 40); screenshot(view, "wide-08-remove-confirm");
     require(controller.equipment_count() == 4, "wide removal requires confirmation");
     click(view, 600, 80); require(controller.equipment_count() == 4, "wide cancel preserves equipment");
