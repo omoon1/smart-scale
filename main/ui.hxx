@@ -30,6 +30,12 @@ private:
     struct Binding { View* view{}; Action action{}; int value{}; };
     lv_obj_t* button(lv_obj_t* parent, const char* text, int x, int y, int w, int h,
                      Action action, int value = 0, bool primary = false);
+    enum class RightActionSlot { full, top, bottom };
+    // Shared rightmost-18% geometry, typography and touch behavior.
+    // Parent must span the display; never apply fit_width to these controls.
+    // Use full alone or top/bottom together. Returns the control for enabled-state updates.
+    lv_obj_t* right_action(lv_obj_t* root, const char* text, Action action,
+                           RightActionSlot slot, bool primary = false);
     void action_rail(lv_obj_t* root, const char* text, Action action);
     void draw();
     bool wide() const;

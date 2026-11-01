@@ -32,3 +32,9 @@ make simulator-wide            # interactive 1280x344 window; requires SDL2
 The firmware now targets the AXS15231B board with separate expander/touch buses, QSPI full-frame transfers, matching landscape touch mapping, EXIO5 reset and EXIO1/GPIO42 backlight control. The old PMU read and ST7796/FT6336 drivers have been removed. See [hardware configuration and bring-up](hardware.md).
 
 **HX711 wiring changes to DOUT IO44 / SCK IO43.** The old GPIO17/18 pair is used by touch on this board. Physical validation of display, touch, cold-start backlight and sensor operation is still required; host rendering cannot establish those properties.
+
+## Reusing right-side actions
+
+`View::right_action(parent, text, action, slot, primary)` owns the rightmost 18% geometry, 8 px insets/gap, 18 px label font, and drag-release behavior. `RightActionSlot` supports `full`, `top`, and `bottom`; coordinates derive from the current display resolution. A full slot is exclusive; paired actions use top and bottom. Use a full-display parent and do not run these controls through `fit_width`.
+
+The returned LVGL button supports dynamic enable/disable (for example, stable-weight gating). `action_rail` uses the same helper for full-height Back/Finish and adds their vertically arranged icons and theme-specific Finish colors. Equipment list, registration and removal confirmation reuse top/bottom slots.

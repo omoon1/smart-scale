@@ -123,24 +123,37 @@ lv_obj_t* View::button(lv_obj_t* p, const char* text, int x, int y, int w, int h
     } else lv_obj_add_event_cb(obj, clicked, LV_EVENT_CLICKED, &binding);
     return obj;
 }
-void View::action_rail(lv_obj_t* root, const char* text, Action action) {
+lv_obj_t* View::right_action(lv_obj_t* root, const char* text, Action action,
+                             RightActionSlot slot, bool primary) {
+    constexpr int rail_percent = 18, inset = 8, gap = 8;
     const int width = lv_disp_get_hor_res(nullptr);
-    const int rail = width * 18 / 100;
-    auto* control = button(root, text, width - rail + 8, 8, rail - 16,
-                           lv_disp_get_ver_res(nullptr) - 16, action);
+    const int height = lv_disp_get_ver_res(nullptr);
+    const int rail = width * rail_percent / 100;
+    const int available = height - 2 * inset;
+    const int half = (available - gap) / 2;
+    const int y = slot == RightActionSlot::bottom ? inset + half + gap : inset;
+    const int h = slot == RightActionSlot::full ? available :
+                  slot == RightActionSlot::top ? half : available - half - gap;
+    auto* control = button(root, text, width - rail + inset, y, rail - 2 * inset, h,
+                           action, 0, primary);
+    lv_obj_set_style_text_font(lv_obj_get_child(control, 0), &lv_font_montserrat_18, 0);
+    // A drag from neighboring content must not release as an action click.
+    lv_obj_clear_flag(control, LV_OBJ_FLAG_PRESS_LOCK);
+    return control;
+}
+void View::action_rail(lv_obj_t* root, const char* text, Action action) {
+    auto* control = right_action(root, text, action, RightActionSlot::full);
+    lv_obj_update_layout(control); // Resolve width before sizing the separate icon label.
     const bool finish = action == Action::finish;
     lv_obj_set_style_bg_color(control, color(finish ? finish_bg : panel), 0);
     lv_obj_set_style_bg_color(control, color(border), LV_STATE_PRESSED);
     auto* caption = lv_obj_get_child(control, 0);
     lv_obj_set_style_text_color(caption, color(finish ? finish_ink : ink), 0);
-    lv_obj_set_style_text_font(caption, &lv_font_montserrat_18, 0);
     lv_obj_align(caption, LV_ALIGN_CENTER, 0, 18);
-    auto* icon = label(control, finish ? LV_SYMBOL_OK : LV_SYMBOL_LEFT, 0, 0, rail - 16,
+    auto* icon = label(control, finish ? LV_SYMBOL_OK : LV_SYMBOL_LEFT, 0, 0, lv_obj_get_width(control),
                        &lv_font_montserrat_28, finish ? finish_ink : ink);
     lv_obj_set_style_text_align(icon, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(icon, LV_ALIGN_CENTER, 0, -16);
-    // A drag from a neighboring control must not release as a rail click.
-    lv_obj_clear_flag(control, LV_OBJ_FLAG_PRESS_LOCK);
 }
 void View::clicked(lv_event_t* e) {
     const auto binding = *static_cast<Binding*>(lv_event_get_user_data(e));
@@ -452,13 +465,9 @@ void View::draw_wide_dialog(lv_obj_t* root) {
             lv_obj_set_height(caption, 44); lv_obj_center(caption);
             button(list, LV_SYMBOL_TRASH, x + 200, y, 49, 74, Action::request_remove, item.id);
         }
-        auto* add = button(box, LV_SYMBOL_PLUS " Add", 533, 90, 99, 74, Action::registration, 0, true);
+        auto* add = right_action(box, LV_SYMBOL_PLUS " Add", Action::registration, RightActionSlot::bottom, true);
         lv_obj_set_style_border_color(add, color(mint), 0);
-        lv_obj_set_style_text_font(lv_obj_get_child(add, 0), &lv_font_montserrat_18, 0);
-        lv_obj_clear_flag(add, LV_OBJ_FLAG_PRESS_LOCK);
-        auto* back = button(box, LV_SYMBOL_LEFT " Back", 533, 8, 99, 74, Action::close);
-        lv_obj_set_style_text_font(lv_obj_get_child(back, 0), &lv_font_montserrat_18, 0);
-        lv_obj_clear_flag(back, LV_OBJ_FLAG_PRESS_LOCK);
+        right_action(box, LV_SYMBOL_LEFT " Back", Action::close, RightActionSlot::top);
         return;
     } else if (dialog_ == Dialog::remove_equipment) {
         label(box, "Remove equipment?", 12, 12, 505, &lv_font_montserrat_22);
@@ -467,12 +476,8 @@ void View::draw_wide_dialog(lv_obj_t* root) {
                 label(box, controller_.equipment()[i].name.c_str(), 12, 60, 380, &lv_font_montserrat_22, mint);
         label(box, "Saved brews stay unchanged.", 12, 112, 380, &lv_font_montserrat_14, muted);
 
-        auto* back = button(box, LV_SYMBOL_LEFT " Back", 533, 8, 99, 74, Action::cancel_remove);
-        auto* remove = button(box, "Remove", 533, 90, 99, 74, Action::confirm_remove, 0, true);
-        for (auto* control : {back, remove}) {
-            lv_obj_set_style_text_font(lv_obj_get_child(control, 0), &lv_font_montserrat_18, 0);
-            lv_obj_clear_flag(control, LV_OBJ_FLAG_PRESS_LOCK);
-        }
+        right_action(box, LV_SYMBOL_LEFT " Back", Action::cancel_remove, RightActionSlot::top);
+        right_action(box, "Remove", Action::confirm_remove, RightActionSlot::bottom, true);
         return;
     } else if (dialog_ == Dialog::calibration) {
         label(box, "Calibrate scale", 12, 12, 540, &lv_font_montserrat_22);
@@ -496,13 +501,10 @@ void View::draw_wide_dialog(lv_obj_t* root) {
 void View::draw_wide_registration(lv_obj_t* box) {
     // Native 640x172 geometry: reserve x=525..639 (18%) for two actions.
     // Do not pass this layout through fit_width: icon hit areas stay 48x52.
-    auto* back = button(box, LV_SYMBOL_LEFT " Back", 533, 8, 99, 74, Action::register_back);
-    auto* primary = button(box, registration_step_ == 2 ? LV_SYMBOL_OK " Save" : "Continue",
-                           533, 90, 99, 74, registration_step_ == 2 ? Action::register_save : Action::register_next, 0, true);
-    for (auto* control : {back, primary}) {
-        lv_obj_set_style_text_font(lv_obj_get_child(control, 0), &lv_font_montserrat_18, 0);
-        lv_obj_clear_flag(control, LV_OBJ_FLAG_PRESS_LOCK);
-    }
+    right_action(box, LV_SYMBOL_LEFT " Back", Action::register_back, RightActionSlot::top);
+    auto* primary = right_action(box, registration_step_ == 2 ? LV_SYMBOL_OK " Save" : "Continue",
+                                 registration_step_ == 2 ? Action::register_save : Action::register_next,
+                                 RightActionSlot::bottom, true);
     if (registration_step_ == 2) {
         icon_name_ = label(box, kind_name(registration_kind_), 8, 10, 509, &lv_font_montserrat_18, muted);
         if (!registration_error_.empty()) set_text(icon_name_, registration_error_.c_str());

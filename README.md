@@ -122,3 +122,16 @@ for future mobile selection. There is no on-scale settings page.
 Run `make preview-themes` for all three palettes. See
 [brew guide and theme integration](docs/brew-guide-and-themes.md) for stable theme
 IDs, persistence, default windows, and the future mobile integration contract.
+
+### Reusable right-side action buttons
+
+Use `View::right_action()` for actions in the rightmost 18% of the display instead of hard-coded coordinates. It provides `RightActionSlot::full`, `top`, and `bottom`, shared 8 px insets/gap, theme-aware button styling, 18 px text, and drag-release protection. Use a full-display parent; do not apply `fit_width` to these controls.
+
+```cpp
+right_action(box, LV_SYMBOL_LEFT " Back", Action::register_back, RightActionSlot::top);
+auto* save = right_action(box, LV_SYMBOL_OK " Save", Action::register_save,
+                          RightActionSlot::bottom, true);
+lv_obj_add_state(save, LV_STATE_DISABLED); // Enable when the form is valid.
+```
+
+Use `action_rail()` for a full-height Back or Finish button with an icon above its label; it delegates geometry and touch behavior to the same helper. See [right-side action details](docs/wide-panel-ux.md#reusing-right-side-actions).
