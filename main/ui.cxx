@@ -461,13 +461,19 @@ void View::draw_wide_dialog(lv_obj_t* root) {
         lv_obj_clear_flag(back, LV_OBJ_FLAG_PRESS_LOCK);
         return;
     } else if (dialog_ == Dialog::remove_equipment) {
-        label(box, "Remove equipment?", 12, 12, 540, &lv_font_montserrat_22);
+        label(box, "Remove equipment?", 12, 12, 505, &lv_font_montserrat_22);
         for (std::size_t i = 0; i < controller_.equipment_count(); ++i)
             if (controller_.equipment()[i].id == remove_equipment_id_)
                 label(box, controller_.equipment()[i].name.c_str(), 12, 60, 380, &lv_font_montserrat_22, mint);
         label(box, "Saved brews stay unchanged.", 12, 112, 380, &lv_font_montserrat_14, muted);
 
-        button(box, "Remove", 416, 114, 216, 46, Action::confirm_remove, 0, true);
+        auto* back = button(box, LV_SYMBOL_LEFT " Back", 533, 8, 99, 74, Action::cancel_remove);
+        auto* remove = button(box, "Remove", 533, 90, 99, 74, Action::confirm_remove, 0, true);
+        for (auto* control : {back, remove}) {
+            lv_obj_set_style_text_font(lv_obj_get_child(control, 0), &lv_font_montserrat_18, 0);
+            lv_obj_clear_flag(control, LV_OBJ_FLAG_PRESS_LOCK);
+        }
+        return;
     } else if (dialog_ == Dialog::calibration) {
         label(box, "Calibrate scale", 12, 12, 540, &lv_font_montserrat_22);
         calibration_weight_label_ = label(box, "?", 12, 54, 260, &lv_font_montserrat_28);

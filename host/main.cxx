@@ -117,8 +117,8 @@ void run_wide_checks(smart_scale::ui::View& view, smart_scale::Controller& contr
     screenshot(view, "wide-registered-icon-list");
     click(view, 230, 40); screenshot(view, "wide-08-remove-confirm");
     require(controller.equipment_count() == 4, "wide removal requires confirmation");
-    click(view, 600, 80); require(controller.equipment_count() == 4, "wide cancel preserves equipment");
-    click(view, 230, 40); click(view, 437, 138);
+    click(view, 580, 44); require(controller.equipment_count() == 4, "wide cancel preserves equipment");
+    click(view, 230, 40); click(view, 580, 126);
     require(controller.equipment_count() == 3, "wide confirm removes equipment");
     click(view, 610, 26);
     view.open(ui::Dialog::calibration); screenshot(view, "wide-09-calibration");
