@@ -26,10 +26,17 @@ public:
 private:
     enum class Action { tare, calibration, capture_zero, calibrate, objects, dose, toggle_mode, demo, close,
         request_remove, confirm_remove, cancel_remove, dose_adjust, dose_preset, choose_object, choose_scenario, run, pause, finish, next,
-        battery_history, history_range, reset, remove, registration, register_next, register_back, register_save, choose_icon, stable };
+        battery_history, history_range, reset, remove, registration, register_next, register_back, register_save, choose_kind, choose_icon, stable };
     struct Binding { View* view{}; Action action{}; int value{}; };
     lv_obj_t* button(lv_obj_t* parent, const char* text, int x, int y, int w, int h,
                      Action action, int value = 0, bool primary = false);
+    enum class RightActionSlot { full, top, bottom };
+    // Shared rightmost-18% geometry, typography and touch behavior.
+    // Parent must span the display; never apply fit_width to these controls.
+    // Use full alone or top/bottom together. Returns the control for enabled-state updates.
+    lv_obj_t* right_action(lv_obj_t* root, const char* text, Action action,
+                           RightActionSlot slot, bool primary = false);
+    void action_rail(lv_obj_t* root, const char* text, Action action);
     void draw();
     bool wide() const;
     void draw_wide(lv_obj_t* root);
@@ -85,7 +92,7 @@ private:
     std::string registration_error_;
     float registration_weight_{156.8F};
     lv_obj_t *tare_button_{}, *weight_hint_{}, *object_pill_{}, *coffee_pill_{};
-    lv_obj_t *coffee_card_{}, *coffee_hint_{}, *coffee_check_{}, *object_card_{}, *object_check_{}, *stage_text_{};
+    lv_obj_t *coffee_card_{}, *coffee_hint_{}, *coffee_check_{}, *object_card_{}, *object_check_{}, *object_icon_{}, *stage_text_{};
     int coffee_visual_state_{-1};
     bool object_visual_selected_{};
     lv_obj_t *calibration_message_{}, *calibration_weight_label_{}, *registration_weight_label_{}, *registration_status_{}, *registration_next_{};

@@ -70,9 +70,29 @@ void Controller::sensor_sample(std::optional<std::int32_t> raw, std::uint64_t no
         resuming_measurement_ = false;
         flow_start_.reset();
     }
-    if (auto_brew_epoch_ != scale_.display_epoch()) flow_start_.reset();
+    if (auto_brew_epoch_ != scale_.display_epoch()) {
+        flow_start_.reset();
+        empty_since_.reset(); // A measurement gap/restart cannot complete a removal hold.
+    }
     auto_brew_epoch_ = scale_.display_epoch();
-    if (session_.phase == Phase::result) return; // Keep archived result immutable.
+    if (session_.phase == Phase::result) {
+        // Keep the final metrics immutable until fresh physical removal is confirmed.
+        // Net zero (tare), stale samples, and an error timeout cannot clear a result.
+        const auto recent = scale_.recent_gross();
+        if (!scale_.ready() || !recent || std::abs(*recent) > 2.0F) {
+            empty_since_.reset();
+            return;
+        }
+        // The UI loop polls with nullopt after draining sensor readings.
+        // Preserve the hold on healthy polls, but only advance it on samples.
+        if (!raw) return;
+        if (!empty_since_) empty_since_ = scale_.sample_ms();
+        if (scale_.sample_ms() - *empty_since_ >= 300) {
+            session_.loaded = false;
+            reset();
+        }
+        return;
+    }
     if (!scale_.ready()) {
         coffee_baseline_g_.reset();
         session_.brew_prepared = false;
@@ -287,6 +307,11 @@ void Controller::place(std::size_t index) {
     target();
 }
 void Controller::remove_object() {
+    if (!live_ && session_.phase == Phase::result) {
+        session_.loaded = false;
+        reset();
+        return;
+    }
     coffee_baseline_g_.reset(); brew_zero_pending_ = false;
     session_.loaded = false;
     session_.brew_prepared = false;
@@ -433,6 +458,7 @@ void Controller::finish() {
     if (session_.phase != Phase::brewing) return;
     demo_running_ = false;
     session_.phase = Phase::result;
+    empty_since_.reset();
     archive(false);
 }
 void Controller::reset() {
@@ -506,7 +532,7 @@ void Controller::tick(float dt) {
         } else if (session_.phase == Phase::ready && valid) {
             session_.net_g = scale_.net();
         }
-        if (session_.uncertain && (session_.phase == Phase::brewing || session_.phase == Phase::result)) {
+        if (session_.uncertain && session_.phase == Phase::brewing) {
             brew_error_elapsed_s_ += static_cast<double>(dt);
             if (brew_error_elapsed_s_ >= config::brew_error_return_s) {
                 reset(); // Archive an active failed brew as aborted exactly once.
@@ -538,3 +564,4 @@ void Controller::tick(float dt) {
     liquid(flow * dt, dt); // Target only alerts; never stops the machine/demo.
 }
 }
+

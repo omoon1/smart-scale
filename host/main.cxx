@@ -80,35 +80,45 @@ void run_wide_checks(smart_scale::ui::View& view, smart_scale::Controller& contr
     screenshot(view, "wide-01-ready");
     click(view, 520, 70); screenshot(view, "wide-02-dose");
     require(has_label(lv_scr_act(), "+0.1"), "wide coffee card opens dose");
-    click(view, 390, 76); click(view, 460, 132);
+    click(view, 328, 76); click(view, 372, 132);
     require(std::abs(*controller.session().dose_g - 20.1F) < .01F, "wide preset and fine adjustment");
-    mouse_x = 460; mouse_y = 132; mouse_down = true;
+    mouse_x = 372; mouse_y = 132; mouse_down = true;
     for (int i = 0; i < 25; ++i) pump(view, 40);
     const auto held = *controller.session().dose_g;
     mouse_down = false; pump(view);
     require(held > 20.1F && *controller.session().dose_g == held, "wide press hold and release");
     click(view, 610, 26);
     click(view, 330, 70); screenshot(view, "wide-03-objects");
-    require(has_label(lv_scr_act(), "+ Register\nequipment"), "wide object card opens list");
-    click(view, 540, 100); screenshot(view, "wide-04-register-type");
-    auto* type = find_type(lv_scr_act(), &lv_dropdown_class);
-    require(type, "wide registration type");
-    click(view, 150, 90); screenshot(view, "wide-05-type-options");
-    lv_dropdown_close(type); lv_dropdown_set_selected(type, 2);
-    click(view, 550, 100); screenshot(view, "wide-06-register-weight");
-    click(view, 100, 138); click(view, 550, 100);
+    require(has_label(lv_scr_act(), LV_SYMBOL_PLUS " Add"), "wide object card opens list");
+    click(view, 580, 126); screenshot(view, "wide-04-register-type");
+    require(!find_type(lv_scr_act(), &lv_dropdown_class), "wide types are cards, not a dropdown");
+    click(view, 430, 90); screenshot(view, "wide-05-type-options");
+    click(view, 580, 126); screenshot(view, "wide-06-register-weight");
+    click(view, 580, 44); // Back preserves the selected type.
+    require(has_label(lv_scr_act(), "Pour-over set"), "type remains available after Back");
+    click(view, 580, 126);
+    click(view, 330, 128); click(view, 580, 126);
     require(has_label(lv_scr_act(), "Unstable - wait"), "wide unstable registration blocked");
-    click(view, 100, 138); click(view, 550, 100);
-    require(has_label(lv_scr_act(), "Icon 3/3"), "wide stable registration advances");
-    for (int i = 0; i < 20; ++i) click(view, 40 + (i % 10) * 62, 90 + (i / 10) * 50);
+    click(view, 330, 128); click(view, 580, 126);
+    require(has_label(lv_scr_act(), LV_SYMBOL_OK " Save"), "wide stable registration advances");
+    for (int i = 0; i < 20; ++i) {
+        require(has_label(lv_scr_act(), ui::equipment_icons[i]), "all twenty icons visible without paging");
+        click(view, 32 + (i % 10) * 51, 74 + (i / 10) * 59);
+    }
     screenshot(view, "wide-07-icons");
-    click(view, 535, 26);
+    click(view, 580, 126);
     require(controller.equipment_count() == 4 && controller.equipment()[3].name == "Pour-over set 🦋",
             "all wide icon positions are reachable and last selection saves");
-    click(view, 417, 130); screenshot(view, "wide-08-remove-confirm");
+    require(!has_label(lv_scr_act(), LV_SYMBOL_OK " Save"), "save returns to main screen");
+    require(has_label(lv_scr_act(), ui::equipment_icons[19]), "main card shows registered selected icon");
+    screenshot(view, "wide-registered-icon-main");
+    view.open(ui::Dialog::objects); pump(view);
+    require(has_label(lv_scr_act(), ui::equipment_icons[19]), "equipment list shows registered icon");
+    screenshot(view, "wide-registered-icon-list");
+    click(view, 230, 40); screenshot(view, "wide-08-remove-confirm");
     require(controller.equipment_count() == 4, "wide removal requires confirmation");
-    click(view, 520, 80); require(controller.equipment_count() == 4, "wide cancel preserves equipment");
-    click(view, 417, 130); click(view, 520, 138);
+    click(view, 580, 44); require(controller.equipment_count() == 4, "wide cancel preserves equipment");
+    click(view, 230, 40); click(view, 580, 126);
     require(controller.equipment_count() == 3, "wide confirm removes equipment");
     click(view, 610, 26);
     view.open(ui::Dialog::calibration); screenshot(view, "wide-09-calibration");
@@ -122,9 +132,12 @@ void run_wide_checks(smart_scale::ui::View& view, smart_scale::Controller& contr
     require(lv_scr_act() == brew, "wide brew locks editors");
     click(view, 570, 146); require(controller.session().phase == Phase::result, "wide finish");
     screenshot(view, "wide-12-result");
-    click(view, 560, 146); screenshot(view, "wide-13-remove-load");
-    require(controller.session().phase == Phase::remove_load, "wide next requires removal");
-    click(view, 540, 146); require(controller.session().phase == Phase::ready, "wide removal returns home");
+    require(!has_label(lv_scr_act(), "Next brew"), "wide completion has no next button");
+    click(view, 560, 146); // The removal prompt is not a button.
+    require(controller.session().phase == Phase::result, "wide completion waits for removal");
+    screenshot(view, "wide-13-remove-load");
+    controller.remove_object(); pump(view);
+    require(controller.session().phase == Phase::ready, "wide removal returns home");
     controller.load_scenario(Scenario::pour_over); controller.run_demo();
     for (int i = 0; i < 130; ++i) { controller.tick(.1F); pump(view, 100); }
     screenshot(view, "wide-14-pour-over");
@@ -133,13 +146,13 @@ void run_wide_checks(smart_scale::ui::View& view, smart_scale::Controller& contr
     history.update(0, UsageState::estimated, decode_voltage_battery(4000));
     history.update(21600, UsageState::estimated, decode_voltage_battery(3800));
     view.battery(decode_voltage_battery(3800));
-    click(view, 574, 18);
+    click(view, 480, 18);
     require(has_label(lv_scr_act(), "Battery Usage"), "wide battery accessible during brew");
     require(!view.power_inhibited() || controller.session().phase == Phase::brewing,
             "battery history does not introduce an editor inhibitor");
     screenshot(view, "wide-24-battery-6hr");
-    click(view, 400, 24); screenshot(view, "wide-25-battery-1day");
-    click(view, 510, 24); screenshot(view, "wide-26-battery-3day");
+    click(view, 324, 24); screenshot(view, "wide-25-battery-1day");
+    click(view, 413, 24); screenshot(view, "wide-26-battery-3day");
     click(view, 610, 24);
     require(!has_label(lv_scr_act(), "Battery Usage"), "wide battery close returns to brew");
     std::cout << "Wide UI interaction checks passed\n";
@@ -163,7 +176,7 @@ void run_wide_live_checks(smart_scale::ui::View& view, smart_scale::Controller& 
     auto feed = [&](int raw) {
         for (int i = 0; i < 60; ++i) { controller.sensor_sample(raw, now += 100); controller.tick(.1F); pump(view, 100); }
     };
-    feed(10000); click(view, 450, 92); feed(110000); click(view, 575, 142);
+    feed(10000); click(view, 450, 92); feed(110000); click(view, 466, 142);
     require(controller.scale().ready() && std::abs(controller.scale().gross() - 100) < .01F,
             "wide touch calibration captures zero and 100 g mass");
     screenshot(view, "wide-17-calibrated"); click(view, 610, 26);
@@ -190,7 +203,7 @@ void run_wide_live_checks(smart_scale::ui::View& view, smart_scale::Controller& 
     // The former footer is now occupied by full-height cards.
     require(controller.session().phase == Phase::ready && controller.session().dose_g,
             "removed controls neither start nor reset a prepared brew");
-    click(view, 520, 70); click(view, 460, 132); click(view, 610, 26);
+    click(view, 520, 70); click(view, 372, 132); click(view, 610, 26);
     require(std::abs(*controller.session().dose_g - 18.1F) < .02F, "wide saved coffee manual edit");
     feed(528000);
     const auto epoch = controller.scale().display_epoch();
@@ -218,6 +231,8 @@ void run_wide_live_checks(smart_scale::ui::View& view, smart_scale::Controller& 
 }
 int main(int argc, char** argv) {
     const bool interactive = argc > 1 && std::string(argv[1]) == "--interactive";
+    const bool rail_test = argc > 1 && (std::string(argv[1]) == "--rail-wide" || std::string(argv[1]) == "--rail-compact");
+    const bool rail_wide = argc > 1 && std::string(argv[1]) == "--rail-wide";
     const bool theme_test = argc > 1 && std::string(argv[1]) == "--theme-screenshots";
     const bool smoke = argc > 1 && std::string(argv[1]) == "--interactive-smoke";
     const bool wide_test = argc > 1 && std::string(argv[1]) == "--wide-screenshots";
@@ -225,7 +240,7 @@ int main(int argc, char** argv) {
     const bool wide_interactive = argc > 1 && std::string(argv[1]) == "--wide-interactive";
     // The default simulator follows the device configuration. Keep the legacy
     // screenshot fixtures at 480x320 for regression coverage.
-    if (interactive || smoke || wide_test || wide_interactive || wide_live || theme_test) {
+    if (interactive || smoke || wide_test || wide_interactive || wide_live || theme_test || rail_wide) {
         width = smart_scale::config::screen_width;
         height = smart_scale::config::screen_height;
     }
@@ -248,6 +263,49 @@ int main(int argc, char** argv) {
     if (coffee_test) controller.set_mode(smart_scale::Mode::pour_over);
     smart_scale::ui::View view(controller);
     view.init();
+    if (rail_test) {
+        using namespace smart_scale;
+        std::filesystem::create_directories("build-host/screens");
+        const auto count = controller.equipment_count();
+        const std::string prefix = rail_wide ? "rail-wide-" : "rail-compact-";
+        for (int step = 0; step < 3; ++step) {
+            view.open(ui::Dialog::registration); pump(view);
+            for (int i = 0; i < step; ++i) click(view, rail_wide ? 580 : 320, rail_wide ? 126 : 284);
+            screenshot(view, (prefix + "registration-" + std::to_string(step)).c_str());
+            if (rail_wide) {
+                require(has_label(lv_scr_act(), LV_SYMBOL_LEFT " Back"), "registration has right-side Back");
+                for (int i = 0; i <= step; ++i) click(view, 580, 44);
+                require(has_label(lv_scr_act(), LV_SYMBOL_PLUS " Add"), "Back exits through registration steps");
+                click(view, 580, 44);
+            } else {
+                require(has_label(lv_scr_act(), "Back"), "registration exposes cancellation");
+                click(view, width - 24, step == 0 ? 24 : step == 1 ? height / 2 : height - 24);
+                require(!has_label(lv_scr_act(), "Back"), "rail corners and center close registration");
+            }
+            require(controller.equipment_count() == count, "cancel never persists equipment");
+        }
+        view.open(ui::Dialog::dose); pump(view);
+        screenshot(view, (prefix + "dose").c_str());
+        const auto dose = controller.session().dose_g;
+        click(view, width - 24, height - 24);
+        require(controller.session().dose_g == dose && !has_label(lv_scr_act(), "Back"), "dose close preserves value");
+        controller.load_scenario(Scenario::pour_over);
+        controller.run_demo();
+        for (int i = 0; i < 180; ++i) { controller.tick(.1F); pump(view, 100); }
+        require(controller.session().phase == Phase::brewing, "brew starts");
+        screenshot(view, (prefix + "brewing").c_str());
+        require(has_label(lv_scr_act(), LV_SYMBOL_OK), "finish has a completion icon");
+        view.open(ui::Dialog::battery_history); pump(view);
+        require(has_label(lv_scr_act(), "Back") && has_label(lv_scr_act(), LV_SYMBOL_LEFT) &&
+                !has_label(lv_scr_act(), LV_SYMBOL_CLOSE), "battery history uses icon Back instead of X");
+        screenshot(view, (prefix + "battery").c_str());
+        click(view, width - 24, height / 2);
+        require(!has_label(lv_scr_act(), "Battery Usage") && controller.session().phase == Phase::brewing,
+                "battery Back returns to extraction without finishing it");
+        click(view, width - 24, 24);
+        require(controller.session().phase == Phase::result, "rail corner finishes brew");
+        return 0;
+    }
     if (theme_test) {
         using namespace smart_scale;
         std::filesystem::create_directories("build-host/screens");
@@ -309,7 +367,7 @@ int main(int argc, char** argv) {
         feed(504900); click(view, 360, 200);
         require(has_label(lv_scr_act(), "+0.1"), "below 5 g opens manual editor");
         require(!controller.session().dose_g, "opening manual editor does not save a default");
-        click(view, 366, 32);
+        click(view, 440, 32);
         feed(518000); screenshot(view, "31-save-coffee");
         require(has_label(lv_scr_act(), "Tap to save"), "candidate offers tap-to-save");
         require(!controller.session().dose_g, "candidate remains unsaved");
@@ -326,7 +384,7 @@ int main(int argc, char** argv) {
         require(flush_count == after_save, "saved card stops pulsing");
         click(view, 360, 200); screenshot(view, "33-edit-coffee");
         require(has_label(lv_scr_act(), "+0.1"), "saved coffee opens manual editor");
-        click(view, 276, 216); click(view, 366, 32);
+        click(view, 240, 216); click(view, 440, 32);
         require(std::abs(*controller.session().dose_g - 18.1F) < .02F, "manual edit retained");
         feed(518000);
         for (unsigned i = 1; i <= 25 && controller.session().phase == Phase::ready; ++i) {
@@ -366,7 +424,7 @@ int main(int argc, char** argv) {
         require(view.history_hours()==6 && has_label(lv_scr_act(), "-6h"), "default six-hour range");
         require(!has_label(lv_scr_act(), "Set UTC date / time"), "no clock controls");
         screenshot(view, "37-battery-6hr");
-        click(view, 250, 80);
+        click(view, 205, 80);
         require(view.history_hours()==24 && has_label(lv_scr_act(), "-24h"), "one-day range");
         screenshot(view, "38-battery-1day");
         unsigned green_pixels=0, blue_pixels=0, orange_pixels=0;
@@ -378,7 +436,7 @@ int main(int argc, char** argv) {
             orange_pixels += r>g+30 && g>b+40;
         }
         require(green_pixels>30 && blue_pixels>30 && orange_pixels>30, "graph renders all three state colors");
-        click(view, 380, 80);
+        click(view, 314, 80);
         require(view.history_hours()==72 && has_label(lv_scr_act(), "-72h"), "three-day range");
         screenshot(view, "39-battery-3day");
         history.clear(); pump(view);
@@ -399,14 +457,14 @@ int main(int argc, char** argv) {
         for (int i = 0; i < 3; ++i) {
             feed(-78000);
             if (i == 0) require(has_label(lv_scr_act(), "-78000 counts"), "uncalibrated dialog shows filtered counts");
-            click(view, 240, 154); // Capture empty zero in centered dialog.
+            click(view, 204, 154); // Capture empty zero in centered dialog.
             feed(-78000 + masses[i] * 866);
-            click(view, 146 + i * 94, 206);
+            click(view, 110 + i * 94, 206);
             require(controller.scale().ready(), "touch calibration succeeds");
             require(std::abs(controller.scale().gross() - masses[i]) < 0.01F, "20/50/100 g buttons use exact mass");
         }
         screenshot(view, "18-hx711-calibrated");
-        click(view, 366, 32); // Close dialog.
+        click(view, 440, 32); // Close dialog.
         feed(8600); // 100 g vessel.
         click(view, 100, 145); // Tap weight to tare.
         require(std::abs(controller.scale().net()) < 0.01F, "touch tare");
@@ -421,7 +479,7 @@ int main(int argc, char** argv) {
         require(has_label(lv_scr_act(), "? g"), "calibration hides stale values after timeout");
         feed(8600);
         require(has_label(lv_scr_act(), "100.0 g"), "calibration recovers with a fresh display reference");
-        click(view, 366, 32);
+        click(view, 440, 32);
         view.open(smart_scale::ui::Dialog::registration); pump(view); pump(view);
         click(view, 370, 284);
         require(has_label(lv_scr_act(), "100.0 g"), "registration uses stabilized gross");
@@ -449,7 +507,7 @@ int main(int argc, char** argv) {
                 std::abs(*controller.equipment()[0].empty_g - reference) < 0.03F &&
                 std::abs(*controller.equipment()[0].empty_g - 100.1F) > 0.005F,
                 "registered mass is an unrounded qualified mean");
-        click(view, 366, 32); // Close equipment list.
+        click(view, 440, 32); // Close equipment list.
         feed(8254); // Actual placement ~99.6 g, registered mass ~100.12 g.
         require(controller.set_dose(18), "coffee required before manual brew");
         click(view, 60, 286); // Former Start brew position must do nothing.
@@ -464,7 +522,7 @@ int main(int argc, char** argv) {
         screenshot(view, "26-hx711-negative-net");
         feed(25920);
         screenshot(view, "20-hx711-brewing");
-        click(view, 440, 30);
+        click(view, 360, 30);
         require(has_label(lv_scr_act(), "Battery Usage"), "history accessible during brew");
         require(controller.session().phase == smart_scale::Phase::brewing && view.power_inhibited(), "history preserves brewing and its sleep inhibitor");
         click(view, 432, 30);
@@ -497,7 +555,7 @@ int main(int argc, char** argv) {
         }
         require(controller.session().phase == smart_scale::Phase::ready,
                 "calibration dialog blocks automatic brew");
-        click(view, 366, 32); feed(8600);
+        click(view, 440, 32); feed(8600);
         require(!controller.session().brew_prepared, "vessel without coffee dose is not brew prepared");
         require(controller.set_dose(18) && controller.session().brew_prepared,
                 "registered vessel and coffee dose enter internal brew preparation");
@@ -559,21 +617,21 @@ int main(int argc, char** argv) {
     std::filesystem::create_directories("build-host/screens");
     screenshot(view, "01-ready");
     click(view, 360, 100); screenshot(view, "02-objects");
-    click(view, 364, 30); // Close object modal.
+    click(view, 440, 30); // Close object modal.
     click(view, 360, 200); screenshot(view, "03-dose");
     require(controller.session().dose_g && *controller.session().dose_g == 18.2F, "Opening preserves dose");
     auto* dose_screen = lv_scr_act();
-    click(view, 240, 156); // 20 g preset.
+    click(view, 204, 156); // 20 g preset.
     require(*controller.session().dose_g == 20.0F, "Preset selects exact dose");
-    click(view, 276, 216); // +0.1 g.
+    click(view, 240, 216); // +0.1 g.
     require(*controller.session().dose_g == 20.1F, "Fine adjustment adds one tenth");
-    click(view, 344, 216); // +1 g.
+    click(view, 308, 216); // +1 g.
     require(*controller.session().dose_g == 21.1F, "Coarse adjustment adds one gram");
-    click(view, 132, 216); // -1 g.
-    click(view, 200, 216); // -0.1 g.
+    click(view, 96, 216); // -1 g.
+    click(view, 164, 216); // -0.1 g.
     require(*controller.session().dose_g == 20.0F, "Decrement buttons preserve precision");
     require(lv_scr_act() == dose_screen, "Adjustments do not rebuild the screen");
-    mouse_x = 276; mouse_y = 240; mouse_down = true;
+    mouse_x = 240; mouse_y = 240; mouse_down = true;
     for (int i = 0; i < 25; ++i) pump(view, 40);
     const float repeated = *controller.session().dose_g;
     require(repeated > 20.1F, "Holding fine adjustment repeats");
@@ -589,22 +647,22 @@ int main(int argc, char** argv) {
     mouse_down = false; pump(view);
     require(*controller.session().dose_g == lost, "Repeat stops when pointer leaves");
     controller.set_dose(60.0F); pump(view);
-    click(view, 344, 216); click(view, 276, 216);
+    click(view, 308, 216); click(view, 240, 216);
     require(*controller.session().dose_g == 60.0F, "Upper bound clamps");
     controller.set_dose(0.1F); pump(view);
-    click(view, 132, 216); click(view, 200, 216);
+    click(view, 96, 216); click(view, 164, 216);
     require(*controller.session().dose_g == 0.1F, "Lower bound clamps");
-    click(view, 240, 156); pump(view, 500); pump(view, 500);
+    click(view, 204, 156); pump(view, 500); pump(view, 500);
     const auto idle_flushes = flush_count;
     for (int i = 0; i < 60; ++i) pump(view, 100);
     require(flush_count == idle_flushes, "Unchanged dose dialog performs no display transfers");
-    click(view, 364, 30);
+    click(view, 440, 30);
     require(*controller.session().dose_g == 20.0F, "Closing preserves selected dose");
     click(view, 360, 200);
     require(*controller.session().dose_g == 20.0F, "Reopening preserves dose");
-    click(view, 364, 30);
+    click(view, 440, 30);
     view.open(ui::Dialog::dose); pump(view);
-    mouse_x = 276; mouse_y = 240; mouse_down = true;
+    mouse_x = 240; mouse_y = 240; mouse_down = true;
     for (int i = 0; i < 20; ++i) pump(view, 40);
     controller.liquid(1, 1); pump(view);
     const float locked_dose = *controller.session().dose_g;
@@ -620,20 +678,21 @@ int main(int argc, char** argv) {
     auto* brew_screen = lv_scr_act();
     view.open(ui::Dialog::dose); pump(view);
     require(lv_scr_act() == brew_screen, "Locked panel cannot open editor");
-    click(view, 396, 290);
+    click(view, 440, 290);
     require(controller.session().phase == Phase::result, "Finish opens results");
     screenshot(view, "05-result");
     click(view, 396, 290);
-    require(controller.session().phase == Phase::remove_load, "Next requires load removal");
+    require(controller.session().phase == Phase::result, "Completion waits for removal");
+    require(!has_label(lv_scr_act(), "Next brew"), "Completion has no next button");
     screenshot(view, "06-remove-load");
-    click(view, 240, 286);
+    controller.remove_object(); pump(view);
     require(controller.session().phase == Phase::ready, "Removal returns to ready");
     controller.load_scenario(Scenario::unknown);
     view.open(ui::Dialog::dose); pump(view); // Brew must dismiss unconfirmed edits.
     controller.run_demo();
     for (int i = 0; i < 30; ++i) { controller.tick(0.1F); pump(view, 100); }
     require(controller.session().phase == Phase::brewing && !controller.session().dose_g, "Opening editor does not invent a dose");
-    click(view, 276, 216);
+    click(view, 240, 216);
     require(!controller.session().dose_g, "Brewing dismisses dose controls");
     screenshot(view, "07-unknown");
     controller.finish(); controller.load_scenario(Scenario::pour_over); pump(view);
@@ -655,7 +714,7 @@ int main(int argc, char** argv) {
     require(!find_type(lv_scr_act(), &lv_keyboard_class) && !find_type(lv_scr_act(), &lv_textarea_class), "Icon picker has no keyboard or text input");
     auto* icon_screen = lv_scr_act();
     for (int i = 0; i < 20; ++i) {
-        click(view, 68 + (i % 5) * 84, 88 + (i / 5) * 46);
+        click(view, 8 + (54 + (i % 5) * 84) * 378 / 452, 88 + (i / 5) * 46);
         // Both picker and name fonts must cover every bundled identifier.
         uint32_t offset = 0;
         const auto codepoint = _lv_txt_encoded_next(ui::equipment_icons[i], &offset);
@@ -672,18 +731,19 @@ int main(int argc, char** argv) {
     require(controller.equipment()[3].name == "Pour-over set 🦋", "Selected type and icon survive Back and Save");
     require(controller.equipment()[3].kind == Kind::pour_over_set, "Selected equipment type survives registration");
     screenshot(view, "13-registered");
-    click(view, 344, 84); // First row trash button.
+    click(view, 308, 84); // First row trash button.
     screenshot(view, "14-remove-equipment");
     require(controller.equipment_count() == 4, "Remove requires confirmation");
-    click(view, 160, 270); // Cancel.
+    click(view, 440, 270); // Cancel.
     require(controller.equipment_count() == 4, "Cancel preserves equipment");
-    click(view, 344, 84); click(view, 310, 270);
+    click(view, 308, 84); click(view, 274, 270);
     require(controller.equipment_count() == 3, "Confirm removes the intended equipment");
     require(controller.equipment()[0].kind == Kind::portafilter, "List compacts after removal");
-    for (int i = 0; i < 3; ++i) { click(view, 344, 84); click(view, 310, 270); }
+    for (int i = 0; i < 3; ++i) { click(view, 308, 84); click(view, 274, 270); }
     require(controller.equipment_count() == 0, "All equipment can be removed");
     screenshot(view, "15-empty-equipment");
     click(view, 240, 276); pump(view);
     require(find_type(lv_scr_act(), &lv_dropdown_class), "Empty list still allows registration");
     std::cout << "UI interaction checks passed\n";
 }
+
