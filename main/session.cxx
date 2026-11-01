@@ -15,22 +15,22 @@ Recognition recognize(float total, const Equipment* items, std::size_t count) {
         if (!item.empty_g) continue;
         if (!std::isfinite(*item.empty_g) || *item.empty_g <= 0) continue;
         if (std::abs(total - *item.empty_g) > config::object_tolerance_g) continue;
-        if (result.equipment && result.equipment->id != item.id) return {std::nullopt, true};
+        if (result.equipment && equipment_key(*result.equipment) != equipment_key(item)) return {std::nullopt, true};
         result.equipment = item; // Mass alone cannot distinguish empty from filled within ±40 g.
     }
     return result;
 }
 Controller::Controller(bool live) : live_(live) {
-    if (live_) { equipment_count_ = 0; return; }
-    equipment_[0] = {1, Kind::cup, "Ceramic cup", "Cup only", 142.6F, std::nullopt};
-    equipment_[1] = {2, Kind::portafilter, "Portafilter A", "Clean, with basket", 482.3F, 18.0F};
-    equipment_[2] = {3, Kind::pour_over_set, "V60 set", "Dripper + server + filter", 326.4F, 20.0F};
+    if (live_) return;
+    for (const auto& item : std::vector<Equipment>{{1, Kind::other, 142.6F, std::nullopt},
+             {4, Kind::portafilter, 482.3F, 18.0F}, {3, Kind::pour_over_set, 326.4F, 20.0F}})
+        equipment_.emplace(equipment_key(item), item);
     load_scenario(Scenario::known);
 }
 const char* Controller::recognition_status() const {
     if (!live_) return "demo";
     if (session_.phase != Phase::ready) return "session_locked";
-    if (!equipment_count_) return "no_profiles";
+    if (equipment_.empty()) return "no_profiles";
     if (!scale_.ready()) return "sensor_unavailable";
     if (session_.active_object) return "matched";
     if (object_ambiguous_) return "ambiguous";
@@ -147,7 +147,8 @@ void Controller::sensor_sample(std::optional<std::int32_t> raw, std::uint64_t no
         } else if (session_.phase == Phase::ready && !recognition_checked_) {
             recognition_checked_ = true; // Decide once per stable placement, not while filling.
             session_.vessel.reset(); // Unknown placement must not reuse the previous vessel.
-            const auto match = recognize(scale_.reference_gross(), equipment_.data(), equipment_count_);
+            const auto items = equipment();
+            const auto match = recognize(scale_.reference_gross(), items.data(), items.size());
             object_ambiguous_ = match.ambiguous;
             if (match.equipment) {
                 session_.active_object = match.equipment;
@@ -195,10 +196,10 @@ void Controller::update_brew_preparation() {
          vessel_calibration_->counts_per_gram != calibration->counts_per_gram)) {
         tared_vessel_id_.reset(); vessel_baseline_g_.reset(); flow_start_.reset();
     }
-    if (!tared_vessel_id_ || *tared_vessel_id_ != object->id) {
+    if (!tared_vessel_id_ || *tared_vessel_id_ != equipment_key(*object)) {
         flow_start_.reset();
         if (!scale_.tare()) return;
-        tared_vessel_id_ = object->id;
+        tared_vessel_id_ = equipment_key(*object);
         vessel_baseline_g_ = scale_.gross();
         vessel_calibration_ = calibration;
         session_.net_g = 0;
@@ -274,13 +275,13 @@ void Controller::target() {
         session_.target_g = *session_.dose_g * 15;
 }
 bool Controller::select_equipment(std::size_t index) {
-    if (session_.phase != Phase::ready || index >= equipment_count_) return false;
+    if (session_.phase != Phase::ready || index >= equipment_.size()) return false;
     if (live_) {
-        if (!scale_.ready() || scale_.recent_gross().value_or(0) <= 2.0F || !equipment_[index].empty_g) return false;
+        if (!scale_.ready() || scale_.recent_gross().value_or(0) <= 2.0F || !equipment()[index].empty_g) return false;
         recognition_checked_ = true;
         object_ambiguous_ = false;
-        const auto& item = equipment_[index];
-        if (!session_.active_object || session_.active_object->id != item.id) {
+        const auto item = equipment()[index];
+        if (!session_.active_object || equipment_key(*session_.active_object) != equipment_key(item)) {
             coffee_baseline_g_ = scale_.stable() ? std::optional<float>{scale_.reference_gross()} : std::nullopt;
             coffee_calibration_ = scale_.calibration();
             if (coffee_baseline_g_ && item.kind == Kind::portafilter) scale_.set_tare(*coffee_baseline_g_);
@@ -296,8 +297,8 @@ bool Controller::select_equipment(std::size_t index) {
     return true;
 }
 void Controller::place(std::size_t index) {
-    if (session_.phase != Phase::ready || index >= equipment_count_) return;
-    const auto& item = equipment_[index];
+    if (session_.phase != Phase::ready || index >= equipment_.size()) return;
+    const auto item = equipment()[index];
     session_.active_object = item;
     if (item.kind == Kind::portafilter) session_.weighing_tool = item;
     else session_.vessel = item;
@@ -381,31 +382,43 @@ bool Controller::set_mode(Mode mode) {
     target();
     return true;
 }
-bool Controller::register_equipment(Equipment item, bool stable) {
-    const auto first = item.name.find_first_not_of(" \t\r\n");
-    if (first == std::string::npos) return false;
-    item.name = item.name.substr(first, item.name.find_last_not_of(" \t\r\n") - first + 1);
-    if (session_.phase != Phase::ready || !stable || equipment_count_ == equipment_.size() ||
-        item.name.empty() || item.name.size() > 24 || !item.empty_g ||
-        !std::isfinite(*item.empty_g) || *item.empty_g <= 0) return false;
-    if (next_equipment_id_ == 0) return false;
-    item.id = next_equipment_id_++;
-    equipment_[equipment_count_++] = std::move(item);
-    if (live_ && !session_.active_object) {
-        recognition_checked_ = object_ambiguous_ = false;
+bool valid_equipment(const Equipment& item) {
+    return static_cast<unsigned>(item.kind) <= static_cast<unsigned>(Kind::pour_over_set) &&
+        item.id < equipment_icon_count && item.empty_g && std::isfinite(*item.empty_g) && *item.empty_g > 0 &&
+        (!item.usual_dose_g || (std::isfinite(*item.usual_dose_g) &&
+            *item.usual_dose_g >= config::dose_min_tenths / 10.0F &&
+            *item.usual_dose_g <= config::dose_max_tenths / 10.0F));
+}
+std::vector<Equipment> Controller::equipment() const {
+    std::vector<Equipment> items;
+    items.reserve(equipment_.size());
+    for (const auto& [key, item] : equipment_) { (void)key; items.push_back(item); }
+    std::sort(items.begin(), items.end(), [](const auto& a, const auto& b) { return equipment_key(a) < equipment_key(b); });
+    return items;
+}
+bool Controller::restore_equipment(const std::vector<Equipment>& items) {
+    if (session_.phase != Phase::ready || session_.active_object || items.size() > config::max_equipment) return false;
+    EquipmentMap restored;
+    for (const auto& item : items) {
+        if (!valid_equipment(item) || !restored.emplace(equipment_key(item), item).second) return false;
     }
+    equipment_ = std::move(restored);
+    equipment_revision_ = saved_equipment_revision_ = 0;
+    recognition_checked_ = object_ambiguous_ = false;
     return true;
 }
-bool Controller::remove_equipment(std::uint32_t id) {
-    if (session_.phase != Phase::ready) return false;
-    std::size_t index = 0;
-    while (index < equipment_count_ && equipment_[index].id != id) ++index;
-    if (index == equipment_count_) return false;
-    for (std::size_t i = index + 1; i < equipment_count_; ++i)
-        equipment_[i - 1] = std::move(equipment_[i]);
-    equipment_[--equipment_count_] = {};
+bool Controller::register_equipment(Equipment item, bool stable) {
+    if (session_.phase != Phase::ready || !stable || equipment_.size() >= config::max_equipment ||
+        !valid_equipment(item) || !equipment_.emplace(equipment_key(item), item).second) return false;
+    ++equipment_revision_;
+    if (live_ && !session_.active_object) recognition_checked_ = object_ambiguous_ = false;
+    return true;
+}
+bool Controller::remove_equipment(EquipmentKey key) {
+    if (session_.phase != Phase::ready || !equipment_.erase(key)) return false;
+    ++equipment_revision_;
     for (auto* selected : {&session_.active_object, &session_.vessel, &session_.weighing_tool})
-        if (*selected && (*selected)->id == id) selected->reset();
+        if (*selected && equipment_key(**selected) == key) selected->reset();
     if (live_ && !session_.active_object) recognition_checked_ = object_ambiguous_ = false;
     // Deleting a profile is not a physical removal or a tare. Retain the reading.
     target();
@@ -414,8 +427,9 @@ bool Controller::remove_equipment(std::uint32_t id) {
     return true;
 }
 void Controller::place_demo_kind(Kind kind) {
-    for (std::size_t i = 0; i < equipment_count_; ++i) {
-        if (equipment_[i].kind == kind) { place(i); return; }
+    const auto items = equipment();
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        if (items[i].kind == kind) { place(i); return; }
     }
     // Demo scenarios must never reinterpret a shifted list index as another type.
     session_.active_object.reset();
@@ -493,7 +507,7 @@ void Controller::load_scenario(Scenario scenario) {
     demo_stage_ = 0;
     demo_running_ = false;
     if (scenario == Scenario::known) {
-        place_demo_kind(Kind::cup);
+        place_demo_kind(Kind::other);
         set_dose(18.2F, DoseSource::measured);
     } else if (scenario == Scenario::pour_over) {
         set_mode(Mode::pour_over);
@@ -553,7 +567,7 @@ void Controller::tick(float dt) {
         if (demo_stage_ == 2 && demo_time_ >= 3) { weigh_beans(19.2F); ++demo_stage_; }
         if (demo_stage_ == 3 && demo_time_ >= 4) { weigh_beans(18.2F); ++demo_stage_; }
         if (demo_stage_ == 4 && demo_time_ >= 5) { remove_object(); ++demo_stage_; }
-        if (demo_stage_ == 5 && demo_time_ >= 6) { place_demo_kind(Kind::cup); ++demo_stage_; }
+        if (demo_stage_ == 5 && demo_time_ >= 6) { place_demo_kind(Kind::other); ++demo_stage_; }
         if (demo_time_ < 8) return;
     }
     if (demo_time_ < 1) return;
@@ -564,4 +578,3 @@ void Controller::tick(float dt) {
     liquid(flow * dt, dt); // Target only alerts; never stops the machine/demo.
 }
 }
-

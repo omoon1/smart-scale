@@ -44,6 +44,8 @@ idf:
 	@./scripts/idf.sh $(ARGS)
 test:
 	@mkdir -p build-host
+	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main main/session.cxx main/scale.cxx tests/equipment_test.cxx -o build-host/equipment_tests
+	@./build-host/equipment_tests
 	$(CXX) -std=c++20 -Wall -Wextra -Werror -I main tests/lcd_sleep_config_test.cxx -o build-host/lcd_config_default
 	@./build-host/lcd_config_default
 	$(CXX) -std=c++20 -Wall -Wextra -Werror -I main -DCONFIG_SMART_SCALE_LCD_SLEEP=1 tests/lcd_sleep_config_test.cxx -o build-host/lcd_config_existing
@@ -109,4 +111,3 @@ simulator-wide:
 .PHONY: preview-themes
 preview-themes:
 	@./scripts/host.sh --theme-screenshots
-

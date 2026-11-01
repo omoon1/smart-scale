@@ -4,6 +4,7 @@
 #include "weight_display.hxx"
 #include "registration_measurement.hxx"
 #include "lvgl.h"
+#include <string>
 #include "battery.hxx"
 #include "battery_history.hxx"
 
@@ -82,15 +83,16 @@ private:
     Phase rendered_phase_{Phase::ready};
     Dialog dialog_{Dialog::none};
     bool pending_draw_{};
-    std::uint32_t remove_equipment_id_{};
+    std::uint32_t remove_equipment_key_{};
     int registration_step_{};
-    Kind registration_kind_{Kind::cup};
+    Kind registration_kind_{Kind::other};
     bool registration_stable_{true};
     RegistrationMeasurement registration_measurement_;
     unsigned registration_icon_{};
     std::array<lv_obj_t*, 20> icon_buttons_{};
     std::string registration_error_;
     float registration_weight_{156.8F};
+    lv_obj_t *equipment_storage_status_{};
     lv_obj_t *tare_button_{}, *weight_hint_{}, *object_pill_{}, *coffee_pill_{};
     lv_obj_t *coffee_card_{}, *coffee_hint_{}, *coffee_check_{}, *object_card_{}, *object_check_{}, *object_icon_{}, *stage_text_{};
     int coffee_visual_state_{-1};

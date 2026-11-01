@@ -1,4 +1,4 @@
-idf_component_register(SRCS "main.cxx" "scale.cxx" "hx711.cxx" "acquisition.cxx" "device.cxx" "session.cxx" "ui.cxx" "theme.cxx" "weight_font_72.c" "equipment_icons.c"
+idf_component_register(SRCS "main.cxx" "scale.cxx" "hx711.cxx" "acquisition.cxx" "device.cxx" "session.cxx" "equipment_store.cxx" "ui.cxx" "theme.cxx" "weight_font_72.c" "equipment_icons.c"
     INCLUDE_DIRS "."
     REQUIRES esp_adc esp_hw_support esp_app_format nvs_flash driver esp_lcd esp_timer esp_lcd_axs15231b
              esp_lvgl_port esp_io_expander_tca9554 lvgl)

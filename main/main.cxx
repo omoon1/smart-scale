@@ -1,5 +1,6 @@
 #include "config.hxx"
 #include "device.hxx"
+#include "equipment_store.hxx"
 #include "session.hxx"
 #include "ui.hxx"
 #include "battery_history.hxx"
@@ -51,6 +52,15 @@ extern "C" void app_main() {
         if (auto calibration = smart_scale::device::scale::load_calibration())
             controller->scale().restore(*calibration);
     } else ESP_LOGE("scale", "NVS unavailable: %s", esp_err_to_name(storage_status));
+    bool equipment_storage_ready = false;
+    if (storage_status == ESP_OK) {
+        std::vector<smart_scale::Equipment> items;
+        auto error = smart_scale::equipment_storage::load(items);
+        if (error == ESP_OK && !controller->restore_equipment(items)) error = ESP_ERR_INVALID_STATE;
+        equipment_storage_ready = error == ESP_OK;
+        if (!equipment_storage_ready) ESP_LOGE("equipment", "Cannot restore profiles: %s; automatic saves disabled", esp_err_to_name(error));
+    }
+    controller->equipment_storage_error(!equipment_storage_ready);
     char configuration[768];
     const auto* app = esp_app_get_description();
     std::snprintf(configuration, sizeof(configuration),
@@ -70,6 +80,7 @@ extern "C" void app_main() {
         lvgl_port_unlock();
     }
     auto previous = esp_timer_get_time();
+    std::int64_t next_equipment_save = 0;
     std::uint64_t health_ms = 0;
     unsigned sleep_cycle = 0;
     bool previous_inhibit = false;
@@ -91,7 +102,8 @@ extern "C" void app_main() {
         const auto elapsed = static_cast<float>(now - previous) / 1000000.0F;
         previous = now;
         std::optional<smart_scale::Calibration> save;
-
+        std::optional<std::vector<smart_scale::Equipment>> equipment_save;
+        std::uint64_t equipment_revision = 0;
         if (lvgl_port_lock(0)) {
             const auto now_ms = static_cast<std::uint64_t>(esp_timer_get_time() / 1000);
             smart_scale::device::scale::Reading reading;
@@ -163,8 +175,12 @@ extern "C" void app_main() {
                 } else ESP_LOGW("power", "display transition failed: %s", esp_err_to_name(error));
             }
             save = controller->scale().take_pending_save();
+            if (equipment_storage_ready && controller->equipment_dirty() && now >= next_equipment_save) {
+                equipment_save = controller->equipment();
+                equipment_revision = controller->equipment_revision();
+            }
             // Save requests and dialog/brew operations must finish before sleep.
-            if (power.sleep_due(now_ms) && !save && applied_power == smart_scale::PowerState::screen_off &&
+            if (power.sleep_due(now_ms) && !save && !controller->equipment_dirty() && applied_power == smart_scale::PowerState::screen_off &&
                 !display.touch_down() && power.report_sleep_once()) {
                 if (!display.sleep_supported()) {
                     ESP_LOGW("power", "sleep blocked: enable verified 3.49 V2 expander touch wake; remaining screen-off");
@@ -229,6 +245,16 @@ extern "C" void app_main() {
                 }
             }
             lvgl_port_unlock();
+        }
+        if (equipment_save) {
+            const auto error = smart_scale::equipment_storage::save(*equipment_save);
+            next_equipment_save = now + (error == ESP_OK ? 0 : 2000000);
+            if (error != ESP_OK) ESP_LOGE("equipment", "Profile save failed: %s; retrying", esp_err_to_name(error));
+            if (lvgl_port_lock(0)) {
+                controller->equipment_storage_error(error != ESP_OK);
+                if (error == ESP_OK) controller->equipment_saved(equipment_revision);
+                lvgl_port_unlock();
+            }
         }
         if (save) {
             const auto error = smart_scale::device::scale::save_calibration(*save);

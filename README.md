@@ -2,7 +2,7 @@
 
 ESP-IDF + modern C++ coffee-scale UX prototype for the **Waveshare ESP32-S3-Touch-LCD-3.49 V2 / Rev1.1** (AXS15231B QSPI display / I²C touch). LVGL renders a 640 × 172 landscape interface on the native 172 × 640 panel.
 
-**Device firmware now reads an HX711 load cell** on header IO44 (DOUT) / IO43 (SCK), with live weight, tare, touchscreen two-point calibration, and calibration persistence in NVS. Calibrate your own cell before use; there is no hard-coded calibration factor. The desktop simulator retains deterministic dummy scenarios. Equipment profiles and the last eight brew records remain RAM-only. No network service or machine control is connected.
+**Device firmware now reads an HX711 load cell** on header IO44 (DOUT) / IO43 (SCK), with live weight, tare, touchscreen two-point calibration, and calibration persistence in NVS. Calibrate your own cell before use; there is no hard-coded calibration factor. The desktop simulator retains deterministic dummy scenarios. Registered equipment profiles persist in NVS; the last eight brew records remain RAM-only. No network service or machine control is connected.
 
 See [HX711 wiring, calibration, and operating instructions](docs/hx711.md). Camera use is incompatible with these GPIO assignments.
 
@@ -61,9 +61,9 @@ For the interactive desktop simulator, install SDL2 development files (`brew ins
 4. In the wide simulator, press **Space** to inject simulated liquid (legacy screen: **Run demo**). This is a development control; production brewing will be triggered by sensor events. The app switches to extraction when that event arrives, including unknown-object cases.
 5. Press **S** for Scenarios in the wide simulator (legacy screen: **Scenarios**) for known cup, unknown baseline, the portafilter → beans → removal → cup sequence, or V60 bloom/pours. The sequence starts after Run demo. A pour-over pause does not end the brew.
 6. **Finish** opens results. Target arrival only alerts; simulated flow continues until Finish. **Next brew** starts an empty session after simulated load removal.
-7. The board's **BOOT/GPIO0** button or desktop **R** clears session values and marks an active RAM record aborted. Registered profiles remain until reboot. The board's hardware RESET/EN switch reboots the MCU and cannot execute this application action.
+7. The board's **BOOT/GPIO0** button or desktop **R** clears session values and marks an active RAM record aborted. Registered profiles survive reboot after their NVS save completes. The board's hardware RESET/EN switch reboots the MCU and cannot execute this application action.
 
-Registration has three steps: type (Container, Portafilter, or Pour-over set), simulated stable empty weight, and a 20-icon picker with distinct coffee, nature, sky, and personal symbols. Names are generated as the equipment type plus the selected icon; no keyboard is shown. Tap the stability badge to test the unstable state; Continue is disabled until stable. The list holds eight profiles, including fixtures. Tap a row’s trash button and confirm Remove to delete a profile. Current matching selections are cleared without taring; saved brew records are retained. Removal is disabled during brewing and results. Optional recipe defaults and editable measurement configurations are deferred.
+Registration has three steps: type (Other, Portafilter, or Pour-over set), simulated stable empty weight, and a 20-icon picker with distinct coffee, nature, sky, and personal symbols. Display labels are derived from the equipment type and selected icon; no name or configuration string is stored and no keyboard is shown. The unique identity is `(kind, icon_id)`; already registered icons are disabled for that kind, while the same icon is available for other kinds. Profiles are restored into an `unordered_map` before UI startup. Tap the stability badge to test the unstable state; Continue is disabled until stable. The list holds eight profiles, including fixtures. Tap a row’s trash button and confirm Remove to delete a profile. Current matching selections are cleared without taring; saved brew records are retained. Removal is disabled during brewing and results. There is no schema-version field or generated-ID counter. The icon table indices are stable identifiers. Pending saves and storage failures appear in the equipment-list header.
 
 ## Implementation
 
@@ -74,6 +74,7 @@ The `.cxx`/`.hxx` organization, nested device namespaces, `device()` accessor, t
 | `main/scale.hxx`, `scale.cxx` | Calibration, tare, stability, and sensor health |
 | `main/acquisition.hxx`, `acquisition.cxx` | Dedicated timestamped acquisition task and bounded sample queue |
 | `main/hx711.hxx`, `hx711.cxx` | ESP-IDF HX711 GPIO reader and NVS persistence |
+| `main/equipment_store.hxx`, `equipment_store.cxx`, `equipment_codec.hxx` | Equipment NVS storage and fixed-record serialization |
 | `main/session.hxx`, `session.cxx` | Platform-independent state, recognition helper, bounded RAM records, dummy source |
 | `main/ui.hxx`, `ui.cxx` | LVGL screen rendering, modal drafts, event routing |
 | `main/device.hxx`, `device.cxx` | Board I2C/SPI, display, touch, backlight, debounced BOOT button |

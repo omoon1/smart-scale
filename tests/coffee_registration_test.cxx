@@ -10,9 +10,9 @@ struct Fixture {
     float polarity;
     Fixture(unsigned dt, float sign) : interval(dt), polarity(sign) {
         assert(c.scale().restore({0, sign * 1000}));
-        assert(c.register_equipment({0, Kind::cup, "Cup", "", 100.0F, {}}, true));
-        assert(c.register_equipment({0, Kind::portafilter, "Tool", "", 300.0F, {}}, true));
-        assert(c.register_equipment({0, Kind::pour_over_set, "Set", "", 500.0F, {}}, true));
+        assert(c.register_equipment({0, Kind::other, 100.0F, {}}, true));
+        assert(c.register_equipment({0, Kind::portafilter, 300.0F, {}}, true));
+        assert(c.register_equipment({0, Kind::pour_over_set, 500.0F, {}}, true));
     }
     void sample(float g) { c.sensor_sample(static_cast<int>(std::lround(g * polarity * 1000)), now += interval); c.tick(interval * .001F); }
     void hold(float g) { for (unsigned ms = 0; ms < 5000; ms += interval) sample(g); }

@@ -61,7 +61,7 @@ int main() {
     sample(0); assert(!live.start_brew()); // No vessel.
     sample(10000); near(live.session().net_g, 100);
     assert(live.tare()); near(live.scale().net(), 0);
-    assert(live.register_equipment({0, Kind::cup, "Cup", "", 100.0F, {}}, true));
+    assert(live.register_equipment({0, Kind::other, 100.0F, {}}, true));
     sample(10000);
     assert(live.set_dose(18)); assert(live.start_brew());
     sample(12000); near(live.session().net_g, 20);
@@ -105,17 +105,17 @@ int main() {
 
     Controller detection(true);
     assert(detection.scale().restore({0, 100}));
-    assert(detection.register_equipment({0, Kind::cup, "Cup", "", 150.0F, {}}, true));
-    assert(detection.register_equipment({0, Kind::portafilter, "Portafilter", "", 500.0F, 18.0F}, true));
+    assert(detection.register_equipment({0, Kind::other, 150.0F, {}}, true));
+    assert(detection.register_equipment({0, Kind::portafilter, 500.0F, 18.0F}, true));
     auto place = [&](int raw) {
         for (int i = 0; i < 60; ++i) { detection.sensor_sample(raw, now += 100); detection.tick(0.1F); }
     };
     place(0); place(11000); // Inclusive lower boundary.
-    assert(detection.session().active_object && detection.session().active_object->name == "Cup");
+    assert(detection.session().active_object && equipment_key(*detection.session().active_object) == equipment_key(Kind::other, 0));
     near(detection.scale().net(), 0); // Recognized vessel automatically tares once.
-    place(19000); assert(detection.session().active_object->name == "Cup");
+    place(19000); assert(equipment_key(*detection.session().active_object) == equipment_key(Kind::other, 0));
     place(0); place(19000); // Inclusive upper boundary.
-    assert(detection.session().active_object->name == "Cup");
+    assert(equipment_key(*detection.session().active_object) == equipment_key(Kind::other, 0));
     place(0); place(19010); assert(!detection.session().active_object);
     place(18000); assert(!detection.session().active_object); // No recognition while filling an unknown load.
     place(0); place(48000);
@@ -125,14 +125,14 @@ int main() {
     assert(!detection.session().dose_g); near(*detection.coffee_candidate(), 18);
     assert(detection.save_coffee()); near(*detection.session().dose_g, 18);
     assert(detection.session().active_object->kind == Kind::portafilter);
-    assert(detection.register_equipment({0, Kind::cup, "Other cup", "", 200.0F, {}}, true));
+    assert(detection.register_equipment({1, Kind::other, 200.0F, {}}, true));
     place(0); place(17500);
     assert(!detection.session().active_object && detection.object_ambiguous());
     assert(!detection.session().vessel);
-    assert(detection.select_equipment(2));
+    assert(detection.select_equipment(1));
     assert(!detection.object_ambiguous()); near(detection.scale().net(), 0);
     assert(detection.start_brew()); place(20000);
-    assert(detection.session().active_object->name == "Other cup"); // Identity locked during brewing.
+    assert(equipment_key(*detection.session().active_object) == equipment_key(Kind::other, 1)); // Identity locked during brewing.
     Controller registration(true);
     assert(registration.scale().restore({0, 100}));
     assert(std::string(registration.recognition_status()) == "no_profiles");
@@ -141,11 +141,11 @@ int main() {
     };
     readings(26300, 60);
     assert(!registration.session().active_object);
-    assert(registration.register_equipment({0, Kind::cup, "New cup", "", 263.0F, {}}, true));
+    assert(registration.register_equipment({0, Kind::other, 263.0F, {}}, true));
     readings(26300, 1); // Register while the already-unknown object remains on the platform.
-    assert(registration.session().active_object && registration.session().active_object->name == "New cup");
+    assert(registration.session().active_object && equipment_key(*registration.session().active_object) == equipment_key(Kind::other, 0));
     assert(std::string(registration.recognition_status()) == "matched");
-    assert(registration.register_equipment({0, Kind::cup, "Other", "", 400.0F, {}}, true));
+    assert(registration.register_equipment({1, Kind::other, 400.0F, {}}, true));
     readings(0, 1); // A single low sample cannot clear identity.
     assert(registration.session().active_object);
     readings(26300, 4);
@@ -153,19 +153,18 @@ int main() {
     readings(0, 6); // Ordinary brief removal, much shorter than drift stability.
     assert(!registration.session().active_object && !registration.session().loaded);
     readings(40000, 60);
-    assert(registration.session().active_object && registration.session().active_object->name == "Other");
+    assert(registration.session().active_object && equipment_key(*registration.session().active_object) == equipment_key(Kind::other, 1));
     // Deleting an ambiguous candidate rearms matching without another physical lift.
-    assert(registration.register_equipment({0, Kind::cup, "Duplicate", "", 400.0F, {}}, true));
+    assert(registration.register_equipment({2, Kind::other, 400.0F, {}}, true));
     readings(0, 6); readings(40000, 60);
     assert(registration.object_ambiguous());
-    const auto duplicate_id = registration.equipment()[2].id;
+    const auto duplicate_id = equipment_key(registration.equipment()[2]);
     assert(registration.remove_equipment(duplicate_id)); readings(40000, 1);
     assert(registration.session().active_object && !registration.object_ambiguous());
     readings(0, 6); readings(26300, 3);
     assert(!registration.scale().stable());
     assert(registration.select_equipment(0)); // Explicit identity selection need not wait for drift stability.
-    assert(registration.session().active_object->name == "New cup");
+    assert(equipment_key(*registration.session().active_object) == equipment_key(Kind::other, 0));
     assert(!registration.tare()); // Measurement operations retain the strict stability gate.
     std::cout << "HX711 calibration and live-session tests passed\n";
 }
-

@@ -111,6 +111,14 @@ On-device acceptance:
 - Confirm touch, BOOT-button reset, and normal screen updates still work at the original brightness.
 - Check the interval before `app_main()` separately: firmware cannot guarantee backlight-off during ROM/bootloader execution. If noise remains there, verify the board's backlight enable bias and consider a hardware default-off circuit.
 
+
+## Equipment NVS and composite identity
+
+`make test` covers codec round trips, empty lists, duplicate rejection, same icon across different kinds, atomic restore validation, malformed lengths/IDs/kinds/flags/weights, deterministic list order, deletion and reuse, and save revision acknowledgement. Existing recognition, tare, and brew tests use composite identities. `make preview` tests that occupied icons are disabled, injected duplicate events are rejected, and the same icon is enabled for another kind, alongside existing live-sensor UI tests.
+
+`make test` (nine suites), `make preview` (normal and live UI), and `make build` (ESP-IDF v5.5.2, ESP32-S3) passed. The local SDK component manager needed its Linux parent-PID fallback because this container exposes a different PID namespace through procfs; no project dependency version or lock-file change is included.
+
+Device acceptance: register multiple kinds sharing an icon, reboot and verify weights/icons/kinds and disabled choices; delete one pair and verify the other survives reboot; delete the final pair and reboot to an empty list; verify calibration survives every operation. Interrupt power during save, check recovery/logging, and test full/unreadable NVS without erasing calibration. A mutation is only durable after `nvs_commit` succeeds; power removal before the next main-loop save can lose the latest change. Native tests do not exercise physical flash or electrical power loss.
 ## Main integration: battery, idle and touch wake
 
 The wide branch includes main commit `7578c45` and retains the 3.49 V2 BSP.
@@ -142,3 +150,16 @@ on EXIO5. Firmware builds pass with ESP-IDF 5.5.2 for default wake-disabled
 DOUT44/SCK43 and wake-enabled DOUT40/SCK41. CI now uses those two 3.49 modes
 instead of the upstream 3.5/custom-direct mappings. Physical wake tests remain
 pending; the new common policy permits sleep at 60 seconds total idle.
+
+## Equipment persistence integration with current main
+
+Merged main `67254ac` into the equipment NVS branch. Both display layouts retain
+main's Back/Finish and registration behavior while using composite kind/icon
+identity. Wide UI checks cover disabled duplicates, injected duplicate events,
+selection after save, and composite-key deletion. Pending equipment writes block
+CPU sleep until saved; NVS writes remain outside the LVGL lock.
+
+All native suites (`make test`) and all eight host preview modes pass. The host
+was built directly with GCC/G++ and the pinned LVGL sources because CMake is not
+available in this environment. This integration has not been firmware-built or
+verified on hardware; the earlier branch's firmware result does not cover it.

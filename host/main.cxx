@@ -73,6 +73,13 @@ bool has_label(lv_obj_t* parent, const std::string& text) {
         if (has_label(lv_obj_get_child(parent, static_cast<int>(i)), text)) return true;
     return false;
 }
+lv_obj_t* icon_button(lv_obj_t* parent, const char* text) {
+    if (lv_obj_check_type(parent, &lv_btn_class) && has_label(parent, text)) return parent;
+    // Search the topmost modal before the underlying main-screen icon.
+    for (int i = static_cast<int>(lv_obj_get_child_cnt(parent)) - 1; i >= 0; --i)
+        if (auto* result = icon_button(lv_obj_get_child(parent, i), text)) return result;
+    return nullptr;
+}
 
 void run_wide_checks(smart_scale::ui::View& view, smart_scale::Controller& controller) {
     using namespace smart_scale;
@@ -107,11 +114,28 @@ void run_wide_checks(smart_scale::ui::View& view, smart_scale::Controller& contr
     }
     screenshot(view, "wide-07-icons");
     click(view, 580, 126);
-    require(controller.equipment_count() == 4 && controller.equipment()[3].name == "Pour-over set 🦋",
+    require(controller.equipment_count() == 4 && controller.has_equipment(Kind::pour_over_set, 19),
             "all wide icon positions are reachable and last selection saves");
     require(!has_label(lv_scr_act(), LV_SYMBOL_OK " Save"), "save returns to main screen");
     require(has_label(lv_scr_act(), ui::equipment_icons[19]), "main card shows registered selected icon");
     screenshot(view, "wide-registered-icon-main");
+    require(controller.session().active_object &&
+            equipment_key(*controller.session().active_object) == equipment_key(Kind::pour_over_set, 19),
+            "wide save selects the new composite identity");
+    view.open(ui::Dialog::registration); pump(view);
+    click(view, 430, 90); click(view, 580, 126); click(view, 580, 126);
+    auto* occupied = icon_button(lv_scr_act(), ui::equipment_icons[19]);
+    require(occupied && lv_obj_has_state(occupied, LV_STATE_DISABLED), "wide duplicate icon disabled");
+    lv_event_send(occupied, LV_EVENT_CLICKED, nullptr); pump(view);
+    click(view, 580, 126);
+    require(controller.has_equipment(Kind::pour_over_set, 0), "wide injected duplicate cannot replace free selection");
+    view.open(ui::Dialog::objects); pump(view);
+    click(view, 232, 125); // Trash for the third sorted profile: pour-over/icon 0.
+    click(view, 580, 126);
+    require(!controller.has_equipment(Kind::pour_over_set, 0) && controller.has_equipment(Kind::pour_over_set, 19),
+            "wide deletion uses the composite key");
+    click(view, 580, 44);
+
     view.open(ui::Dialog::objects); pump(view);
     require(has_label(lv_scr_act(), ui::equipment_icons[19]), "equipment list shows registered icon");
     screenshot(view, "wide-registered-icon-list");
@@ -187,7 +211,7 @@ void run_wide_live_checks(smart_scale::ui::View& view, smart_scale::Controller& 
     require(!has_label(lv_scr_act(), "Calibrate scale") && has_label(lv_scr_act(), "Tap to tare"),
             "sensor fault with calibration cannot open calibration or tare");
     feed(110000);
-    require(controller.register_equipment({0, Kind::pour_over_set, "Pour-over set", "", 500.0F, {}}, true), "wide live profile");
+    require(controller.register_equipment({0, Kind::pour_over_set, 500.0F, {}}, true), "wide live profile");
     click(view, 70, 24);
     feed(10000); screenshot(view, "wide-18-load-container");
     feed(510000); screenshot(view, "wide-19-load-coffee");
@@ -356,7 +380,7 @@ int main(int argc, char** argv) {
         using namespace smart_scale;
         std::filesystem::create_directories("build-host/screens");
         require(controller.scale().restore({0, 1000}), "calibration");
-        require(controller.register_equipment({0, Kind::pour_over_set, "Pour-over set", "", 500.0F, {}}, true), "profile");
+        require(controller.register_equipment({0, Kind::pour_over_set, 500.0F, {}}, true), "profile");
         std::uint64_t now = 0;
         auto feed = [&](int raw) {
             for (int i = 0; i < 60; ++i) { controller.sensor_sample(raw, now += 100); controller.tick(.1F); pump(view, 100); }
@@ -702,7 +726,7 @@ int main(int argc, char** argv) {
     controller.finish(); controller.load_scenario(Scenario::known); pump(view);
     view.open(ui::Dialog::registration); screenshot(view, "09-register-type");
     auto* type = find_type(lv_scr_act(), &lv_dropdown_class);
-    require(type && std::string(lv_dropdown_get_options(type)) == "Container\nPortafilter\nPour-over set", "Container replaces Cup");
+    require(type && std::string(lv_dropdown_get_options(type)) == "Other\nPortafilter\nPour-over set", "Equipment kind choices use Other, Portafilter and Pour-over set");
     lv_dropdown_set_selected(type, 2);
     click(view, 370, 284); screenshot(view, "10-register-weight");
     click(view, 150, 222); // Mark unstable.
@@ -728,9 +752,27 @@ int main(int argc, char** argv) {
     screenshot(view, "12-register-icon-selected");
     click(view, 370, 282);
     require(controller.equipment_count() == 4, "Registration saves profile");
-    require(controller.equipment()[3].name == "Pour-over set 🦋", "Selected type and icon survive Back and Save");
+    require(controller.equipment()[3].id == 19, "Selected type and icon survive Back and Save");
     require(controller.equipment()[3].kind == Kind::pour_over_set, "Selected equipment type survives registration");
     screenshot(view, "13-registered");
+    view.open(ui::Dialog::registration); pump(view);
+    type = find_type(lv_scr_act(), &lv_dropdown_class);
+    lv_dropdown_set_selected(type, 2);
+    click(view, 320, 284); click(view, 320, 284);
+    auto* used = icon_button(lv_scr_act(), ui::equipment_icons[19]);
+    require(used && lv_obj_has_state(used, LV_STATE_DISABLED), "Registered kind/icon is disabled");
+    auto* available = icon_button(lv_scr_act(), ui::equipment_icons[0]);
+    require(available && !lv_obj_has_state(available, LV_STATE_DISABLED), "Unused icon remains selectable");
+    lv_event_send(used, LV_EVENT_CLICKED, nullptr); pump(view);
+    require(has_label(lv_scr_act(), "Pour-over set 🫘"), "Even injected events cannot select a duplicate");
+    screenshot(view, "29-registered-icon-disabled");
+    click(view, 60, 282); click(view, 60, 282);
+    type = find_type(lv_scr_act(), &lv_dropdown_class);
+    lv_dropdown_set_selected(type, 0);
+    click(view, 320, 284); click(view, 320, 284);
+    available = icon_button(lv_scr_act(), ui::equipment_icons[19]);
+    require(available && !lv_obj_has_state(available, LV_STATE_DISABLED), "Same icon is available in another kind");
+    view.open(ui::Dialog::objects); pump(view);
     click(view, 308, 84); // First row trash button.
     screenshot(view, "14-remove-equipment");
     require(controller.equipment_count() == 4, "Remove requires confirmation");
@@ -746,4 +788,3 @@ int main(int argc, char** argv) {
     require(find_type(lv_scr_act(), &lv_dropdown_class), "Empty list still allows registration");
     std::cout << "UI interaction checks passed\n";
 }
-

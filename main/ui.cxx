@@ -85,20 +85,19 @@ void fit_width(lv_obj_t* parent, int numerator, int denominator) {
         lv_obj_set_width(child, width * numerator / denominator);
     }
 }
-// This branch stores the chosen glyph in the registered equipment name.
-// Older profiles without a glyph retain a sensible type-specific fallback.
 const char* equipment_glyph(const Equipment& item) {
-    for (const auto* glyph : equipment_icons)
-        if (item.name.find(glyph) != std::string::npos) return glyph;
-    return equipment_icons[item.kind == Kind::portafilter ? 4 : item.kind == Kind::pour_over_set ? 3 : 1];
+    return equipment_icons[item.id < equipment_icon_count ? item.id : 0];
 }
 const char* kind_name(Kind kind) {
     switch (kind) {
-    case Kind::cup: return "Container";
+    case Kind::other: return "Other";
     case Kind::portafilter: return "Portafilter";
     case Kind::pour_over_set: return "Pour-over set";
     }
     return "?";
+}
+std::string equipment_label(const Equipment& item) {
+    return std::string(kind_name(item.kind)) + " " + equipment_icons[item.id];
 }
 }
 lv_obj_t* View::button(lv_obj_t* p, const char* text, int x, int y, int w, int h,
@@ -191,7 +190,7 @@ void View::open(Dialog dialog) {
         registration_measurement_.reset();
         registration_step_ = 0;
         registration_stable_ = true;
-        registration_kind_ = Kind::cup;
+        registration_kind_ = Kind::other;
         registration_icon_ = 0;
         registration_error_.clear();
     }
@@ -218,6 +217,7 @@ void View::draw() {
     history_plot_ = nullptr; history_revision_ = UINT64_MAX;
     weight_ = weight_unit_ = time_ = flow_ = status_ = object_text_ = dose_text_ = target_text_ = chart_ = nullptr;
     dose_value_ = icon_name_ = kind_input_ = chart_max_ = chart_time_ = current_point_ = object_weight_ = nullptr;
+    equipment_storage_status_ = nullptr;
     tare_button_ = weight_hint_ = object_pill_ = coffee_pill_ = nullptr;
     coffee_card_ = coffee_hint_ = coffee_check_ = object_card_ = object_check_ = object_icon_ = stage_text_ = nullptr;
     coffee_visual_state_ = -1;
@@ -448,14 +448,14 @@ void View::draw_wide_dialog(lv_obj_t* root) {
         lv_obj_set_scroll_dir(list, LV_DIR_VER);
         if (!controller_.equipment_count()) label(list, "No equipment yet", 12, 24, 480, &lv_font_montserrat_18, muted);
         for (std::size_t i = 0; i < controller_.equipment_count(); ++i) {
-            const auto& item = controller_.equipment()[i];
+            const auto item = controller_.equipment()[i];
             const int x = (i % 2) * 258, y = (i / 2) * 82;
             auto* row = button(list, "", x, y, 196, 74, Action::choose_object, i);
             auto* glyph = label(row, equipment_glyph(item), 8, 8, 180, &equipment_icons_32, mint);
             lv_obj_set_style_text_align(glyph, LV_TEXT_ALIGN_CENTER, 0);
             auto* name = label(row, kind_name(item.kind), 4, 47, 188, &lv_font_montserrat_14);
             lv_obj_set_style_text_align(name, LV_TEXT_ALIGN_CENTER, 0);
-            if (controller_.session().active_object && controller_.session().active_object->id == item.id) {
+            if (controller_.session().active_object && equipment_key(*controller_.session().active_object) == equipment_key(item)) {
                 lv_obj_set_style_border_color(row, color(mint), 0);
                 lv_obj_set_style_border_width(row, 2, 0);
                 label(row, LV_SYMBOL_OK, 174, 8, 16, &lv_font_montserrat_14, mint);
@@ -463,17 +463,18 @@ void View::draw_wide_dialog(lv_obj_t* root) {
             auto* caption = lv_obj_get_child(row, 0);
             lv_label_set_long_mode(caption, LV_LABEL_LONG_DOT);
             lv_obj_set_height(caption, 44); lv_obj_center(caption);
-            button(list, LV_SYMBOL_TRASH, x + 200, y, 49, 74, Action::request_remove, item.id);
+            button(list, LV_SYMBOL_TRASH, x + 200, y, 49, 74, Action::request_remove, equipment_key(item));
         }
         auto* add = right_action(box, LV_SYMBOL_PLUS " Add", Action::registration, RightActionSlot::bottom, true);
         lv_obj_set_style_border_color(add, color(mint), 0);
+        if (controller_.equipment_count() >= config::max_equipment) lv_obj_add_state(add, LV_STATE_DISABLED);
         right_action(box, LV_SYMBOL_LEFT " Back", Action::close, RightActionSlot::top);
         return;
     } else if (dialog_ == Dialog::remove_equipment) {
         label(box, "Remove equipment?", 12, 12, 505, &lv_font_montserrat_22);
         for (std::size_t i = 0; i < controller_.equipment_count(); ++i)
-            if (controller_.equipment()[i].id == remove_equipment_id_)
-                label(box, controller_.equipment()[i].name.c_str(), 12, 60, 380, &lv_font_montserrat_22, mint);
+            if (equipment_key(controller_.equipment()[i]) == remove_equipment_key_)
+                label(box, equipment_label(controller_.equipment()[i]).c_str(), 12, 60, 380, &lv_font_montserrat_22, mint);
         label(box, "Saved brews stay unchanged.", 12, 112, 380, &lv_font_montserrat_14, muted);
 
         right_action(box, LV_SYMBOL_LEFT " Back", Action::cancel_remove, RightActionSlot::top);
@@ -506,6 +507,11 @@ void View::draw_wide_registration(lv_obj_t* box) {
                                  registration_step_ == 2 ? Action::register_save : Action::register_next,
                                  RightActionSlot::bottom, true);
     if (registration_step_ == 2) {
+        if (registration_icon_ >= equipment_icon_count || controller_.has_equipment(registration_kind_, registration_icon_)) {
+            registration_icon_ = 0;
+            while (registration_icon_ < equipment_icon_count && controller_.has_equipment(registration_kind_, registration_icon_))
+                ++registration_icon_;
+        }
         icon_name_ = label(box, kind_name(registration_kind_), 8, 10, 509, &lv_font_montserrat_18, muted);
         if (!registration_error_.empty()) set_text(icon_name_, registration_error_.c_str());
         for (unsigned i = 0; i < std::size(equipment_icons); ++i) {
@@ -516,8 +522,11 @@ void View::draw_wide_registration(lv_obj_t* box) {
             lv_obj_set_style_border_color(item, color(i == registration_icon_ ? mint : border), 0);
             lv_obj_set_style_border_width(item, i == registration_icon_ ? 2 : 1, 0);
             lv_obj_clear_flag(item, LV_OBJ_FLAG_PRESS_LOCK);
+            if (controller_.has_equipment(registration_kind_, i)) lv_obj_add_state(item, LV_STATE_DISABLED);
             icon_buttons_[i] = item;
         }
+        if (registration_icon_ >= equipment_icon_count || controller_.equipment_count() >= config::max_equipment)
+            lv_obj_add_state(primary, LV_STATE_DISABLED);
         return;
     }
     registration_next_ = primary;
@@ -538,7 +547,7 @@ void View::draw_wide_registration(lv_obj_t* box) {
     } else {
         auto* card = lv_obj_create(box); style(card);
         lv_obj_set_pos(card, 8, 8); lv_obj_set_size(card, 509, 156);
-        const int icon = registration_kind_ == Kind::cup ? 1 : registration_kind_ == Kind::portafilter ? 4 : 3;
+        const int icon = registration_kind_ == Kind::other ? 1 : registration_kind_ == Kind::portafilter ? 4 : 3;
         auto* glyph = label(card, equipment_icons[icon], 0, 30, 180, &equipment_icons_32, mint);
         lv_obj_set_style_text_align(glyph, LV_TEXT_ALIGN_CENTER, 0);
         auto* name = label(card, kind_name(registration_kind_), 0, 91, 180, &lv_font_montserrat_18);
@@ -648,6 +657,8 @@ void View::draw_brew(lv_obj_t* root, bool result) {
     }
 }
 void View::refresh_values() {
+    if (equipment_storage_status_) set_text(equipment_storage_status_, controller_.equipment_storage_error() ?
+        "Not saved - storage error" : controller_.live() && controller_.equipment_dirty() ? "Saving..." : "Equipment");
     refresh_history();
     if (battery_label_) {
         const char* icon = !battery_.percent ? LV_SYMBOL_BATTERY_EMPTY :
@@ -783,7 +794,7 @@ void View::refresh_values() {
         const auto& item = s.active_object;
         if (object_icon_) set_text(object_icon_, item ? equipment_glyph(*item) : equipment_icons[1]);
         if (object_text_) {
-            set_text(object_text_, wide() ? (item ? kind_name(item->kind) : "Container") : item ? item->name.c_str() : controller_.live() && !controller_.equipment_count() ? "Register object" : controller_.object_ambiguous() ? "Choose object" : "Container");
+            set_text(object_text_, wide() ? (item ? kind_name(item->kind) : "Container") : item ? kind_name(item->kind) : controller_.live() && !controller_.equipment_count() ? "Register object" : controller_.object_ambiguous() ? "Choose object" : "Container");
             set_text(object_weight_, wide() && !item ? "Select" : number(item ? item->empty_g : std::nullopt, " g").c_str());
         }
         const auto candidate = controller_.coffee_candidate();
@@ -839,15 +850,16 @@ void View::refresh_values() {
             stage = LV_SYMBOL_PLAY " Pour to start";
         }
         if (target_text_) set_text(target_text_, s.target_g ? (std::string(wide() ? "Target\n" : "Target ") + number(s.target_g, " g")).c_str() : "");
+        if (controller_.equipment_storage_error()) stage = "Equipment not saved";
         if (stage_text_) {
-            if (wide()) { const auto pos = stage.find(' '); if (pos != std::string::npos) stage = stage.substr(pos + 1); }
+            if (wide() && !controller_.equipment_storage_error()) { const auto pos = stage.find(' '); if (pos != std::string::npos) stage = stage.substr(pos + 1); }
             set_text(stage_text_, stage.c_str());
         }
         return;
     }
     if (s.phase != Phase::brewing && s.phase != Phase::result) return;
     if (object_text_) set_text(object_text_,
-        s.vessel ? s.vessel->name.c_str() : "Object ?");
+        s.vessel ? equipment_label(*s.vessel).c_str() : "Object ?");
     char clock[32];
     const auto secs = static_cast<unsigned>(s.seconds);
     std::snprintf(clock, sizeof(clock), "%02u:%02u", secs / 60, secs % 60);
@@ -963,6 +975,7 @@ void View::draw_dialog(lv_obj_t* root) {
         button(box, "100 g", 204, 178, 84, 42, Action::calibrate, 100);
         calibration_message_ = label(box, "", 16, 232, 272, &lv_font_montserrat_14, mint);
     } else if (dialog_ == Dialog::objects) {
+        equipment_storage_status_ = label(box, "Equipment", 16, 18, 224, &lv_font_montserrat_14, muted);
         auto* list = lv_obj_create(box);
         style(list);
         lv_obj_set_pos(list, 12, 52);
@@ -971,21 +984,22 @@ void View::draw_dialog(lv_obj_t* root) {
         if (!controller_.equipment_count()) label(list, "No equipment yet", 14, 64, 250,
                                                    &lv_font_montserrat_18, muted);
         for (std::size_t i = 0; i < controller_.equipment_count(); ++i) {
-            const auto& item = controller_.equipment()[i];
-            auto* row = button(list, item.name.c_str(), 0, static_cast<int>(i) * 52, 214, 46,
+            const auto item = controller_.equipment()[i];
+            auto* row = button(list, equipment_label(item).c_str(), 0, static_cast<int>(i) * 52, 214, 46,
                               Action::choose_object, static_cast<int>(i));
             lv_label_set_long_mode(lv_obj_get_child(row, 0), LV_LABEL_LONG_DOT);
             lv_obj_set_height(lv_obj_get_child(row, 0), 24);
             lv_obj_center(lv_obj_get_child(row, 0));
             button(list, LV_SYMBOL_TRASH, 224, static_cast<int>(i) * 52, 46, 46,
-                   Action::request_remove, static_cast<int>(item.id));
+                   Action::request_remove, static_cast<int>(equipment_key(item)));
         }
-        button(box, "+ Register equipment", 12, 246, 280, 46, Action::registration, 0, true);
+        auto* add = button(box, "+ Register equipment", 12, 246, 280, 46, Action::registration, 0, true);
+        if (controller_.equipment_count() >= config::max_equipment) lv_obj_add_state(add, LV_STATE_DISABLED);
     } else if (dialog_ == Dialog::remove_equipment) {
         label(box, "Remove equipment?", 16, 60, 272, &lv_font_montserrat_22);
         for (std::size_t i = 0; i < controller_.equipment_count(); ++i)
-            if (controller_.equipment()[i].id == remove_equipment_id_)
-                label(box, controller_.equipment()[i].name.c_str(), 16, 108, 272, &lv_font_montserrat_22, mint);
+            if (equipment_key(controller_.equipment()[i]) == remove_equipment_key_)
+                label(box, equipment_label(controller_.equipment()[i]).c_str(), 16, 108, 272, &lv_font_montserrat_22, mint);
         label(box, "Saved brews stay unchanged.", 16, 174, 272, &lv_font_montserrat_14, muted);
 
         button(box, "Remove", 160, 238, 128, 50, Action::confirm_remove, 0, true);
@@ -1131,7 +1145,12 @@ void View::draw_history_plot(lv_event_t* event) {
 }
 void View::draw_registration(lv_obj_t* box) {
     if (registration_step_ == 2) {
-        const auto name = std::string(kind_name(registration_kind_)) + " " + equipment_icons[registration_icon_];
+        if (registration_icon_ >= equipment_icon_count || controller_.has_equipment(registration_kind_, registration_icon_)) {
+            registration_icon_ = 0;
+            while (registration_icon_ < equipment_icon_count && controller_.has_equipment(registration_kind_, registration_icon_))
+                ++registration_icon_;
+        }
+        const auto name = std::string(kind_name(registration_kind_)) + " " + (registration_icon_ < equipment_icon_count ? equipment_icons[registration_icon_] : "");
         icon_name_ = label(box, name.c_str(), 16, 16, 370, &lv_font_montserrat_22, mint);
         for (unsigned i = 0; i < std::size(equipment_icons); ++i) {
             auto* item = button(box, equipment_icons[i], 16 + (i % 5) * 84, 58 + (i / 5) * 46,
@@ -1141,12 +1160,18 @@ void View::draw_registration(lv_obj_t* box) {
             lv_obj_center(caption);
             lv_obj_set_style_border_color(item, color(i == registration_icon_ ? mint : border), 0);
             lv_obj_set_style_border_width(item, i == registration_icon_ ? 2 : 1, 0);
+            if (controller_.has_equipment(registration_kind_, i)) {
+                lv_obj_add_state(item, LV_STATE_DISABLED);
+                lv_obj_set_style_opa(item, LV_OPA_30, LV_STATE_DISABLED);
+            }
             icon_buttons_[i] = item;
         }
         button(box, "Back", 16, 254, 90, 40, Action::register_back);
         label(box, registration_error_.empty() ? "Icon 3/3" : registration_error_.c_str(),
               116, 266, 168, &lv_font_montserrat_14, registration_error_.empty() ? muted : amber);
-        button(box, "Save", 290, 254, 144, 40, Action::register_save, 0, true);
+        auto* save = button(box, "Save", 290, 254, 144, 40, Action::register_save, 0, true);
+        if (registration_icon_ >= equipment_icon_count || controller_.equipment_count() >= config::max_equipment)
+            lv_obj_add_state(save, LV_STATE_DISABLED);
         return;
     }
     const auto title = "Register equipment  " + std::to_string(registration_step_ + 1) + "/3";
@@ -1154,7 +1179,7 @@ void View::draw_registration(lv_obj_t* box) {
     if (registration_step_ == 0) {
         label(box, "Choose equipment type", 18, 64, 390, &lv_font_montserrat_22);
         kind_input_ = lv_dropdown_create(box);
-        lv_dropdown_set_options(kind_input_, "Container\nPortafilter\nPour-over set");
+        lv_dropdown_set_options(kind_input_, "Other\nPortafilter\nPour-over set");
         lv_dropdown_set_selected(kind_input_, static_cast<unsigned>(registration_kind_));
         lv_obj_set_pos(kind_input_, 18, 110); lv_obj_set_size(kind_input_, 414, 50);
     } else {
@@ -1213,12 +1238,12 @@ void View::action(Action a, int value) {
     }
     case Action::request_remove:
         if (pending_draw_ || dialog_ != Dialog::objects || controller_.session().phase != Phase::ready) return;
-        remove_equipment_id_ = static_cast<std::uint32_t>(value);
+        remove_equipment_key_ = static_cast<std::uint32_t>(value);
         dialog_ = Dialog::remove_equipment;
         break;
     case Action::confirm_remove:
         if (pending_draw_ || dialog_ != Dialog::remove_equipment || controller_.session().phase != Phase::ready) return;
-        controller_.remove_equipment(remove_equipment_id_);
+        controller_.remove_equipment(remove_equipment_key_);
         dialog_ = Dialog::objects;
         break;
     case Action::cancel_remove: dialog_ = Dialog::objects; break;
@@ -1263,30 +1288,30 @@ void View::action(Action a, int value) {
         if (registration_step_ > 0) --registration_step_; else dialog_ = Dialog::objects;
         break;
     case Action::choose_icon: {
-        if (registration_step_ != 2 || value < 0 || value >= 20) return;
+        if (dialog_ != Dialog::registration || registration_step_ != 2 || value < 0 || value >= 20 ||
+            controller_.has_equipment(registration_kind_, static_cast<unsigned>(value))) return;
         const auto previous = registration_icon_;
         registration_icon_ = static_cast<unsigned>(value);
         for (const auto index : {previous, registration_icon_}) {
+            if (index >= icon_buttons_.size()) continue;
             lv_obj_set_style_border_color(icon_buttons_[index], color(index == registration_icon_ ? mint : border), 0);
             lv_obj_set_style_border_width(icon_buttons_[index], index == registration_icon_ ? 2 : 1, 0);
         }
-        const auto name = std::string(kind_name(registration_kind_)) + " " + equipment_icons[registration_icon_];
+        const auto name = std::string(kind_name(registration_kind_)) + " " + (registration_icon_ < equipment_icon_count ? equipment_icons[registration_icon_] : "");
         set_text(icon_name_, wide() ? kind_name(registration_kind_) : name.c_str());
         return;
     }
     case Action::register_save: {
         if (registration_step_ != 2 || dialog_ != Dialog::registration) return;
-        const auto registration_name = std::string(kind_name(registration_kind_)) + " " + equipment_icons[registration_icon_];
-        const char* config = registration_kind_ == Kind::cup ? "Container only" : registration_kind_ == Kind::portafilter ?
-            "Clean, with basket" : "Dripper + server + filter";
-        if (controller_.register_equipment({0, registration_kind_, registration_name, config, controller_.live() ? registration_weight_ : 156.8F, std::nullopt}, registration_stable_))
-        {
+        if (controller_.register_equipment({registration_icon_, registration_kind_, controller_.live() ? registration_weight_ : 156.8F, std::nullopt}, registration_stable_)) {
             if (wide()) {
-                controller_.select_equipment(controller_.equipment_count() - 1);
+                const auto items = controller_.equipment();
+                for (std::size_t i = 0; i < items.size(); ++i)
+                    if (items[i].kind == registration_kind_ && items[i].id == registration_icon_)
+                        controller_.select_equipment(i);
                 dialog_ = Dialog::none;
             } else dialog_ = Dialog::objects;
-        }
-        else registration_error_ = "Equipment list full";
+        } else registration_error_ = "Unavailable or list full";
         break;
     }
     }
@@ -1294,4 +1319,3 @@ void View::action(Action a, int value) {
     schedule_draw();
 }
 }
-

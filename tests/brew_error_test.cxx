@@ -10,7 +10,7 @@ int main() {
         for (const float polarity : {1.0F, -1.0F}) {
             Controller c(true);
             assert(c.scale().restore({0, polarity * 1000}));
-            assert(c.register_equipment({0, Kind::cup, "Cup", "", 100.0F, {}}, true));
+            assert(c.register_equipment({0, Kind::other, 100.0F, {}}, true));
             std::uint64_t now = 0;
             auto feed = [&](float grams, unsigned duration) {
                 for (unsigned ms = 0; ms < duration; ms += interval) {
@@ -38,7 +38,7 @@ int main() {
     for (const float polarity : {1.0F, -1.0F}) {
         Controller c(true);
         assert(c.scale().restore({0, polarity * 1000}));
-        assert(c.register_equipment({0, Kind::cup, "Cup", "", 100.0F, {}}, true));
+        assert(c.register_equipment({0, Kind::other, 100.0F, {}}, true));
         std::uint64_t now = 0;
         auto sample = [&](float grams, unsigned n = 60, bool tick = true) {
             for (unsigned i = 0; i < n; ++i) {
@@ -101,4 +101,3 @@ int main() {
     assert(!unknown.start_brew() && !unknown.session().brew_prepared);
     std::cout << "Brew removal threshold and 180-second return checks passed\n";
 }
-
