@@ -31,8 +31,18 @@ struct StabilityStats {
 };
 class Scale {
 public:
+    // Optional diagnostic observer. Runs on the controller thread; must not block.
+    using Observer = void (*)(void*, const Scale&, const char*);
+    void observe(Observer observer, void* context) { observer_ = observer; observer_context_ = context; }
+    const char* stability_reason() const { return stability_reason_; }
+    float tare_g() const { return tare_g_; }
+    double operational_noise_counts() const { return operational_noise_; }
+    double half_shift_counts() const { return half_shift_; }
+    double anchor_delta_counts() const { return anchor_delta_; }
+    bool drift_guard_active() const { return drift_guard_; }
     void ingest(std::int32_t raw, std::uint64_t now_ms);
     void invalidate();
+    void resume_measurement() { connected_ = false; clear_window(); notify("measurement_resumed"); }
     std::optional<std::int32_t> last_raw() const { return last_raw_; }
     std::uint64_t sample_ms() const { return last_ms_; }
     float flow() const { return flow_g_s_; }
@@ -46,8 +56,8 @@ public:
     void cancel_calibration() { captured_zero_.reset(); }
     bool calibrate(float known_grams);
     bool tare();
-    void clear_tare() { if (tare_g_ != 0) { tare_g_ = 0; ++display_epoch_; } }
-    void set_tare(float grams) { tare_g_ = grams; ++display_epoch_; }
+    void clear_tare() { if (tare_g_ != 0) { tare_g_ = 0; ++display_epoch_; notify("clear_tare"); } }
+    void set_tare(float grams) { tare_g_ = grams; ++display_epoch_; notify("set_tare"); }
     std::uint32_t display_epoch() const { return display_epoch_; }
     bool ready() const { return connected_ && filtered_.has_value() && calibration_.has_value() && !overload_; }
     StabilityStats stability_stats() const;
@@ -70,8 +80,14 @@ public:
     float net() const { return gross() - tare_g_; }
     const char* status() const;
     std::optional<Calibration> take_pending_save();
-    void saved(bool success) { save_failed_ = !success; }
+    void saved(bool success) { save_failed_ = !success; notify(success ? "calibration_saved" : "calibration_save_failed"); }
 private:
+    void notify(const char* event) const { if (observer_) observer_(observer_context_, *this, event); }
+    Observer observer_{};
+    void* observer_context_{};
+    const char* stability_reason_{"warming_up"};
+    double operational_noise_{}, half_shift_{}, anchor_delta_{};
+    bool drift_guard_{};
     float mean() const;
     void clear_window();
     void update_stability(double recent, std::uint64_t now);

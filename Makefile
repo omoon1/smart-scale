@@ -22,7 +22,7 @@ $(PORT_ARGS):
 	@:
 endif
 help:
-	@printf '%s\n' 'make install         Install pinned ESP-IDF and tools into .tools/' 'make build           Build ESP32-S3 firmware' 'make probe           Discover serial ports (Linux/macOS)' 'make flash /dev/ttyACM0  Flash, then monitor (Ctrl+] exits)' 'make monitor /dev/ttyACM0  Open serial monitor only' 'make flash PORT=...  Alternative port syntax; flash and monitor' 'make menuconfig      Configure firmware' 'make idf ARGS="..."   Run local idf.py with arbitrary arguments' 'make test            Run native C++ state tests' 'make preview         Render actual LVGL screens into build-host/screens/' 'make simulator       Run the same UI in an SDL2 desktop window'
+	@printf '%s\n' 'make install         Install pinned ESP-IDF and tools into .tools/' 'make build           Build ESP32-S3 firmware' 'make probe           Discover serial ports (Linux/macOS)' 'make flash /dev/ttyACM0  Flash, then monitor (Ctrl+] exits)' 'make monitor /dev/ttyACM0  Open serial monitor only' 'make flash PORT=...  Alternative port syntax; flash and monitor' 'make menuconfig      Configure firmware' 'make idf ARGS="..."   Run local idf.py with arbitrary arguments' 'make test            Run native C++ state tests' 'make preview         Render actual LVGL screens into build-host/screens/' 'make simulator       Run the same UI in an SDL2 desktop window' 'make preview-wide    Test and render the 640x172 UI' 'make simulator-wide  Open the 640x172 UI in SDL2'
 install setup:
 	@./scripts/install-idf.sh
 build menuconfig size clean fullclean:
@@ -46,6 +46,26 @@ test:
 	@mkdir -p build-host
 	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main main/session.cxx main/scale.cxx tests/equipment_test.cxx -o build-host/equipment_tests
 	@./build-host/equipment_tests
+	$(CXX) -std=c++20 -Wall -Wextra -Werror -I main tests/lcd_sleep_config_test.cxx -o build-host/lcd_config_default
+	@./build-host/lcd_config_default
+	$(CXX) -std=c++20 -Wall -Wextra -Werror -I main -DCONFIG_SMART_SCALE_LCD_SLEEP=1 tests/lcd_sleep_config_test.cxx -o build-host/lcd_config_existing
+	@./build-host/lcd_config_existing
+	$(CXX) -std=c++20 -Wall -Wextra -Werror -I main -DCONFIG_SMART_SCALE_LCD_SLEEP=1 -DCONFIG_SMART_SCALE_LCD_SLEEP_TOUCH_VERIFIED=1 -DEXPECT_LCD_SLEEP=1 tests/lcd_sleep_config_test.cxx -o build-host/lcd_config_verified
+	@./build-host/lcd_config_verified
+	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main tests/touch_sleep_check_test.cxx -o build-host/touch_sleep_check_tests
+	@./build-host/touch_sleep_check_tests
+	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main tests/peripheral_sleep_test.cxx -o build-host/peripheral_sleep_tests
+	@./build-host/peripheral_sleep_tests
+	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main tests/lcd_sleep_test.cxx -o build-host/lcd_sleep_tests
+	@./build-host/lcd_sleep_tests
+	@mkdir -p build-host
+	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main main/session.cxx main/scale.cxx tests/brew_guide_test.cxx -o build-host/brew_guide_tests
+	@./build-host/brew_guide_tests
+	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -DESP_PLATFORM -I tests/fakes -I main main/theme.cxx tests/theme_storage_test.cxx -o build-host/theme_storage_tests
+	@./build-host/theme_storage_tests
+	@mkdir -p build-host
+	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main tests/board349_test.cxx -o build-host/board349_tests
+	@./build-host/board349_tests
 	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main main/session.cxx main/scale.cxx tests/session_test.cxx -o build-host/session_tests
 	@./build-host/session_tests
 	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main main/session.cxx main/scale.cxx tests/scale_test.cxx -o build-host/scale_tests
@@ -62,8 +82,32 @@ test:
 	@./build-host/brew_error_tests
 	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main main/session.cxx main/scale.cxx tests/auto_brew_test.cxx -o build-host/auto_brew_tests
 	@./build-host/auto_brew_tests
+	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main main/session.cxx main/scale.cxx tests/coffee_registration_test.cxx -o build-host/coffee_registration_tests
+	@./build-host/coffee_registration_tests
+	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main main/scale.cxx tests/diagnostics_test.cxx -o build-host/diagnostics_tests
+	@./build-host/diagnostics_tests
+	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main tests/power_test.cxx -o build-host/power_tests
+	@./build-host/power_tests
+	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main tests/expander_wake_test.cxx -o build-host/expander_wake_tests
+	@./build-host/expander_wake_tests
+	$(CXX) -std=c++20 -Wall -Wextra -Werror -pedantic -g -I main tests/battery_history_test.cxx -o build-host/battery_history_tests
+	@./build-host/battery_history_tests
 preview:
+	@./scripts/host.sh --rail-compact
 	@./scripts/host.sh --screenshots
 	@./scripts/host.sh --live-screenshots
+	@./scripts/host.sh --coffee-screenshots
 simulator:
 	@./scripts/host.sh --interactive
+
+.PHONY: preview-wide simulator-wide
+preview-wide:
+	@./scripts/host.sh --rail-wide
+	@./scripts/host.sh --wide-screenshots
+	@./scripts/host.sh --wide-live-screenshots
+simulator-wide:
+	@./scripts/host.sh --wide-interactive
+
+.PHONY: preview-themes
+preview-themes:
+	@./scripts/host.sh --theme-screenshots

@@ -1,5 +1,20 @@
 # Validation and remaining hardware checks
 
+## Current target: 3.49-inch V2 / Rev1.1
+
+The firmware now uses the AXS15231B BSP, 640×172 logical display, separate expander/touch I²C buses and HX711 on IO44/43. Older sections below describe previous 480×320/ST7796 milestones and remain historical.
+
+Validated for this port:
+- ESP-IDF 5.5.2 firmware build completed, including bootloader, partition table and application. Application sources compiled without warnings. The transitive `esp_lvgl_port` generic touch adapter emits a deprecation warning with touch-base 1.2.1; the Rev1.1 BSP uses its own input callback.
+- `make test` passed, including an exhaustive frame-rotation/strip-seam check and touch corner, multi-touch, malformed-packet and out-of-range tests.
+- `make preview-wide` and `make preview` passed: wide and legacy UI workflows remain intact.
+- `git diff --check` passed.
+
+The development container required a local component-manager process-ID fallback because its `/proc` process lookup failed. That environment-only workaround is not part of the firmware or repository changes.
+
+Physical display timing, cold-boot backlight, touch orientation and HX711 sampling while the display refreshes remain to be checked on Rev1.1 hardware. See [bring-up procedure](hardware.md).
+
+
 ## Completed checks
 
 - `make install`: installed and reran the ESP-IDF v5.5.2 bootstrap using the repository-local `.tools/` paths. CMake 3.30.5 and Ninja 1.11.1.3 are installed in a local bootstrap venv.
@@ -65,7 +80,7 @@ Host tests cover repeated fine adjustment, no extra increment on release, stoppi
 
 ## Bounded diagnostics and stability confirmation
 
-Weight-change logging is capped at one line/second, plus one `hx711_diag` summary per five seconds. Summaries report stability failure bits and measured limits, calibration, sample cadence/age, batching, overflow, and fault counts. Stability entry now requires 500 ms of continuous passing checks; exit on failure remains immediate, with no relaxation of the measurement thresholds. Native tests cover pending confirmation, entry, immediate exit, drift flags, and invalidation. Firmware and LVGL checks pass; hardware diagnosis awaits logs captured under a fixed load.
+Historical scale diagnostic mode: weight-change logging was capped at one line/second, plus one `hx711_diag` summary per five seconds. Current 3.49 V2 firmware disables `hx711_diag` and `scale_trace`; see [current power/touch logging](power-management.md#diagnostic-logs). Summaries report stability failure bits and measured limits, calibration, sample cadence/age, batching, overflow, and fault counts. Stability entry now requires 500 ms of continuous passing checks; exit on failure remains immediate, with no relaxation of the measurement thresholds. Native tests cover pending confirmation, entry, immediate exit, drift flags, and invalidation. Firmware and LVGL checks pass; hardware diagnosis awaits logs captured under a fixed load.
 
 
 ## Drift-window correction from device diagnostics
@@ -104,3 +119,47 @@ On-device acceptance:
 `make test` (nine suites), `make preview` (normal and live UI), and `make build` (ESP-IDF v5.5.2, ESP32-S3) passed. The local SDK component manager needed its Linux parent-PID fallback because this container exposes a different PID namespace through procfs; no project dependency version or lock-file change is included.
 
 Device acceptance: register multiple kinds sharing an icon, reboot and verify weights/icons/kinds and disabled choices; delete one pair and verify the other survives reboot; delete the final pair and reboot to an empty list; verify calibration survives every operation. Interrupt power during save, check recovery/logging, and test full/unreadable NVS without erasing calibration. A mutation is only durable after `nvs_commit` succeeds; power removal before the next main-loop save can lose the latest change. Native tests do not exercise physical flash or electrical power loss.
+## Main integration: battery, idle and touch wake
+
+The wide branch includes main commit `7578c45` and retains the 3.49 V2 BSP.
+Run `make test`, `make preview-wide`, and `make preview`. Wide interaction tests
+cover opening battery history while brewing, 6h/1d/3d range controls and close.
+Voltage tests reject implausible ADC input and ensure estimated SOC never claims
+charging/full/external power. Configuration compilation checks accept all 30
+ordered distinct pairs from 38/39/40/41/43/44 and reject duplicates or GPIO42.
+
+Review the hardware checklist in [power-management.md](power-management.md)
+before enabling `CONFIG_SMART_SCALE_TOUCH_WAKE_VERIFIED`. Firmware compilation
+must cover both its default-disabled and enabled paths. Physically measure
+backlight polarity, wake behavior, battery voltage and power draw on Rev1.1.
+
+Integration validation completed with ESP-IDF 5.5.2: full bootloader, partition
+and application builds pass with defaults (DOUT44/SCK43, light sleep disabled)
+and with light sleep enabled plus DOUT40/SCK41. The generic managed LVGL touch
+adapter emits its existing deprecated API warning; application sources have no
+compiler warnings. The container needed a local-only Python environment repair
+and component-manager PID fallback; neither workaround is part of the repository.
+Physical validation is still pending.
+
+### Main dd72309 re-integration
+
+Native tests and wide UI interactions pass after integrating PR #15. Added
+3.49 EXIO0 tests cover held touch, touch arriving during acknowledgement,
+non-touch shared IRQs, ambiguous pulses and read errors without assuming a PMU
+on EXIO5. Firmware builds pass with ESP-IDF 5.5.2 for default wake-disabled
+DOUT44/SCK43 and wake-enabled DOUT40/SCK41. CI now uses those two 3.49 modes
+instead of the upstream 3.5/custom-direct mappings. Physical wake tests remain
+pending; the new common policy permits sleep at 60 seconds total idle.
+
+## Equipment persistence integration with current main
+
+Merged main `67254ac` into the equipment NVS branch. Both display layouts retain
+main's Back/Finish and registration behavior while using composite kind/icon
+identity. Wide UI checks cover disabled duplicates, injected duplicate events,
+selection after save, and composite-key deletion. Pending equipment writes block
+CPU sleep until saved; NVS writes remain outside the LVGL lock.
+
+All native suites (`make test`) and all eight host preview modes pass. The host
+was built directly with GCC/G++ and the pinned LVGL sources because CMake is not
+available in this environment. This integration has not been firmware-built or
+verified on hardware; the earlier branch's firmware result does not cover it.

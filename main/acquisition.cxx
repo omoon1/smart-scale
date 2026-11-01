@@ -15,21 +15,44 @@ esp_err_t Acquisition::start() {
     }
     return ESP_OK;
 }
+bool Acquisition::suspend() {
+    suspend_requested_.store(true);
+    const auto deadline = esp_timer_get_time() + 500000;
+    while (!suspended_.load()) {
+        if (esp_timer_get_time() >= deadline) { suspend_requested_.store(false); return false; }
+        vTaskDelay(1);
+    }
+    xQueueReset(queue_);
+    return true;
+}
+void Acquisition::resume() { suspend_requested_.store(false); }
 void Acquisition::run(void* context) {
     auto& self = *static_cast<Acquisition*>(context);
-    std::uint64_t last = 0;
+    std::uint64_t last = 0, seq = 0;
     while (true) {
+        if (self.suspend_requested_.load()) {
+            self.sensor_.power_down();
+            self.suspended_.store(true);
+            while (self.suspend_requested_.load()) vTaskDelay(1);
+            self.sensor_.power_up();
+            last = 0;
+            self.suspended_.store(false);
+        }
         if (const auto raw = self.sensor_.read()) {
             const auto now = static_cast<std::uint64_t>(esp_timer_get_time() / 1000);
-            Reading reading{*raw, now, last != 0 && now - last > config::sensor_timeout_ms};
+            Reading reading{*raw, now, last != 0 && now - last > config::sensor_timeout_ms, ++seq};
             last = now;
             if (xQueueSend(self.queue_, &reading, 0) != pdTRUE) {
                 // A stalled consumer must not silently lose history or replay stale data.
                 self.overflows_.fetch_add(1, std::memory_order_relaxed);
+                self.dropped_.fetch_add(uxQueueMessagesWaiting(self.queue_), std::memory_order_relaxed);
                 xQueueReset(self.queue_);
                 reading.gap = true;
-                xQueueSend(self.queue_, &reading, 0);
+                if (xQueueSend(self.queue_, &reading, 0) != pdTRUE)
+                    self.dropped_.fetch_add(1, std::memory_order_relaxed);
             }
+            const auto depth = static_cast<unsigned>(uxQueueMessagesWaiting(self.queue_));
+            if (depth > self.high_water_.load(std::memory_order_relaxed)) self.high_water_.store(depth, std::memory_order_relaxed);
         }
         // Readiness is checked every RTOS tick (1 ms in this project). No busy wait;
         // the controller's timestamp timeout handles unplugged or stuck sensors.

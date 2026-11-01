@@ -1,10 +1,31 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include "board349.hxx"
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
 
 namespace smart_scale::config {
-inline constexpr int screen_width = 480;
-inline constexpr int screen_height = 320;
+#if defined(CONFIG_SMART_SCALE_LCD_SLEEP)
+inline constexpr bool lcd_sleep_requested = true;
+#else
+inline constexpr bool lcd_sleep_requested = false;
+#endif
+#if defined(CONFIG_SMART_SCALE_LCD_SLEEP_TOUCH_VERIFIED)
+inline constexpr bool lcd_sleep_touch_verified = true;
+#else
+inline constexpr bool lcd_sleep_touch_verified = false;
+#endif
+inline constexpr bool lcd_sleep_enabled = lcd_sleep_requested && lcd_sleep_touch_verified;
+#if defined(CONFIG_SMART_SCALE_PERIPHERAL_SLEEP)
+inline constexpr bool peripheral_sleep_enabled = true;
+#else
+inline constexpr bool peripheral_sleep_enabled = false;
+#endif
+
+inline constexpr int screen_width = board349::width;
+inline constexpr int screen_height = board349::height;
 inline constexpr std::uint32_t ui_period_ms = 100;
 inline constexpr std::size_t max_samples = 601;
 inline constexpr std::size_t max_equipment = 8;
@@ -44,11 +65,40 @@ inline constexpr float stable_hard_shift_g = 0.75F;
 inline constexpr std::uint64_t auto_flow_bucket_ms = 200, auto_flow_confirm_ms = 1000;
 inline constexpr float auto_flow_gain_g = 0.60F, auto_flow_step_g = 0.025F;
 inline constexpr float auto_flow_backstep_g = 0.20F, auto_flow_jump_g = 3.0F;
+// Slow/intermittent flow needs a longer window; do not lower the fast gate.
+inline constexpr std::uint64_t auto_flow_slow_min_ms = 3000, auto_flow_history_ms = 6000;
+inline constexpr float auto_flow_slow_gain_g = 0.40F, auto_flow_slow_rate_g_s = 0.08F;
+inline constexpr float auto_flow_slow_step_g = 0.008F;
+// Large positive steps need subsequent sustained rises, not immediate disarming.
+inline constexpr float auto_flow_max_bucket_gain_g = 12.0F;
 inline constexpr float display_hysteresis_g = 0.15F;
 inline constexpr float display_zero_deadband_g = 0.15F;
-inline constexpr int lcd_mosi = 1, lcd_clock = 5, lcd_dc = 3, lcd_backlight = 6;
-inline constexpr int i2c_sda = 8, i2c_scl = 7;
-// Camera must remain disconnected: GPIO17/18 share its VSYNC/HREF.
-inline constexpr int hx711_dout = 17, hx711_sck = 18;
+// Header GPIO44/43 replace the old GPIO17/18 pair, now used by touch I2C.
+#ifdef ESP_PLATFORM
+inline constexpr int hx711_dout = CONFIG_SMART_SCALE_HX711_DOUT;
+inline constexpr int hx711_sck = CONFIG_SMART_SCALE_HX711_SCK;
+#else
+inline constexpr int hx711_dout = board349::hx711_dout, hx711_sck = board349::hx711_sck;
+#endif
+constexpr bool hx711_header_pin(int pin) {
+    return pin == 38 || pin == 39 || pin == 40 || pin == 41 || pin == 43 || pin == 44;
+}
+static_assert(hx711_header_pin(hx711_dout) && hx711_header_pin(hx711_sck), "Use an exposed HX711 header GPIO");
+static_assert(hx711_dout != hx711_sck, "HX711 DOUT and SCK must differ");
+#if defined(ESP_PLATFORM) && defined(CONFIG_ESP_CONSOLE_UART_DEFAULT)
+static_assert(hx711_dout != 43 && hx711_dout != 44 && hx711_sck != 43 && hx711_sck != 44,
+              "HX711 GPIO43/44 conflicts with UART0; select USB Serial/JTAG console");
+#endif
+#if defined(ESP_PLATFORM) && defined(CONFIG_SMART_SCALE_WAKE_BUTTON)
+inline constexpr int wake_button = CONFIG_SMART_SCALE_WAKE_BUTTON_GPIO;
+#else
+inline constexpr int wake_button = -1;
+#endif
+constexpr bool wake_button_pin_valid(int pin, int dout, int sck) {
+    return pin == -1 || ((pin >= 38 && pin <= 41) && pin != dout && pin != sck);
+}
+static_assert(wake_button_pin_valid(wake_button, hx711_dout, hx711_sck),
+              "Wake button must use free header GPIO38-41, not an HX711 pin");
 inline constexpr int reset_button = 0; // BOOT, not the hardware EN/reset switch.
 }
+

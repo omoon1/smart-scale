@@ -1,0 +1,68 @@
+menu "Smart scale power"
+config SMART_SCALE_TOUCH_WAKE_VERIFIED
+    bool "Enable verified 3.49 V2 expander touch wake"
+    default n
+    help
+        Rev1.1: touch INT -> TCA9554 EXIO0 -> GPIO8. Enable after physical
+        validation. Screen-off touch wake works without enabling light sleep.
+        The shared interrupt can also wake for IMU/RTC changes.
+config SMART_SCALE_LCD_SLEEP
+    bool "Send AXS15231B LCD sleep commands during light sleep"
+    depends on SMART_SCALE_TOUCH_WAKE_VERIFIED
+    default n
+    help
+        Display Off/Sleep In before CPU sleep; Sleep Out/Display On on return.
+        Validate touch IRQ after Sleep In on Rev1.1 hardware. Disable this
+        option to retain backlight-only blanking if touch wake stops working.
+        Touch sleep, shared reset and system power-off are not used.
+config SMART_SCALE_LCD_SLEEP_TOUCH_VERIFIED
+    bool "Allow experimental LCD sleep after module touch-wake validation"
+    depends on SMART_SCALE_LCD_SLEEP
+    default n
+    help
+        Separate opt-in: existing LCD_SLEEP=y alone now uses backlight-only.
+        Enable only for module testing. A five-second timer restores the display
+        if touch does not wake the CPU first, then disables LCD sleep until reboot.
+        Timer wake is a recovery path, not proof of working touch wake.
+config SMART_SCALE_PERIPHERAL_SLEEP
+    bool "Quiesce Rev1.1 IMU and RTC during light sleep"
+    depends on SMART_SCALE_TOUCH_WAKE_VERIFIED
+    default y
+    help
+        Snapshot and power down QMI8658, mask its interrupt outputs, and mask
+        PCF85063 interrupts/CLKOUT while preserving timekeeping and flags.
+        Restore on wake or aborted sleep. Missing devices/readback errors
+        block sleep. Validate on Rev1.1; disable for LCD-only fallback.
+        Touch, expander and SYS_EN remain powered. No SD/audio rail cutoff.
+config SMART_SCALE_WAKE_BUTTON
+    bool "Additional wake-only button (active low)"
+    depends on SMART_SCALE_TOUCH_WAKE_VERIFIED
+    default n
+    help
+        Enable only after fitting a normally-open button from the selected
+        free header GPIO to GND. Uses an internal pull-up and light-sleep GPIO
+        wake. Does not reset/tare the scale. Release is required before sleep.
+config SMART_SCALE_WAKE_BUTTON_GPIO
+    int "Wake button GPIO (38-41)"
+    depends on SMART_SCALE_WAKE_BUTTON
+    range 38 41
+    default 38
+    help
+        Must not overlap HX711. Remove the SD card and do not use external
+        JTAG on these shared pins. Firmware rejects HX711 pin conflicts.
+endmenu
+menu "Smart scale HX711"
+config SMART_SCALE_HX711_DOUT
+    int "HX711 DOUT GPIO (38,39,40,41,43,44)"
+    range 38 44
+    default 44
+config SMART_SCALE_HX711_SCK
+    int "HX711 SCK GPIO (38,39,40,41,43,44)"
+    range 38 44
+    default 43
+    help
+        Select a different pin from DOUT. GPIO42 is reserved for backlight.
+        GPIO38-41 share SD; remove the SD card. GPIO39-41 also share JTAG.
+        GPIO43/44 must not be used by UART0. Use USB Serial/JTAG console.
+endmenu
+

@@ -1,5 +1,6 @@
 #pragma once
 #include "config.hxx"
+#include "brew_guide.hxx"
 #include "scale.hxx"
 #include "flow_start.hxx"
 #include <array>
@@ -36,6 +37,8 @@ struct Session {
     Mode mode{Mode::espresso};
     std::optional<Equipment> weighing_tool, vessel, active_object;
     std::optional<float> dose_g, target_g;
+    std::optional<BrewGuide> guide;
+    BrewGuide brew_guide() const { return guide.value_or(default_brew_guide(mode == Mode::pour_over)); }
     DoseSource dose_source{DoseSource::unknown};
     float net_g{}, seconds{}, flow_g_s{};
     bool loaded{}, baseline_known{}, uncertain{}, paused{};
@@ -61,13 +64,13 @@ public:
     Scale& scale() { return scale_; }
     const Scale& scale() const { return scale_; }
     void sensor_fault();
+    void resume_measurement();
     void sensor_sample(std::optional<std::int32_t> raw, std::uint64_t now_ms);
     bool tare();
     bool start_brew();
-    void set_auto_brew_enabled(bool enabled) {
-        if (auto_brew_enabled_ != enabled) flow_start_.reset();
-        auto_brew_enabled_ = enabled;
-    }
+    [[nodiscard]] std::optional<float> coffee_candidate() const;
+    bool save_coffee();
+    void set_auto_brew_enabled(bool enabled);
     double error_remaining_s() const {
         const double remaining = config::brew_error_return_s - brew_error_elapsed_s_;
         return remaining > 0 ? remaining : 0;
@@ -92,6 +95,7 @@ public:
     bool select_equipment(std::size_t index);
     bool set_dose(float grams, DoseSource source = DoseSource::manual);
     bool set_mode(Mode mode);
+    bool set_brew_guide(const BrewGuide& guide);
     bool register_equipment(Equipment equipment, bool stable);
     bool remove_equipment(EquipmentKey key);
     void remove_object();
@@ -113,18 +117,23 @@ private:
     void mark_brew_error(BrewError error);
     void begin_brew(float elapsed_s = 0);
     void update_brew_preparation();
+    void arm_flow_start();
     std::optional<EquipmentKey> tared_vessel_id_;
     std::optional<float> vessel_baseline_g_;
     std::optional<Calibration> vessel_calibration_;
     FlowStartDetector flow_start_;
     bool auto_brew_enabled_{true};
+    bool resuming_measurement_{};
     std::optional<std::uint64_t> auto_brew_origin_ms_;
     std::optional<std::uint32_t> auto_brew_epoch_;
     bool live_{};
     std::optional<std::uint64_t> empty_since_;
     std::optional<std::uint64_t> below_object_since_;
     double brew_error_elapsed_s_{};
-    bool recognition_checked_{}, object_ambiguous_{}, dose_tared_{};
+    bool recognition_checked_{}, object_ambiguous_{};
+    std::optional<float> coffee_baseline_g_;
+    std::optional<Calibration> coffee_calibration_;
+    bool brew_zero_pending_{};
     Scale scale_;
     Session session_{};
     EquipmentMap equipment_;

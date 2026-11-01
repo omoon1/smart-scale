@@ -1,8 +1,8 @@
 # Smart Scale
 
-ESP-IDF + modern C++ coffee-scale UX prototype for the **Waveshare ESP32-S3-Touch-LCD-3.5** (ST7796 display / FT6336 touch). LVGL renders a 480 × 320 landscape interface on the native 320 × 480 panel.
+ESP-IDF + modern C++ coffee-scale UX prototype for the **Waveshare ESP32-S3-Touch-LCD-3.49 V2 / Rev1.1** (AXS15231B QSPI display / I²C touch). LVGL renders a 640 × 172 landscape interface on the native 172 × 640 panel.
 
-**Device firmware now reads an HX711 load cell** on GPIO17 (DOUT) / GPIO18 (SCK), with live weight, tare, touchscreen two-point calibration, and calibration persistence in NVS. Calibrate your own cell before use; there is no hard-coded calibration factor. The desktop simulator retains deterministic dummy scenarios. Registered equipment profiles persist in NVS; the last eight brew records remain RAM-only. No network service or machine control is connected.
+**Device firmware now reads an HX711 load cell** on header IO44 (DOUT) / IO43 (SCK), with live weight, tare, touchscreen two-point calibration, and calibration persistence in NVS. Calibrate your own cell before use; there is no hard-coded calibration factor. The desktop simulator retains deterministic dummy scenarios. Registered equipment profiles persist in NVS; the last eight brew records remain RAM-only. No network service or machine control is connected.
 
 See [HX711 wiring, calibration, and operating instructions](docs/hx711.md). Camera use is incompatible with these GPIO assignments.
 
@@ -41,27 +41,27 @@ make flash /dev/ttyACM0
 | `make idf ARGS="-p /dev/ttyACM0 flash monitor"` | Pass arbitrary IDF arguments |
 | `make test` | Compile and run native state tests without ESP-IDF |
 | `make preview` | Build actual LVGL UI and render PPM screenshots; exercise touch flows |
-| `make simulator` | Run the same C++/LVGL UI in an SDL2 desktop window |
+| `make simulator` | Run the current 3.49-inch firmware UI (640×172) in an SDL2 desktop window |
 
 For the interactive desktop simulator, install SDL2 development files (`brew install sdl2` or `sudo apt install libsdl2-dev`). `make preview` requires CMake/Ninja, provided by `make install` or your package manager; it does not require SDL or a display server. Images are in `build-host/screens/`. `python scripts/screens.py` converts them to PNGs when Pillow is installed.
 
 ## Use the physical scale
 
 1. Connect the HX711 as described in [the wiring guide](docs/hx711.md), then build and flash.
-2. Tap **Calibrate**. With the platform empty and stable, **Capture empty zero**. Place a known **20 g, 50 g, or 100 g** mass, wait for stability, and tap its mass. Calibration is saved across reboots.
-3. Remove the mass. Registered objects are recognized within ±40 g when placed and stable; overlapping matches require manual selection. Recognition does not automatically tare. Place a container, wait for **Stable**, and tap **Tare** to weigh ingredients.
-4. Set the coffee dose if required. Tap **Start brew** with the vessel in place, before pouring. This captures a fresh baseline and starts the timer. Tap **Finish** to save a RAM record.
-5. Use **Reset** or **Next brew**, then remove the load. A disconnected sensor displays `?`; a failed measurement during brewing invalidates that brew.
+2. If calibration data is missing, the weight card shows **Tap to calibrate**. Tap the card. With the platform empty and stable, **Capture empty zero**. Place a known **20 g, 50 g, or 100 g** mass, wait for stability, and tap its mass. Calibration is saved across reboots.
+3. Remove the mass. Registered objects are recognized within ±40 g when placed and stable; overlapping matches require manual selection. Recognition does not automatically tare. Place a container, wait for **Stable**, and tap the weight card (**Tap to tare**) to weigh ingredients.
+4. Register the vessel and coffee dose, wait for **Pour to start**, then pour. Sustained flow automatically starts brewing and the timer; there is no Start brew button. Tap **Finish** to save a RAM record.
+5. Use the physical reset action or **Next brew**, then remove the load. A disconnected sensor displays `?`; a failed measurement during brewing invalidates that brew.
 
 ## Try the desktop demo screens
 
 1. Boot into the known-cup fixture: 142.6 g cup, automatic tare, measured 18.2 g dose.
 2. Touch the **entire object card** to choose equipment or register a new profile. Touch the dose card for the dose editor: 18/20/22 g presets, plus ±1 g and ±0.1 g buttons across 0.1–60.0 g. Hold an adjustment button to repeat after 400 ms, every 100 ms until release or slide-off. Dose changes save immediately; close returns to weighing.
 3. Tap the mode at the top to switch directly between Espresso and Pour-over. Mode and dose are locked during extraction in this prototype.
-4. Tap **Run demo** to inject simulated liquid. This is a development control; production brewing will be triggered by sensor events. The app switches to extraction when that event arrives, including unknown-object cases.
-5. Use **Scenarios** for known cup, unknown baseline, the portafilter → beans → removal → cup sequence, or V60 bloom/pours. The sequence starts after Run demo. A pour-over pause does not end the brew.
+4. In the wide simulator, press **Space** to inject simulated liquid (legacy screen: **Run demo**). This is a development control; production brewing will be triggered by sensor events. The app switches to extraction when that event arrives, including unknown-object cases.
+5. Press **S** for Scenarios in the wide simulator (legacy screen: **Scenarios**) for known cup, unknown baseline, the portafilter → beans → removal → cup sequence, or V60 bloom/pours. The sequence starts after Run demo. A pour-over pause does not end the brew.
 6. **Finish** opens results. Target arrival only alerts; simulated flow continues until Finish. **Next brew** starts an empty session after simulated load removal.
-7. On-screen **Reset**, the board's **BOOT/GPIO0** button, or desktop **R** clears session values and marks an active RAM record aborted. Registered profiles survive reboot after their NVS save completes. The board's hardware RESET/EN switch reboots the MCU and cannot execute this application action.
+7. The board's **BOOT/GPIO0** button or desktop **R** clears session values and marks an active RAM record aborted. Registered profiles survive reboot after their NVS save completes. The board's hardware RESET/EN switch reboots the MCU and cannot execute this application action.
 
 Registration has three steps: type (Other, Portafilter, or Pour-over set), simulated stable empty weight, and a 20-icon picker with distinct coffee, nature, sky, and personal symbols. Display labels are derived from the equipment type and selected icon; no name or configuration string is stored and no keyboard is shown. The unique identity is `(kind, icon_id)`; already registered icons are disabled for that kind, while the same icon is available for other kinds. Profiles are restored into an `unordered_map` before UI startup. Tap the stability badge to test the unstable state; Continue is disabled until stable. The list holds eight profiles, including fixtures. Tap a row’s trash button and confirm Remove to delete a profile. Current matching selections are cleared without taring; saved brew records are retained. Removal is disabled during brewing and results. There is no schema-version field or generated-ID counter. The icon table indices are stable identifiers. Pending saves and storage failures appear in the equipment-list header.
 
@@ -80,8 +80,59 @@ The `.cxx`/`.hxx` organization, nested device namespaces, `device()` accessor, t
 | `main/device.hxx`, `device.cxx` | Board I2C/SPI, display, touch, backlight, debounced BOOT button |
 | `main/config.hxx` | Board pins, dimensions, capacities, explicit prototype assumptions |
 | `host/` | Native framebuffer renderer and optional SDL2 adapter; same UI and model |
-| `components/` | Minimal vendor ST7796 and FT6336 drivers with upstream licensing |
+| `main/board349.hxx`, `main/device.cxx` | Rev1.1 pins, full-frame QSPI rotation, touch parsing and hardware initialization |
 | `tests/` | State invariants and UX acceptance cases |
 | `docs/` | Architecture, requirement coverage, hardware bring-up, validation |
 
 See [architecture and scope](docs/architecture.md), [hardware setup](docs/hardware.md), and [validation](docs/validation.md).
+
+## Scale troubleshooting
+
+See [Scale troubleshooting logs](docs/scale-diagnostics.md) for automatic anomaly
+traces, timestamp/sequence interpretation, and a stationary-load recording procedure.
+
+### 3.49-inch wide-panel UI
+
+Use `make preview-wide` to validate/render the **640×172 landscape** layout, or
+`make simulator` to interact with it (`make simulator-wide` remains an alias).
+The default simulator reads its dimensions from the same `main/config.hxx`
+configuration as the firmware and compiles the same `main/ui.cxx`; UI updates
+are picked up on each build. Sensor input remains simulated. See [wide-panel UX and hardware-port boundary](docs/wide-panel-ux.md)
+for actual screenshots and board integration details. `make build` targets Rev1.1.
+**Rewire HX711 to IO44/IO43: GPIO17/18 are now the touch I²C bus.**
+The legacy 480×320 UI remains available in the host regression tests only.
+
+## Battery, idle power and HX711 pins (wide-panel integration)
+
+The 3.49 V2 adapter now includes main's battery usage graph and 30s dim / 60s
+off / 60s sleep-eligible policy. Voltage-based battery SOC is marked `~`;
+charging/USB state cannot be read on this board. Screen-off touch wake is on;
+light sleep requires enabling the verified EXIO0 → GPIO8 path in menuconfig.
+See [power management](docs/power-management.md).
+
+Use `make menuconfig` → **Smart scale HX711** to select two distinct pins from
+38, 39, 40, 41, 43, 44. Defaults remain DOUT=44 / SCK=43. See the
+[pin-sharing constraints and wiring procedure](docs/hx711.md#select-alternative-header-gpios-349-v2).
+
+### Brew guide and color themes
+
+The ready weight card supports tap-to-tare; extraction shows actual mass against
+window targets and a larger Finish button. Sage Green is the default, with
+Espresso Amber and Porcelain Gray available through the firmware theme interface
+for future mobile selection. There is no on-scale settings page.
+Run `make preview-themes` for all three palettes. See
+[brew guide and theme integration](docs/brew-guide-and-themes.md) for stable theme
+IDs, persistence, default windows, and the future mobile integration contract.
+
+### Reusable right-side action buttons
+
+Use `View::right_action()` for actions in the rightmost 18% of the display instead of hard-coded coordinates. It provides `RightActionSlot::full`, `top`, and `bottom`, shared 8 px insets/gap, theme-aware button styling, 18 px text, and drag-release protection. Use a full-display parent; do not apply `fit_width` to these controls.
+
+```cpp
+right_action(box, LV_SYMBOL_LEFT " Back", Action::register_back, RightActionSlot::top);
+auto* save = right_action(box, LV_SYMBOL_OK " Save", Action::register_save,
+                          RightActionSlot::bottom, true);
+lv_obj_add_state(save, LV_STATE_DISABLED); // Enable when the form is valid.
+```
+
+Use `action_rail()` for a full-height Back or Finish button with an icon above its label; it delegates geometry and touch behavior to the same helper. See [right-side action details](docs/wide-panel-ux.md#reusing-right-side-actions).
